@@ -1,3 +1,4 @@
+// index.js  - paste this entire file replacing your old one
 require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
@@ -6,48 +7,74 @@ const axios = require('axios');
 const app = express();
 app.use(bodyParser.json());
 
-// Simple health check
-app.get('/', (req, res) => res.send('Sarthi AI — live'));
+// health check (open this URL in browser to confirm the app is up)
+app.get('/', (req, res) => res.send('Sarthi AI is running ✅'));
 
-// Webhook endpoint for Gupshup
+/*
+  Main webhook: Gupshup will POST incoming messages here.
+  This code:
+  - logs the full payload (so you can inspect what Gupshup sends)
+  - extracts phone and message text in a safe way
+  - replies using Gupshup send API if env vars are set
+*/
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('Inbound payload:', JSON.stringify(req.body).slice(0,2000));
-    // Acknowledge quickly so Gupshup doesn't retry
-    res.status(200).send('OK');
+    console.log('Inbound payload:', JSON.stringify(req.body, null, 2));
 
-    // Attempt to extract phone and message text from common payload shapes
-    const body = req.body || {};
-    // Gupshup sandbox payload may vary; we try common keys
-    const userPhone = (body?.source) || (body?.from) || (body?.sender) || (body?.payload?.sender) || null;
-    const userText = (body?.message?.text) || (body?.payload?.message?.text) || (body?.text) || null;
+    // default extractor that covers common Gupshup shapes
+    let userPhone = null;
+    let userText  = null;
+    const eventType = req.body?.type || null;
+
+    if (eventType === 'message') {
+      // common message payload (your logs showed this shape)
+      userPhone = req.body.payload?.sender?.phone || req.body.payload?.source || null;
+      userText  = req.body.payload?.payload?.text || null;
+    } else if (eventType === 'user-event') {
+      // sandbox-start and similar events
+      userPhone = req.body.payload?.phone || null;
+      userText  = null;
+    } else {
+      // fallback: try a few other places just in case
+      userPhone = req.body?.payload?.sender?.phone || req.body?.source || userPhone;
+      userText  = req.body?.payload?.payload?.text || req.body?.text || null;
+    }
 
     console.log('Detected userPhone:', userPhone, ' userText:', userText);
 
-    if (!userPhone) {
-      console.log('No user phone detected in payload. Check the logged payload and update extraction logic if needed.');
-      return;
-    }
+    // Immediately ack to Gupshup so it doesn't retry
+    res.status(200).send('OK');
 
-    // Compose a simple reply (static) to verify the connection
-    const replyText = "🙏 Hare Krishna! This is Sarthi AI. I received your message. How can I help you today?";
-
-    // Send reply via Gupshup send-message API (requires GUPSHUP_API_KEY and GUPSHUP_SOURCE)
+    // If API key or source not set, we won't attempt to reply (safe)
     if (!process.env.GUPSHUP_API_KEY || !process.env.GUPSHUP_SOURCE) {
       console.log('Gupshup API key or source not set in environment variables. Reply will not be sent automatically.');
       return;
     }
 
-    // Gupshup expects destination without leading + sign, e.g., 919876543210
-    const destination = String(userPhone).replace('+','').replace(/[^0-9]/g,''); 
+    // If we don't have a real message text yet, do nothing (this happens on sandbox-start)
+    if (!userText) {
+      console.log('No user message text available (likely sandbox-start). Waiting for real message.');
+      return;
+    }
 
-    const payload = new URLSearchParams();
-    payload.append('channel', 'whatsapp');
-    payload.append('source', process.env.GUPSHUP_SOURCE);
-    payload.append('destination', destination);
-    payload.append('message', JSON.stringify({ type: 'text', text: replyText }));
+    // Sanitize phone to digits only (Gupshup normally gives e.g. 91842xxxxxxx)
+    const destination = String(userPhone).replace(/\D/g, '');
 
-    await axios.post('https://api.gupshup.io/wa/api/v1/msg', payload.toString(), {
+    // Compose a friendly Krishna-style reply (you can change this)
+    const replyText = `🙏 Hare Krishna! I heard: "${userText}". I am Sarthi AI — how can I help? — Your Sarthi`;
+
+    // Pick send URL from env (safer than hardcoding). Default kept for convenience.
+    const sendUrl = process.env.GUPSHUP_SEND_URL || 'https://api.gupshup.io/wa/api/v1/msg';
+
+    // Prepare form data for Gupshup
+    const params = new URLSearchParams();
+    params.append('channel', 'whatsapp');
+    params.append('source', process.env.GUPSHUP_SOURCE);    // your Gupshup source number
+    params.append('destination', destination);               // user phone e.g. 9198xxxxxxx
+    params.append('message', JSON.stringify({ type: 'text', text: replyText }));
+
+    // Send the reply
+    const resp = await axios.post(sendUrl, params.toString(), {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'apikey': process.env.GUPSHUP_API_KEY
@@ -55,8 +82,7 @@ app.post('/webhook', async (req, res) => {
       timeout: 10000
     });
 
-    console.log('Reply sent to', destination);
-
+    console.log('Reply sent:', resp?.data || '(no body)');
   } catch (err) {
     console.error('Webhook handler error:', err?.response?.data || err.message || err);
   }
