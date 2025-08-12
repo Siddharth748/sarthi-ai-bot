@@ -1,59 +1,45 @@
-// index.js
 require("dotenv").config();
 const express = require("express");
-const bodyParser = require("body-parser");
 const axios = require("axios");
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
-const PORT = process.env.PORT || 3000;
-
-// Gupshup config
-const GS_API_KEY = process.env.GS_API_KEY; // your Gupshup API key
-const GS_SOURCE = process.env.GS_SOURCE;   // your Gupshup WhatsApp number
+// Bot name
 const BOT_NAME = "SarathiAI";
 
-// Webhook for incoming messages from Gupshup
+const GS_API_KEY = process.env.GS_API_KEY;
+const GS_SOURCE = process.env.GS_SOURCE;
+
+// Webhook endpoint
 app.post("/webhook", async (req, res) => {
     try {
-        const payload = req.body;
+        const body = req.body;
+        console.log("Inbound payload:", JSON.stringify(body, null, 2));
 
-        // Debug: Log the incoming payload
-        console.log("Inbound payload:", JSON.stringify(payload, null, 2));
+        // Extract message data
+        const userPhone = body?.payload?.sender?.phone;
+        const userText = body?.payload?.payload?.text;
 
-        // Extract message text safely
-        let userText = null;
-        if (payload?.payload?.type === "text") {
-            userText = payload.payload.payload?.text || payload.payload.payload?.text?.trim();
-        }
+        console.log(`Detected userPhone: ${userPhone}  userText: ${userText}`);
 
-        // Extract sender phone number
-        const userPhone = payload?.sender?.phone || payload?.payload?.sender?.phone || null;
+        // Prepare bot reply
+        const botReply = `Hare Krishna 🙏\n\nYou said: "${userText}"\nThis is ${BOT_NAME} here to assist you.`;
 
-        console.log("Detected userPhone:", userPhone, " userText:", userText);
-
-        if (!userPhone || !userText) {
-            console.log("❌ Missing phone or message text — skipping reply.");
-            return res.sendStatus(200);
-        }
-
-        // Simple reply logic
-        const replyText = `Hare Krishna 🙏, you said: "${userText}". This is ${BOT_NAME} at your service.`;
-
-        // Send reply via Gupshup API
         if (!GS_API_KEY || !GS_SOURCE) {
-            console.error("❌ Gupshup API key or source not set in environment variables.");
+            console.warn("⚠ Gupshup API key or source not set. Simulating send...");
+            console.log(`(Simulated reply to ${userPhone}): ${botReply}`);
         } else {
+            // Send real message via Gupshup
             await axios.post(
-                "https://api.gupshup.io/wa/api/v1/msg",
-                {
+                "https://api.gupshup.io/sm/api/v1/msg",
+                new URLSearchParams({
                     channel: "whatsapp",
                     source: GS_SOURCE,
                     destination: userPhone,
-                    message: JSON.stringify({ type: "text", text: replyText }),
-                    src: { name: BOT_NAME }
-                },
+                    message: JSON.stringify({ type: "text", text: botReply }),
+                    "src.name": BOT_NAME
+                }),
                 {
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded",
@@ -61,22 +47,17 @@ app.post("/webhook", async (req, res) => {
                     }
                 }
             );
-            console.log("✅ Reply sent to", userPhone);
+            console.log(`✅ Reply sent to ${userPhone}`);
         }
 
         res.sendStatus(200);
-
-    } catch (error) {
-        console.error("❌ Error handling webhook:", error);
+    } catch (err) {
+        console.error("❌ Error in webhook:", err);
         res.sendStatus(500);
     }
 });
 
-// Root route
-app.get("/", (req, res) => {
-    res.send(`${BOT_NAME} is running`);
-});
-
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 ${BOT_NAME} is live on port ${PORT}`);
+    console.log(`${BOT_NAME} server running on port ${PORT}`);
 });
