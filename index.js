@@ -1,63 +1,67 @@
-require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
+import express from "express";
+import bodyParser from "body-parser";
+import fetch from "node-fetch";
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-// Bot name
-const BOT_NAME = "SarathiAI";
+// Debug log env vars at startup (mask sensitive data)
+console.log("🚀 SarathiAI starting...");
+console.log("📦 GS_API_KEY:", process.env.GS_API_KEY ? "[LOADED]" : "[MISSING]");
+console.log("📦 GS_SOURCE:", process.env.GS_SOURCE || "[MISSING]");
 
-const GS_API_KEY = process.env.GS_API_KEY;
-const GS_SOURCE = process.env.GS_SOURCE;
-
-// Webhook endpoint
 app.post("/webhook", async (req, res) => {
-    try {
-        const body = req.body;
-        console.log("Inbound payload:", JSON.stringify(body, null, 2));
+    console.log("Inbound payload:", JSON.stringify(req.body, null, 2));
 
-        // Extract message data
-        const userPhone = body?.payload?.sender?.phone;
-        const userText = body?.payload?.payload?.text;
+    const payload = req.body.payload || {};
+    const sender = payload.sender || {};
+    const userPhone = sender.phone;
+    const userText = payload.payload?.text || null;
 
-        console.log(`Detected userPhone: ${userPhone}  userText: ${userText}`);
+    console.log(`Detected userPhone: ${userPhone}  userText: ${userText}`);
 
-        // Prepare bot reply
-        const botReply = `Hare Krishna 🙏\n\nYou said: "${userText}"\nThis is ${BOT_NAME} here to assist you.`;
+    const GS_API_KEY = process.env.GS_API_KEY;
+    const GS_SOURCE = process.env.GS_SOURCE;
 
-        if (!GS_API_KEY || !GS_SOURCE) {
-            console.warn("⚠ Gupshup API key or source not set. Simulating send...");
-            console.log(`(Simulated reply to ${userPhone}): ${botReply}`);
-        } else {
-            // Send real message via Gupshup
-            await axios.post(
-                "https://api.gupshup.io/sm/api/v1/msg",
-                new URLSearchParams({
-                    channel: "whatsapp",
-                    source: GS_SOURCE,
-                    destination: userPhone,
-                    message: JSON.stringify({ type: "text", text: botReply }),
-                    "src.name": BOT_NAME
-                }),
-                {
-                    headers: {
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        apikey: GS_API_KEY
-                    }
-                }
-            );
-            console.log(`✅ Reply sent to ${userPhone}`);
-        }
-
-        res.sendStatus(200);
-    } catch (err) {
-        console.error("❌ Error in webhook:", err);
-        res.sendStatus(500);
+    if (!GS_API_KEY || !GS_SOURCE) {
+        console.warn("⚠ Gupshup API key or source not set. Simulating send...");
+        console.log(`(Simulated reply to ${userPhone}): Hare Krishna 🙏\n\nYou said: "${userText}"\nThis is SarathiAI here to assist you.`);
+        return res.sendStatus(200);
     }
+
+    // Send reply via Gupshup API
+    try {
+        const replyText = `Hare Krishna 🙏\n\nYou said: "${userText}"\nThis is SarathiAI here to assist you.`;
+
+        const response = await fetch("https://api.gupshup.io/sm/api/v1/msg", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "apikey": GS_API_KEY
+            },
+            body: new URLSearchParams({
+                channel: "whatsapp",
+                source: GS_SOURCE,
+                destination: userPhone,
+                message: replyText,
+                "src.name": "SarathiAI"
+            })
+        });
+
+        const data = await response.text();
+        console.log("✅ Gupshup send response:", data);
+    } catch (err) {
+        console.error("❌ Error sending message:", err);
+    }
+
+    res.sendStatus(200);
+});
+
+app.get("/", (req, res) => {
+    res.send("SarathiAI Webhook is running ✅");
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`${BOT_NAME} server running on port ${PORT}`);
+    console.log(`SarathiAI server running on port ${PORT}`);
 });
