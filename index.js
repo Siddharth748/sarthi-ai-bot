@@ -46,30 +46,34 @@ app.post("/webhook", async (req, res) => {
     }
 
     // Send via Gupshup (form-encoded). Note: 'src.name' is valid as a form key.
-    const form = new URLSearchParams();
-    form.append("channel", "whatsapp");
-    form.append("source", String(source));
-    form.append("destination", String(userPhone));
-    form.append("message", JSON.stringify({ type: "text", text: replyText }));
-    form.append("src.name", BOT_NAME);
+    const GS_API_KEY = process.env.GS_API_KEY;
+const GS_SOURCE = process.env.GS_SOURCE;
 
-    const resp = await axios.post(
-      "https://api.gupshup.io/sm/api/v1/msg",
-      form.toString(),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          apikey: apiKey,
-        },
-        timeout: 15000,
-      }
-    );
+console.log("🚀 SarathiAI starting…");
+console.log("📦 GS_API_KEY:", GS_API_KEY ? "[LOADED]" : "[MISSING]");
+console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 
-    console.log("✅ Gupshup send response:", resp.data || "(no body)");
-  } catch (err) {
-    console.error("❌ Error in webhook:", err.response?.data || err.message || err);
-  }
-});
+// Example sendMessage function
+async function sendMessage(to, message) {
+  const response = await fetch("https://api.gupshup.io/wa/api/v1/msg", {
+    method: "POST",
+    headers: {
+      "Cache-Control": "no-cache",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "apikey": GS_API_KEY
+    },
+    body: new URLSearchParams({
+      channel: "whatsapp",
+      source: GS_SOURCE,
+      destination: to,
+      message: JSON.stringify({ type: "text", text: message }),
+      "src.name": "SarathiAI"
+    })
+  });
+
+  const data = await response.text();
+  console.log("📨 Gupshup Response:", data);
+}
 
 // Health check
 app.get("/", (_req, res) => res.send(`${BOT_NAME} Webhook is running ✅`));
