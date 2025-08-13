@@ -1,4 +1,4 @@
-// index.js (CommonJS) — SarathiAI webhook for Gupshup + Railway
+// index.js — SarathiAI with OpenAI integration (CommonJS)
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
@@ -10,28 +10,32 @@ app.use(express.urlencoded({ extended: true }));
 const BOT_NAME = "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
-// Load & trim env vars
-const API_KEY = (process.env.GS_API_KEY || "").trim();
-const SOURCE  = (process.env.GS_SOURCE  || "").trim();
-const SEND_URL = (process.env.GUPSHUP_SEND_URL || "https://api.gupshup.io/wa/api/v1/msg").trim();
+// Env vars (trimmed)
+const GS_API_KEY = (process.env.GS_API_KEY || "").trim();
+const GS_SOURCE  = (process.env.GS_SOURCE  || "").trim();
+const SEND_URL   = (process.env.GUPSHUP_SEND_URL || "https://api.gupshup.io/wa/api/v1/msg").trim();
+const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
+const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim(); // change if you prefer another model
 
-// Startup debug (safe: mask key)
+// Startup debug (safe: masked)
 console.log(`\n🚀 ${BOT_NAME} starting...`);
-console.log("📦 GS_API_KEY:", API_KEY ? `[LOADED first4=${API_KEY.slice(0,4)} last4=${API_KEY.slice(-4)}]` : "[MISSING]");
-console.log("📦 GS_SOURCE :", SOURCE || "[MISSING]");
-console.log("📦 SEND_URL  :", SEND_URL, "\n");
+console.log("📦 GS_API_KEY:", GS_API_KEY ? `[LOADED first4=${GS_API_KEY.slice(0,4)} last4=${GS_API_KEY.slice(-4)}]` : "[MISSING]");
+console.log("📦 GS_SOURCE :", GS_SOURCE || "[MISSING]");
+console.log("📦 SEND_URL  :", SEND_URL);
+console.log("📦 OPENAI_KEY:", OPENAI_KEY ? "[LOADED]" : "[MISSING]");
+console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, "\n");
 
-// Helper: safe send to Gupshup, logs full response/error
+// Helper: send via Gupshup (form-encoded)
 async function sendViaGupshup(destination, replyText) {
-  if (!API_KEY || !SOURCE) {
-    console.warn("⚠ API key or source missing — not sending to Gupshup. Simulating send below:");
+  if (!GS_API_KEY || !GS_SOURCE) {
+    console.warn("⚠ Gupshup key/source missing — simulating send:");
     console.log(`(Simulated -> ${destination}): ${replyText}`);
     return { simulated: true };
   }
 
   const form = new URLSearchParams();
   form.append("channel", "whatsapp");
-  form.append("source", String(SOURCE));
+  form.append("source", String(GS_SOURCE));
   form.append("destination", String(destination));
   form.append("message", JSON.stringify({ type: "text", text: replyText }));
   form.append("src.name", BOT_NAME);
@@ -40,91 +44,112 @@ async function sendViaGupshup(destination, replyText) {
     const resp = await axios.post(SEND_URL, form.toString(), {
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
-        apikey: API_KEY
+        apikey: GS_API_KEY
       },
       timeout: 15000
     });
-
-    // Log useful bits
     console.log("✅ Gupshup send status:", resp.status);
     console.log("Gupshup response body:", typeof resp.data === "object" ? JSON.stringify(resp.data) : resp.data);
     return { ok: true, resp: resp.data };
   } catch (err) {
-    // Provide as much info as available without exposing key
     console.error("❌ Error sending to Gupshup:", err?.response?.status, err?.response?.data || err.message);
     return { ok: false, status: err?.response?.status, body: err?.response?.data || err.message };
   }
 }
 
-// Robust extraction of phone/text covering common Gupshup shapes
+// Helper: call OpenAI Chat Completions
+async function callOpenAI(promptMessages) {
+  if (!OPENAI_KEY) {
+    console.warn("⚠ OPENAI_API_KEY not set — skipping OpenAI call.");
+    return null;
+  }
+
+  try {
+    const body = {
+      model: OPENAI_MODEL,
+      messages: promptMessages,
+      temperature: 0.7,
+      max_tokens: 600
+    };
+
+    const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
+      headers: {
+        "Authorization": `Bearer ${OPENAI_KEY}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 20000
+    });
+
+    // safe access to AI answer
+    const content = resp.data?.choices?.[0]?.message?.content || resp.data?.choices?.[0]?.text || null;
+    console.log("✅ OpenAI raw response (trim):", typeof content === "string" ? content.slice(0,200) : content);
+    return content;
+  } catch (err) {
+    console.error("❌ OpenAI call error:", err?.response?.status, err?.response?.data || err.message);
+    return null;
+  }
+}
+
+// Robust extractor for phone & text (works with Gupshup shapes)
 function extractPhoneAndText(body) {
-  if (!body) return { phone: null, text: null, raw: null };
-
-  // Many payloads show message data at body.payload...
-  const raw = body;
-  let phone = null;
-  let text = null;
-
-  // Common structure observed in logs:
-  // body.payload.sender.phone
-  // body.payload.payload.text
+  if (!body) return { phone: null, text: null };
+  let phone = null, text = null;
   if (body.payload) {
     phone = body.payload?.sender?.phone || body.payload?.source || phone;
     text  = body.payload?.payload?.text || body.payload?.text || text;
   }
-
-  // Fallbacks: top-level fields
   phone = phone || body.sender?.phone || body.from || body.source || null;
   text  = text  || body.text || body.message?.text || null;
-
-  // Final sanitise: strip non-digits from phone (Gupshup usually gives digits)
   if (phone) phone = String(phone).replace(/\D/g, "");
-
-  return { phone, text, raw };
+  return { phone, text };
 }
 
-// Webhook endpoint
+// System prompt: Krishna teachings, friendly & compassionate, modern tone
+const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate self-help assistant inspired by the teachings of Lord Krishna (Bhagavad Gita).
+Answer in a modern, empathetic, and practical way. Use short paragraphs, gentle encouragement, and sometimes a small verse-like sentence for comfort.
+Do NOT give medical, legal, or financial instructions; if the user needs those, advise consulting a qualified professional.
+Be respectful of diverse beliefs; do not preach or coerce. Keep responses concise (around 2-4 short paragraphs) unless user asks for more detail.`;
+
+// Webhook
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Inbound payload:", JSON.stringify(req.body, null, 2));
     const { phone, text } = extractPhoneAndText(req.body);
-
     console.log("Detected userPhone:", phone, " userText:", text);
 
-    // Always ACK quickly so Gupshup won't retry
+    // ACK quickly
     res.status(200).send("OK");
 
-    // If no text (e.g., sandbox-start) do nothing further
-    if (!text) {
-      console.log("ℹ No text found (likely sandbox-start or non-text event). Waiting for real message.");
+    if (!text || !phone) {
+      console.log("ℹ No text or phone — skipping AI reply.");
       return;
     }
 
-    // Compose friendly Krishna-style reply
-    const reply = `🙏 Hare Krishna!\n\nYou said: "${text}"\nThis is ${BOT_NAME} — how can I help?`;
+    // Build messages for OpenAI
+    const messages = [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: text }
+    ];
 
-    // Send (or simulate) and log outcome
-    const sendResult = await sendViaGupshup(phone, reply);
-    if (sendResult.simulated) {
-      // nothing else
-    } else if (!sendResult.ok) {
-      console.error("❗ Send failed:", sendResult);
-    } else {
-      console.log("✅ Send OK");
+    // Call OpenAI
+    const aiReply = await callOpenAI(messages);
+
+    // If OpenAI failed, fallback to a gentle default reply
+    const finalReply = aiReply && aiReply.trim().length > 0
+      ? aiReply.trim()
+      : `Hare Krishna 🙏 — I heard: "${text}". I'm here to help. Could you tell me a little more so I can respond better?`;
+
+    // Send via Gupshup
+    const sendResult = await sendViaGupshup(phone, finalReply);
+    if (!sendResult.ok && !sendResult.simulated) {
+      console.error("❗ Problem sending reply:", sendResult);
     }
   } catch (err) {
-    console.error("❌ Webhook handler error:", err);
-    // Try to ack if not already
+    console.error("❌ Webhook processing error:", err);
     try { res.status(200).send("OK"); } catch (_) {}
   }
 });
 
-// Health
-app.get("/", (_req, res) => {
-  res.send(`${BOT_NAME} running ✅`);
-});
+app.get("/", (_req, res) => res.send(`${BOT_NAME} with AI is running ✅`));
 
-// Start
-app.listen(PORT, () => {
-  console.log(`${BOT_NAME} listening on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
