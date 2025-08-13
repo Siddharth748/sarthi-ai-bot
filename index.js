@@ -1,81 +1,130 @@
-// index.js (CommonJS) — SarathiAI WhatsApp webhook for Gupshup + Railway
+// index.js (CommonJS) — SarathiAI webhook for Gupshup + Railway
 require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const BOT_NAME = "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
-// Debug env on startup (masked)
-console.log("🚀 SarathiAI starting…");
-console.log("📦 GS_API_KEY:", process.env.GS_API_KEY ? "[LOADED]" : "[MISSING]");
-console.log("📦 GS_SOURCE:", process.env.GS_SOURCE || "[MISSING]");
+// Load & trim env vars
+const API_KEY = (process.env.GS_API_KEY || "").trim();
+const SOURCE  = (process.env.GS_SOURCE  || "").trim();
+const SEND_URL = (process.env.GUPSHUP_SEND_URL || "https://api.gupshup.io/wa/api/v1/msg").trim();
 
-// Webhook for incoming messages
+// Startup debug (safe: mask key)
+console.log(`\n🚀 ${BOT_NAME} starting...`);
+console.log("📦 GS_API_KEY:", API_KEY ? `[LOADED first4=${API_KEY.slice(0,4)} last4=${API_KEY.slice(-4)}]` : "[MISSING]");
+console.log("📦 GS_SOURCE :", SOURCE || "[MISSING]");
+console.log("📦 SEND_URL  :", SEND_URL, "\n");
+
+// Helper: safe send to Gupshup, logs full response/error
+async function sendViaGupshup(destination, replyText) {
+  if (!API_KEY || !SOURCE) {
+    console.warn("⚠ API key or source missing — not sending to Gupshup. Simulating send below:");
+    console.log(`(Simulated -> ${destination}): ${replyText}`);
+    return { simulated: true };
+  }
+
+  const form = new URLSearchParams();
+  form.append("channel", "whatsapp");
+  form.append("source", String(SOURCE));
+  form.append("destination", String(destination));
+  form.append("message", JSON.stringify({ type: "text", text: replyText }));
+  form.append("src.name", BOT_NAME);
+
+  try {
+    const resp = await axios.post(SEND_URL, form.toString(), {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        apikey: API_KEY
+      },
+      timeout: 15000
+    });
+
+    // Log useful bits
+    console.log("✅ Gupshup send status:", resp.status);
+    console.log("Gupshup response body:", typeof resp.data === "object" ? JSON.stringify(resp.data) : resp.data);
+    return { ok: true, resp: resp.data };
+  } catch (err) {
+    // Provide as much info as available without exposing key
+    console.error("❌ Error sending to Gupshup:", err?.response?.status, err?.response?.data || err.message);
+    return { ok: false, status: err?.response?.status, body: err?.response?.data || err.message };
+  }
+}
+
+// Robust extraction of phone/text covering common Gupshup shapes
+function extractPhoneAndText(body) {
+  if (!body) return { phone: null, text: null, raw: null };
+
+  // Many payloads show message data at body.payload...
+  const raw = body;
+  let phone = null;
+  let text = null;
+
+  // Common structure observed in logs:
+  // body.payload.sender.phone
+  // body.payload.payload.text
+  if (body.payload) {
+    phone = body.payload?.sender?.phone || body.payload?.source || phone;
+    text  = body.payload?.payload?.text || body.payload?.text || text;
+  }
+
+  // Fallbacks: top-level fields
+  phone = phone || body.sender?.phone || body.from || body.source || null;
+  text  = text  || body.text || body.message?.text || null;
+
+  // Final sanitise: strip non-digits from phone (Gupshup usually gives digits)
+  if (phone) phone = String(phone).replace(/\D/g, "");
+
+  return { phone, text, raw };
+}
+
+// Webhook endpoint
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Inbound payload:", JSON.stringify(req.body, null, 2));
+    const { phone, text } = extractPhoneAndText(req.body);
 
-    const payload = req.body?.payload || {};
-    const userPhone = payload?.sender?.phone || req.body?.source || null;
-    const userText = payload?.payload?.text || null;
+    console.log("Detected userPhone:", phone, " userText:", text);
 
-    console.log(`Detected userPhone: ${userPhone}  userText: ${userText}`);
+    // Always ACK quickly so Gupshup won't retry
+    res.status(200).send("OK");
 
-    // Always ACK first so Gupshup doesn't retry
-    res.sendStatus(200);
-
-    // Compose reply
-    const replyText = `Hare Krishna 🙏\n\nYou said: "${userText}"\nThis is ${BOT_NAME} here to assist you.`;
-
-    const apiKey = process.env.GS_API_KEY;
-    const source = process.env.GS_SOURCE;
-
-    if (!apiKey || !source) {
-      console.warn("⚠ GS_API_KEY or GS_SOURCE missing. Simulating send…");
-      console.log(`(Simulated reply to ${userPhone}): ${replyText}`);
+    // If no text (e.g., sandbox-start) do nothing further
+    if (!text) {
+      console.log("ℹ No text found (likely sandbox-start or non-text event). Waiting for real message.");
       return;
     }
 
-    if (!userPhone || !userText) {
-      console.log("ℹ No phone or no text — skipping reply.");
-      return;
+    // Compose friendly Krishna-style reply
+    const reply = `🙏 Hare Krishna!\n\nYou said: "${text}"\nThis is ${BOT_NAME} — how can I help?`;
+
+    // Send (or simulate) and log outcome
+    const sendResult = await sendViaGupshup(phone, reply);
+    if (sendResult.simulated) {
+      // nothing else
+    } else if (!sendResult.ok) {
+      console.error("❗ Send failed:", sendResult);
+    } else {
+      console.log("✅ Send OK");
     }
+  } catch (err) {
+    console.error("❌ Webhook handler error:", err);
+    // Try to ack if not already
+    try { res.status(200).send("OK"); } catch (_) {}
+  }
+});
 
-    // Send via Gupshup (form-encoded). Note: 'src.name' is valid as a form key.
-    const GS_API_KEY = process.env.GS_API_KEY;
-const GS_SOURCE = process.env.GS_SOURCE;
+// Health
+app.get("/", (_req, res) => {
+  res.send(`${BOT_NAME} running ✅`);
+});
 
-console.log("🚀 SarathiAI starting…");
-console.log("📦 GS_API_KEY:", GS_API_KEY ? "[LOADED]" : "[MISSING]");
-console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
-
-// Example sendMessage function
-async function sendMessage(to, message) {
-  const response = await fetch("https://api.gupshup.io/wa/api/v1/msg", {
-    method: "POST",
-    headers: {
-      "Cache-Control": "no-cache",
-      "Content-Type": "application/x-www-form-urlencoded",
-      "apikey": GS_API_KEY
-    },
-    body: new URLSearchParams({
-      channel: "whatsapp",
-      source: GS_SOURCE,
-      destination: to,
-      message: JSON.stringify({ type: "text", text: message }),
-      "src.name": "SarathiAI"
-    })
-  });
-
-  const data = await response.text();
-  console.log("📨 Gupshup Response:", data);
-}
-
-// Health check
-app.get("/", (_req, res) => res.send(`${BOT_NAME} Webhook is running ✅`));
-
-app.listen(PORT, () => console.log(`🟢 ${BOT_NAME} server on port ${PORT}`));
+// Start
+app.listen(PORT, () => {
+  console.log(`${BOT_NAME} listening on port ${PORT}`);
+});
