@@ -1,7 +1,9 @@
-// index.js — SarathiAI with OpenAI integration (CommonJS)
-require("dotenv").config();
-const express = require("express");
-const axios = require("axios");
+// index.js — SarathiAI with OpenAI integration (ESM)
+import dotenv from "dotenv";
+import express from "express";
+import axios from "axios";
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
