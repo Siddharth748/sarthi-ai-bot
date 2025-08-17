@@ -4,7 +4,7 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "start": "node ingest_all.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "@pinecone-database/pinecone": "^0.1.0",
