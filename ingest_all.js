@@ -1,9 +1,9 @@
-// ingest_all.js
-import fs from "fs";
-import path from "path";
-import csvParse from "csv-parse/sync";
-import OpenAI from "openai";
-import { Pinecone } from "@pinecone-database/pinecone";
+// ingest_all.js (CommonJS)
+const fs = require("fs");
+const path = require("path");
+const csvParse = require("csv-parse/sync");
+const OpenAI = require("openai");
+const { Pinecone } = require("@pinecone-database/pinecone");
 
 const BATCH_SIZE = 20;
 const RETRY_MAX = 6;
