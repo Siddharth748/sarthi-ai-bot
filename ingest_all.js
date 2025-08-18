@@ -1,178 +1,141 @@
-// ingest_all.js — works with Pinecone CommonJS SDK (v0.x) & OpenAI embeddings (small)
-import 'dotenv/config';
-// -- DIAGNOSTIC BLOCK (temporary) --
-console.log("🔎 PINECONE_API_KEY set:", !!process.env.PINECONE_API_KEY);
-console.log("🔎 PINECONE_ENV:", String(process.env.PINECONE_ENV).slice(0,60));
-console.log("🔎 PINECONE_INDEX:", String(process.env.PINECONE_INDEX).slice(0,60));
-console.log("🔎 PINECONE_HOST (if set):", String(process.env.PINECONE_HOST || "").slice(0,200));
+// ingest_all.js — CommonJS, REST-only (no Pinecone SDK), Railway-friendly
+require("dotenv").config();
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
+const { parse } = require("csv-parse/sync");
 
-try {
-  const probeHost = process.env.PINECONE_HOST || (process.env.PINECONE_ENV ? `https://controller.${process.env.PINECONE_ENV}.pinecone.io` : null);
-  if (probeHost) {
-    console.log("🔎 Probing:", probeHost);
-    const resp = await fetch(probeHost, { method: "GET", headers: { "accept": "application/json" } });
-    console.log("🔎 Probe status:", resp.status);
-    const txt = await resp.text().catch(()=>"(no body)");
-    console.log("🔎 Probe body preview:", txt.slice(0,200));
-  } else {
-    console.log("🔎 No probeHost available (PINECONE_ENV missing).");
-  }
-} catch (e) {
-  console.log("🔎 Probe failed:", e?.message || e);
-}
-// -- end diagnostic --
-import fs from 'fs';
-import path from 'path';
-import Papa from 'papaparse';
-import OpenAI from 'openai';
+const OPENAI_API_KEY     = (process.env.OPENAI_API_KEY || "").trim();
+const OPENAI_EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
+const PINECONE_HOST      = (process.env.PINECONE_HOST || "").trim(); // e.g., https://<index>-<proj>.svc.<region>.pinecone.io
+const PINECONE_API_KEY   = (process.env.PINECONE_API_KEY || "").trim();
 
-// ⬇️ IMPORTANT: use default import for Pinecone (older CommonJS build)
-import pinePkg from '@pinecone-database/pinecone';
-const { PineconeClient } = pinePkg; // <-- this is the key change
-
-// ---------- Config ----------
-const OPENAI_MODEL = 'text-embedding-3-small'; // cheap & good
-const DATA_DIR = path.join(process.cwd(), 'data');
-const FILE_VERSES = path.join(DATA_DIR, 'verse.csv');        // required
-const BATCH_SIZE = 50;                                       // tune if needed
-const NAMESPACE = 'verses';                                  // optional
-
-// ---------- Helpers ----------
-function readCsv(filepath) {
-  const csv = fs.readFileSync(filepath, 'utf8');
-  const { data, errors } = Papa.parse(csv, { header: true, skipEmptyLines: true });
-  if (errors && errors.length) {
-    console.warn('CSV parse warnings:', errors.slice(0, 3));
-  }
-  return data;
+function die(msg) {
+  console.error("💥 Fatal ingestion error:", msg);
+  process.exit(1);
 }
 
-function buildDocFromRow(r) {
-  // Be tolerant to varying column names; normalize common ones.
-  const chap = r.Chapter || r.chapter || '';
-  const verse = r.Verse || r.verse || '';
-  const sanskrit = r['Sanskrit verse'] || r.sanskrit || r.Sanskrit || '';
-  const eng = r['Translation (English)'] || r.translation || r.English || '';
-  const hing1 = r['Hinglish (1)'] || r.hinglish || r.Hinglish || r.transliteration_hinglish || '';
-  const hing2 = r['Hinglish (2)'] || '';
-  const summary = r.Summary || r.summary || '';
-  const tags = r.tags || r.Tags || '';
-  const sourceId = r['Source ID'] || r.source_id || r.id || `AUTO_${chap}_${verse}`;
-  const ref = r.Reference || r.reference || '';
+(async () => {
+  console.log("🚀 Starting ingestion...");
 
-  const id = String(sourceId || `${chap}_${verse}`).replace(/\s+/g, '_');
-
-  // The text we embed: include key fields so retrieval is strong
-  const text = [
-    `Chapter ${chap} Verse ${verse}`.trim(),
-    sanskrit,
-    eng,
-    hing1,
-    hing2,
-    summary,
-    tags ? `Tags: ${tags}` : '',
-    ref ? `Ref: ${ref}` : ''
-  ].filter(Boolean).join('\n');
-
-  const metadata = {
-    chapter: String(chap || ''),
-    verse: String(verse || ''),
-    sanskrit: sanskrit || '',
-    english: eng || '',
-    hinglish1: hing1 || '',
-    hinglish2: hing2 || '',
-    summary: summary || '',
-    tags: String(tags || ''),
-    ref: String(ref || ''),
-    source_id: String(sourceId || ''),
-    kind: 'verse'
-  };
-
-  return { id, text, metadata };
-}
-
-// ---------- Main ----------
-async function main() {
-  console.log('🚀 Starting ingestion...');
-  // Basic file presence check
-  if (!fs.existsSync(FILE_VERSES)) {
-    console.error(`❌ Missing file: ${FILE_VERSES}. Put verse.csv into ./data/`);
-    process.exit(1);
+  if (!OPENAI_API_KEY) die("OPENAI_API_KEY missing");
+  if (!PINECONE_API_KEY) die("PINECONE_API_KEY missing");
+  if (!PINECONE_HOST || !/^https:\/\/.+\.pinecone\.io/.test(PINECONE_HOST)) {
+    die("PINECONE_HOST missing or invalid. Example: https://yourindex-yourproj.svc.us-east-1.pinecone.io");
   }
 
-  // Init OpenAI
-  if (!process.env.OPENAI_API_KEY) {
-    console.error('❌ OPENAI_API_KEY missing in Railway variables.');
-    process.exit(1);
+  // --- 1) Load verse.csv ---
+  const versePath = path.join(__dirname, "data", "verse.csv");
+  if (!fs.existsSync(versePath)) die(`Missing file: ${versePath}. Put verse.csv into ./data/`);
+
+  const csvBuf = fs.readFileSync(versePath);
+  const records = parse(csvBuf, { columns: true, skip_empty_lines: true });
+
+  if (!Array.isArray(records) || records.length === 0) die("verse.csv parsed but no rows found");
+
+  console.log(`📄 Found verses: ${records.length}`);
+
+  // --- 2) Prepare texts for embedding ---
+  // Expected verse.csv columns (your sample): Chapter, Verse, Sanskrit verse, Translation (English),
+  // Hinglish (1), Hinglish (2), Summary, Source ID, Reference, message, tags
+  function rowToId(row, idx) {
+    const id = (row["Source ID"] || row["Reference"] || `ROW_${idx + 1}`).toString().trim();
+    return id.replace(/\s+/g, "_").slice(0, 96);
   }
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  // Init Pinecone (v0.x)
-  if (!process.env.PINECONE_API_KEY || !process.env.PINECONE_ENV || !process.env.PINECONE_INDEX) {
-    console.error('❌ Set PINECONE_API_KEY, PINECONE_ENV, PINECONE_INDEX in Railway variables.');
-    process.exit(1);
+  function rowToText(row) {
+    const parts = [];
+    const sv = row["Sanskrit verse"] || row["Sanskrit"] || "";
+    const tr = row["Translation (English)"] || row["translation_hinglish"] || row["Translation"] || "";
+    const h1 = row["Hinglish (1)"] || "";
+    const h2 = row["Hinglish (2)"] || "";
+    const sum = row["Summary"] || "";
+    const msg = row["message"] || "";
+    parts.push(`Sanskrit: ${sv}`);
+    if (tr) parts.push(`English: ${tr}`);
+    if (h1) parts.push(`Hinglish1: ${h1}`);
+    if (h2) parts.push(`Hinglish2: ${h2}`);
+    if (sum) parts.push(`Summary: ${sum}`);
+    if (msg) parts.push(`Message: ${msg}`);
+    return parts.join("\n");
   }
-  const pc = new PineconeClient();
-  await pc.init({
-    apiKey: process.env.PINECONE_API_KEY,
-    environment: process.env.PINECONE_ENV
-  });
-  const index = pc.Index(process.env.PINECONE_INDEX);
 
-  // Load CSV rows
-  const verses = readCsv(FILE_VERSES);
-  console.log(`📄 Found verses: ${verses.length}`);
+  const items = records.map((row, idx) => ({
+    id: rowToId(row, idx),
+    chapter: (row["Chapter"] || "").toString().trim(),
+    verse: (row["Verse"] || "").toString().trim(),
+    tags: (row["tags"] || "").toString().trim(),
+    text: rowToText(row)
+  }));
 
-  // Prepare docs
-  const docs = verses.map(buildDocFromRow);
-  console.log(`🧩 Prepared docs: ${docs.length}`);
+  // --- 3) Embed with OpenAI (batched) ---
+  async function embedBatch(texts) {
+    const resp = await axios.post(
+      "https://api.openai.com/v1/embeddings",
+      { model: OPENAI_EMBED_MODEL, input: texts },
+      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, timeout: 60000 }
+    );
+    return resp.data.data.map(d => d.embedding);
+  }
 
-  // Embed + upsert in batches
-  let processed = 0;
-  for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-    const batch = docs.slice(i, i + BATCH_SIZE);
+  // --- 4) Upsert to Pinecone REST ---
+  async function upsertBatch(vectors) {
+    // POST {host}/vectors/upsert  (index host already targets index)
+    const url = `${PINECONE_HOST}/vectors/upsert`;
+    const resp = await axios.post(
+      url,
+      { vectors, namespace: "default" },
+      { headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 60000 }
+    );
+    return resp.data;
+  }
 
-    // 1) Create embeddings for this batch
-    const inputs = batch.map(d => d.text);
-    let embeddingResp;
+  // --- 5) Process in small chunks ---
+  const BATCH = 50; // keep small & safe
+  for (let i = 0; i < items.length; i += BATCH) {
+    const slice = items.slice(i, i + BATCH);
+    const texts = slice.map(s => s.text);
+
+    // Embed
+    let embeddings;
     try {
-      embeddingResp = await openai.embeddings.create({
-        model: OPENAI_MODEL,
-        input: inputs
-      });
+      embeddings = await embedBatch(texts);
     } catch (e) {
-      console.error('❌ OpenAI embedding error:', e?.status || '', e?.message || e);
-      throw e;
+      console.error("❌ Embedding error at batch", i / BATCH, e?.response?.data || e.message);
+      if (e?.response?.status === 429) {
+        console.log("⏳ Rate limited. Sleeping 20s then retrying this batch...");
+        await new Promise(r => setTimeout(r, 20000));
+        i -= BATCH; // retry same batch
+        continue;
+      }
+      die(e?.message || "Embedding failed");
     }
 
-    // 2) Build vectors for Pinecone
-    const vectors = batch.map((d, idx) => ({
-      id: d.id,
-      values: embeddingResp.data[idx].embedding,
-      metadata: d.metadata
+    // Build Pinecone vectors
+    const vectors = slice.map((s, idx) => ({
+      id: s.id,
+      values: embeddings[idx],
+      metadata: {
+        chapter: s.chapter,
+        verse: s.verse,
+        tags: s.tags,
+        text: s.text
+      }
     }));
 
-    // 3) Upsert to Pinecone
+    // Upsert
     try {
-      await index.upsert({
-        upsertRequest: {
-          vectors,
-          namespace: NAMESPACE
-        }
-      });
+      const res = await upsertBatch(vectors);
+      console.log(`✅ Upserted ${vectors.length} vectors (rows ${i + 1}-${i + vectors.length})`, res?.upsertedCount ? `upsertedCount=${res.upsertedCount}` : "");
     } catch (e) {
-      console.error('❌ Pinecone upsert error:', e?.status || '', e?.message || e);
-      throw e;
+      console.error("❌ Upsert error:", e?.response?.status, e?.response?.data || e.message);
+      die("Pinecone upsert failed");
     }
 
-    processed += batch.length;
-    console.log(`✅ Upserted ${processed}/${docs.length}`);
+    // Gentle pacing
+    await new Promise(r => setTimeout(r, 500));
   }
 
-  console.log('🎉 Ingestion complete.');
-}
-
-main().catch(err => {
-  console.error('💥 Fatal ingestion error:', err);
-  process.exit(1);
-});
+  console.log("🎉 Ingestion complete!");
+  process.exit(0);
+})().catch(err => die(err?.message || err));
