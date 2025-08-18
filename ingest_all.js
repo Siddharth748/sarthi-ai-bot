@@ -1,5 +1,26 @@
 // ingest_all.js — works with Pinecone CommonJS SDK (v0.x) & OpenAI embeddings (small)
 import 'dotenv/config';
+// -- DIAGNOSTIC BLOCK (temporary) --
+console.log("🔎 PINECONE_API_KEY set:", !!process.env.PINECONE_API_KEY);
+console.log("🔎 PINECONE_ENV:", String(process.env.PINECONE_ENV).slice(0,60));
+console.log("🔎 PINECONE_INDEX:", String(process.env.PINECONE_INDEX).slice(0,60));
+console.log("🔎 PINECONE_HOST (if set):", String(process.env.PINECONE_HOST || "").slice(0,200));
+
+try {
+  const probeHost = process.env.PINECONE_HOST || (process.env.PINECONE_ENV ? `https://controller.${process.env.PINECONE_ENV}.pinecone.io` : null);
+  if (probeHost) {
+    console.log("🔎 Probing:", probeHost);
+    const resp = await fetch(probeHost, { method: "GET", headers: { "accept": "application/json" } });
+    console.log("🔎 Probe status:", resp.status);
+    const txt = await resp.text().catch(()=>"(no body)");
+    console.log("🔎 Probe body preview:", txt.slice(0,200));
+  } else {
+    console.log("🔎 No probeHost available (PINECONE_ENV missing).");
+  }
+} catch (e) {
+  console.log("🔎 Probe failed:", e?.message || e);
+}
+// -- end diagnostic --
 import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
