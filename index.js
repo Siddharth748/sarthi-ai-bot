@@ -1,18 +1,18 @@
-// index.js — RAG-enabled SarathiAI (ESM) with greeting/small-talk handling
+// index.js — SarathiAI (ESM) with greeting/small-talk + RAG
 import dotenv from "dotenv";
 dotenv.config();
 
 import fs from "fs";
+import path from "path";
 import express from "express";
 import axios from "axios";
 import { spawn } from "child_process";
-import path from "path";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ---------------------- Config / env ---------------------- */
+/* ---------------- Config / env ---------------- */
 const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
@@ -26,15 +26,15 @@ const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
 
-// Pinecone (REST)
-const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
+// Pinecone
+const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim(); // e.g. https://<index>-<proj>.svc.us-east-1.pinecone.io
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
 const PINECONE_NAMESPACE = process.env.PINECONE_NAMESPACE || "verses";
 
 // Admin secret
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
-/* ---------------------- Startup logs ---------------------- */
+/* ---------------- Startup logs ---------------- */
 console.log("\n🚀", BOT_NAME, "starting...");
 console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, " EMBED_MODEL:", EMBED_MODEL);
@@ -42,7 +42,7 @@ console.log("📦 PINECONE_HOST:", PINECONE_HOST ? "[LOADED]" : "[MISSING]");
 console.log("📦 TRAIN_SECRET:", TRAIN_SECRET ? "[LOADED]" : "[MISSING]");
 console.log();
 
-/* ---------------------- Helpers ---------------------- */
+/* ---------------- Helpers ---------------- */
 
 async function sendViaGupshup(destination, replyText) {
   if (!GS_API_KEY || !GS_SOURCE) {
@@ -70,15 +70,14 @@ async function sendViaGupshup(destination, replyText) {
   }
 }
 
-async function openaiEmbedding(text) {
+async function openaiEmbedding(textOrArray) {
   if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY missing");
+  const input = Array.isArray(textOrArray) ? textOrArray : [String(textOrArray)];
   const resp = await axios.post("https://api.openai.com/v1/embeddings",
-    { model: EMBED_MODEL, input: Array.isArray(text) ? text : [text] },
+    { model: EMBED_MODEL, input },
     { headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 30000 }
   );
-  // If input array, return array of embeddings; else first embedding
-  if (Array.isArray(text)) return resp.data.data.map(d => d.embedding);
-  return resp.data.data[0].embedding;
+  return Array.isArray(textOrArray) ? resp.data.data.map(d => d.embedding) : resp.data.data[0].embedding;
 }
 
 async function openaiChat(messages, maxTokens = 600) {
@@ -93,16 +92,10 @@ async function openaiChat(messages, maxTokens = 600) {
   return resp.data?.choices?.[0]?.message?.content || resp.data?.choices?.[0]?.text || null;
 }
 
-// Pinecone REST query
 async function pineconeQuery(vector, topK = 3, namespace = PINECONE_NAMESPACE) {
   if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
   const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
-  const body = {
-    vector,
-    topK,
-    includeMetadata: true,
-    namespace
-  };
+  const body = { vector, topK, includeMetadata: true, namespace };
   const resp = await axios.post(url, body, {
     headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" },
     timeout: 20000
@@ -110,7 +103,7 @@ async function pineconeQuery(vector, topK = 3, namespace = PINECONE_NAMESPACE) {
   return resp.data;
 }
 
-/* ---------------------- Payload extraction ---------------------- */
+/* ---------------- Payload extraction ---------------- */
 function extractPhoneAndText(body) {
   if (!body) return { phone: null, text: null, rawType: null };
   let phone = null, text = null;
@@ -127,7 +120,7 @@ function extractPhoneAndText(body) {
   return { phone, text, rawType };
 }
 
-/* ---------------------- Greeting & small-talk detection ---------------------- */
+/* ---------------- Greeting & small-talk detection ---------------- */
 function isGreeting(text) {
   if (!text) return false;
   const t = text.trim().toLowerCase();
@@ -151,7 +144,7 @@ function isSmallTalk(text) {
   return false;
 }
 
-/* ---------------------- Message templates ---------------------- */
+/* ---------------- Message templates ---------------- */
 const WELCOME_TEMPLATE = `Hare Krishna 🙏
 
 I am Sarathi, your companion on this journey.
@@ -176,7 +169,7 @@ If you'd like, pick one:
 
 Reply with the number or type your concern (for example: "I'm stressed about exams").`;
 
-/* ---------------------- Format retrieved items ---------------------- */
+/* ---------------- Format retrieved items ---------------- */
 function formatRetrievedItems(matches) {
   return (matches || []).map(m => {
     const md = m?.metadata || {};
@@ -185,22 +178,17 @@ function formatRetrievedItems(matches) {
     const hinglish = (md.hinglish1 || md.hinglish || md.Hinglish || md.hinglish2 || "").trim();
     const translation = (md.translation || md["Translation (English)"] || md.english || "").trim();
     const summary = (md.summary || md["Summary"] || "").trim();
-    const preview = md.preview || "";
-
-    // Compose a short block that’s safe if some fields are empty
     const parts = [];
     parts.push(`Ref:${ref}`);
     if (sanskrit) parts.push(`Sanskrit: ${sanskrit}`);
     if (hinglish) parts.push(`Hinglish: ${hinglish}`);
     if (translation) parts.push(`Translation: ${translation}`);
     if (summary) parts.push(`Summary: ${summary}`);
-    if (!sanskrit && !translation && preview) parts.push(`Preview: ${preview}`);
-
     return parts.join("\n");
   }).join("\n\n---\n\n");
 }
 
-/* ---------------------- System prompt ---------------------- */
+/* ---------------- System prompt ---------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, short paragraphs.
 IMPORTANT: Use ONLY the provided Retrieved Contexts (below) to answer. Do NOT make up or hallucinate verses.
@@ -213,7 +201,7 @@ Behavior:
 5) End with "Ref: <id1>, <id2>" listing used references.
 If the retrieved contexts are insufficient, say so gently and offer a short practice or ask a clarifying question.`;
 
-/* ---------------------- Webhook ---------------------- */
+/* ---------------- Webhook handler ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Inbound raw payload:", JSON.stringify(req.body));
@@ -276,7 +264,6 @@ app.post("/webhook", async (req, res) => {
     const topScore = matches[0]?.score ?? 0;
     if (!matches.length || topScore < 0.12) {
       console.log("⚠ Retrieval weak or empty (score:", topScore, ") — sending gentle fallback practice.");
-      // pick a small practice from index if possible (we'll search metadata for "practices" first)
       const practice = (matches.find(m => (m.metadata||{}).source === "practices") || {}).metadata;
       const practiceText = practice?.text || practice?.practice_text || "Try this 90s calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.";
       const fallbackMsg = `Hare Krishna 🙏 — I don't have a direct verse for that right now. ${practiceText}\n\nIf you'd like, can you say a little more about what's troubling you?`;
@@ -323,10 +310,9 @@ Follow these rules: Use ONLY the retrieved contexts above to answer. Quote verse
   }
 });
 
-/* ---------------------- Root & Admin ---------------------- */
+/* ---------------- Root & Admin ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} with RAG is running ✅`));
 
-// choose ingest command: prefer ingest_all.cjs if present else ingest_all.js
 function findIngestScript() {
   const cjs = path.join(process.cwd(), "ingest_all.cjs");
   const js = path.join(process.cwd(), "ingest_all.js");
@@ -373,5 +359,5 @@ app.get("/test-retrieval", async (req, res) => {
   }
 });
 
-/* ---------------------- Start server ---------------------- */
+/* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
