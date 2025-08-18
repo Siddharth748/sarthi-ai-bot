@@ -122,20 +122,42 @@ async function processCsvFile(filename, sourceName) {
     }
 
     // Build vectors ensuring array type
-    const vectors = chunk.map((row, idx) => {
-      const id = rowToId(row, i + idx, sourceName);
-      return {
-        id: id,
-        values: embeddings[idx],
-        metadata: {
-          source: sourceName,
-          id: id,
-          chapter: row["Chapter"] || row.chapter || "",
-          verse: row["Verse"] || row.verse || "",
-          tags: row.tags || ""
-        }
-      };
-    });
+    // --- Build vectors with richer metadata (replace previous metadata block) ---
+const vectors = chunk.map((row, idx) => {
+  const id = rowToId(row, i + idx, sourceName);
+
+  // try several common CSV column names to be flexible
+  const reference   = (row["Source ID"] || row.source_id || row.reference || row.Reference || id || "").toString();
+  const sanskrit    = (row["Sanskrit verse"] || row.sanskrit || row["Sanskrit"] || "").toString();
+  const hinglish1   = (row["Hinglish (1)"] || row.hinglish || row.hinglish1 || "").toString();
+  const hinglish2   = (row["Hinglish (2)"] || row.hinglish2 || "").toString();
+  const translation = (row["Translation (English)"] || row.translation || row["translation_hinglish"] || "").toString();
+  const summary     = (row["Summary"] || row.summary || "").toString();
+  const chapter     = (row["Chapter"] || row.chapter || "").toString();
+  const verseNo     = (row["Verse"] || row.verse || "").toString();
+  const tags        = (row["tags"] || row.tags || "").toString();
+
+  return {
+    id: id,
+    values: embeddings[idx],
+    metadata: {
+      source: sourceName,
+      id: id,
+      reference: reference,
+      chapter: chapter,
+      verse: verseNo,
+      tags: tags,
+      sanskrit: sanskrit,
+      hinglish1: hinglish1,
+      hinglish2: hinglish2,
+      translation: translation,
+      summary: summary,
+      // optional: keep a short preview text field to show quickly
+      preview: (sanskrit || translation || hinglish1 || "").slice(0, 400)
+    }
+  };
+});
+
 
     // Debug check — ensure vectors is array
     if (!Array.isArray(vectors)) throw new Error("Vectors is not an array unexpectedly");
