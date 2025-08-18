@@ -1,9 +1,10 @@
-// index.js — SarathiAI with OpenAI integration (ESM)
+// index.js — SarathiAI (ESM) with /train and /test endpoints
 import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import axios from "axios";
-
-dotenv.config();
+import { spawn } from "child_process";
 
 const app = express();
 app.use(express.json());
@@ -17,7 +18,8 @@ const GS_API_KEY = (process.env.GS_API_KEY || "").trim();
 const GS_SOURCE  = (process.env.GS_SOURCE  || "").trim();
 const SEND_URL   = (process.env.GUPSHUP_SEND_URL || "https://api.gupshup.io/wa/api/v1/msg").trim();
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
-const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim(); // change if you prefer another model
+const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim(); // default model
+const TRAIN_SECRET = process.env.TRAIN_SECRET || null; // protect /train and /test
 
 // Startup debug (safe: masked)
 console.log(`\n🚀 ${BOT_NAME} starting...`);
@@ -27,7 +29,8 @@ console.log("📦 SEND_URL  :", SEND_URL);
 console.log("📦 OPENAI_KEY:", OPENAI_KEY ? "[LOADED]" : "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, "\n");
 
-// Helper: send via Gupshup (form-encoded)
+// -------------------- Helpers --------------------
+
 async function sendViaGupshup(destination, replyText) {
   if (!GS_API_KEY || !GS_SOURCE) {
     console.warn("⚠ Gupshup key/source missing — simulating send:");
@@ -51,7 +54,6 @@ async function sendViaGupshup(destination, replyText) {
       timeout: 15000
     });
     console.log("✅ Gupshup send status:", resp.status);
-    console.log("Gupshup response body:", typeof resp.data === "object" ? JSON.stringify(resp.data) : resp.data);
     return { ok: true, resp: resp.data };
   } catch (err) {
     console.error("❌ Error sending to Gupshup:", err?.response?.status, err?.response?.data || err.message);
@@ -59,7 +61,6 @@ async function sendViaGupshup(destination, replyText) {
   }
 }
 
-// Helper: call OpenAI Chat Completions
 async function callOpenAI(promptMessages) {
   if (!OPENAI_KEY) {
     console.warn("⚠ OPENAI_API_KEY not set — skipping OpenAI call.");
@@ -82,7 +83,6 @@ async function callOpenAI(promptMessages) {
       timeout: 20000
     });
 
-    // safe access to AI answer
     const content = resp.data?.choices?.[0]?.message?.content || resp.data?.choices?.[0]?.text || null;
     console.log("✅ OpenAI raw response (trim):", typeof content === "string" ? content.slice(0,200) : content);
     return content;
@@ -92,38 +92,48 @@ async function callOpenAI(promptMessages) {
   }
 }
 
-// Robust extractor for phone & text (works with Gupshup shapes)
+// Robust extractor for phone & text (handles multiple Gupshup shapes)
 function extractPhoneAndText(body) {
-  if (!body) return { phone: null, text: null };
-  let phone = null, text = null;
-  if (body.payload) {
-    phone = body.payload?.sender?.phone || body.payload?.source || phone;
-    text  = body.payload?.payload?.text || body.payload?.text || text;
+  if (!body) return { phone: null, text: null, rawType: null };
+
+  let phone = null, text = null, rawType = null;
+  rawType = body.type || null;
+
+  // Case: body.type === "message" (typical user message)
+  if (body.type === "message" && body.payload) {
+    phone = body.payload?.sender?.phone || body.payload?.source || null;
+    text  = body.payload?.payload?.text || body.payload?.text || (typeof body.payload?.payload === "string" ? body.payload.payload : null);
+    if (!text && body.payload?.payload?.caption) text = body.payload.payload.caption;
   }
-  phone = phone || body.sender?.phone || body.from || body.source || null;
-  text  = text  || body.text || body.message?.text || null;
+
+  // Alternate shapes
+  if (!phone) phone = body.sender?.phone || body.source || body.from || null;
+  if (!text) text = body.payload?.text || body.text || body.message?.text || null;
+
   if (phone) phone = String(phone).replace(/\D/g, "");
-  return { phone, text };
+
+  return { phone, text, rawType };
 }
 
-// System prompt: Krishna teachings, friendly & compassionate, modern tone
+// System prompt for SarathiAI
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate self-help assistant inspired by the teachings of Lord Krishna (Bhagavad Gita).
 Answer in a modern, empathetic, and practical way. Use short paragraphs, gentle encouragement, and sometimes a small verse-like sentence for comfort.
 Do NOT give medical, legal, or financial instructions; if the user needs those, advise consulting a qualified professional.
 Be respectful of diverse beliefs; do not preach or coerce. Keep responses concise (around 2-4 short paragraphs) unless user asks for more detail.`;
 
-// Webhook
+// -------------------- Webhook handler --------------------
+
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("Inbound payload:", JSON.stringify(req.body, null, 2));
-    const { phone, text } = extractPhoneAndText(req.body);
-    console.log("Detected userPhone:", phone, " userText:", text);
-
-    // ACK quickly
+    console.log("Inbound raw payload:", JSON.stringify(req.body));
+    // ACK quickly so Gupshup doesn't retry
     res.status(200).send("OK");
 
-    if (!text || !phone) {
-      console.log("ℹ No text or phone — skipping AI reply.");
+    const { phone, text, rawType } = extractPhoneAndText(req.body);
+    console.log("Detected rawType:", rawType, "Detected userPhone:", phone, " userText:", text);
+
+    if (!phone || !text) {
+      console.log("ℹ No actionable user message found — skipping AI reply.");
       return;
     }
 
@@ -133,15 +143,12 @@ app.post("/webhook", async (req, res) => {
       { role: "user", content: text }
     ];
 
-    // Call OpenAI
     const aiReply = await callOpenAI(messages);
 
-    // If OpenAI failed, fallback to a gentle default reply
     const finalReply = aiReply && aiReply.trim().length > 0
       ? aiReply.trim()
       : `Hare Krishna 🙏 — I heard: "${text}". I'm here to help. Could you tell me a little more so I can respond better?`;
 
-    // Send via Gupshup
     const sendResult = await sendViaGupshup(phone, finalReply);
     if (!sendResult.ok && !sendResult.simulated) {
       console.error("❗ Problem sending reply:", sendResult);
@@ -152,6 +159,60 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// Simple root endpoint
 app.get("/", (_req, res) => res.send(`${BOT_NAME} with AI is running ✅`));
 
+// ---------- Admin endpoints: /train and /test (protected by TRAIN_SECRET) ----------
+
+function runCommand(cmd, args = [], onOutput, onExit) {
+  const proc = spawn(cmd, args, { shell: true });
+  proc.stdout.on("data", (d) => onOutput && onOutput(d.toString()));
+  proc.stderr.on("data", (d) => onOutput && onOutput(d.toString()));
+  proc.on("close", (code) => onExit && onExit(code));
+  return proc;
+}
+
+// /train: runs ingest_all.js and streams the output
+app.get("/train", (req, res) => {
+  const secret = req.query.secret;
+  if (!TRAIN_SECRET || secret !== TRAIN_SECRET) {
+    return res.status(403).send("Forbidden");
+  }
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.write("Starting ingestion...\n\n");
+  runCommand("node", ["ingest_all.js"],
+    (line) => {
+      try { res.write(line.replace(/\x1b\\[[0-9;]*m/g, "")); } catch(e){}
+    },
+    (code) => {
+      res.write(`\nProcess exited with code ${code}\n`);
+      res.end();
+    }
+  );
+});
+
+// /test: runs retrieve_and_answer.js with a query and streams output
+app.get("/test", (req, res) => {
+  const secret = req.query.secret;
+  if (!TRAIN_SECRET || secret !== TRAIN_SECRET) {
+    return res.status(403).send("Forbidden");
+  }
+  const query = req.query.query || "I am stressed about my exams";
+  const concern = req.query.concern || "stress";
+  const subtopic = req.query.subtopic || "general";
+
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.write(`Running test for query: ${query}\n\n`);
+  runCommand("node", ["retrieve_and_answer.js", query, concern, subtopic],
+    (line) => {
+      try { res.write(line); } catch(e){}
+    },
+    (code) => {
+      res.write(`\nDone (exit code ${code})\n`);
+      res.end();
+    }
+  );
+});
+
+// Start server
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
