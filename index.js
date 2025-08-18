@@ -178,19 +178,25 @@ Reply with the number or type your concern (for example: "I'm stressed about exa
 
 /* ---------------------- Format retrieved items ---------------------- */
 function formatRetrievedItems(matches) {
-  // build readable blocks including sanskrit/hinglish/translation/summary/ref
   return (matches || []).map(m => {
     const md = m?.metadata || {};
     const ref = md.reference || md.ref || md.id || m.id || "unknown";
-    const sanskrit = md.sanskrit || md.Sanskrit || "";
-    const hinglish = md.hinglish || md["Hinglish"] || md.hinglish1 || "";
-    const translation = md.translation || md["Translation (English)"] || md.english || "";
-    const summary = md.summary || md["Summary"] || "";
-    return `Ref:${ref}
-Sanskrit: ${sanskrit}
-Hinglish: ${hinglish}
-Translation: ${translation}
-Summary: ${summary}`.trim();
+    const sanskrit = (md.sanskrit || md.Sanskrit || "").trim();
+    const hinglish = (md.hinglish1 || md.hinglish || md.Hinglish || md.hinglish2 || "").trim();
+    const translation = (md.translation || md["Translation (English)"] || md.english || "").trim();
+    const summary = (md.summary || md["Summary"] || "").trim();
+    const preview = md.preview || "";
+
+    // Compose a short block that’s safe if some fields are empty
+    const parts = [];
+    parts.push(`Ref:${ref}`);
+    if (sanskrit) parts.push(`Sanskrit: ${sanskrit}`);
+    if (hinglish) parts.push(`Hinglish: ${hinglish}`);
+    if (translation) parts.push(`Translation: ${translation}`);
+    if (summary) parts.push(`Summary: ${summary}`);
+    if (!sanskrit && !translation && preview) parts.push(`Preview: ${preview}`);
+
+    return parts.join("\n");
   }).join("\n\n---\n\n");
 }
 
