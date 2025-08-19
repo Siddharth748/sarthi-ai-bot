@@ -188,18 +188,22 @@ function formatRetrievedItems(matches) {
   }).join("\n\n---\n\n");
 }
 
-/* ---------------- System prompt ---------------- */
+// ---------------- updated SYSTEM_PROMPT (strict, no-hallucination) ----------------
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, short paragraphs.
-IMPORTANT: Use ONLY the provided Retrieved Contexts (below) to answer. Do NOT make up or hallucinate verses.
 
-Behavior:
-1) Begin response with: "Shri Krishna kehte hain:" followed by a one-line essence.
-2) If a retrieved verse includes Sanskrit/Hinglish, quote up to two short lines of Sanskrit (if present) and provide the Hinglish line.
-3) Give a short (2-4 sentence) applied explanation tailored to the user's message.
-4) If a short practice is available, suggest it (<= 90s).
-5) End with "Ref: <id1>, <id2>" listing used references.
-If the retrieved contexts are insufficient, say so gently and offer a short practice or ask a clarifying question.`;
+CRITICAL RULES (must follow exactly):
+- Use ONLY the content present in the "Retrieved Contexts" supplied by the system prompt. Do NOT invent any additional verse lines, Sanskrit, transliterations, translations, or summaries.
+- If a retrieved item does NOT include a "Sanskrit" field, DO NOT output any Sanskrit for that item. Do not guess, paraphrase, or invent.
+- If a retrieved item includes "Hinglish" or "Translation", you may quote those lines verbatim. If missing, do not invent them.
+- Begin the reply with: `Shri Krishna kehte hain:` followed by a 1-line essence.
+- Then provide a 2-4 sentence applied explanation tailored to the user's message.
+- If a short practice is available in the retrieved items, suggest it (<= 90s).
+- End with `Ref: <id1>, <id2>` listing only the reference IDs present in the retrieved metadata.
+- If retrieved contexts are insufficient for a verse-based answer, say so gently and offer a short practice or ask for clarification.
+
+Always be explicit about which references you used and never pretend a verse exists where it doesn't.`;
+
 
 /* ---------------- Webhook handler ---------------- */
 app.post("/webhook", async (req, res) => {
@@ -271,14 +275,36 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 3d) Build prompt with retrieved contexts
-    const contextText = formatRetrievedItems(matches);
-    const userPrompt = `User message: ${incoming}
+    // 3d) Build prompt with retrieved contexts (safe — explicitly mark which fields exist)
+const contextText = formatRetrievedItems(matches);
+
+// build a short machine-readable availability map so the model knows what it may quote
+const availability = (matches || []).map(m => {
+  const md = m?.metadata || {};
+  return {
+    id: m.id,
+    reference: md.reference || md.ref || md.id || m.id,
+    hasSanskrit: !!(md.sanskrit && String(md.sanskrit).trim()),
+    hasHinglish: !!( (md.hinglish1 && String(md.hinglish1).trim()) || (md.hinglish && String(md.hinglish).trim()) ),
+    hasTranslation: !!( (md.translation && String(md.translation).trim()) || (md["Translation (English)"] && String(md["Translation (English)"]).trim()) )
+  };
+});
+
+const availabilityText = "Availability (do not invent):\n" + availability.map(a => {
+  return `- ${a.reference}: Sanskrit:${a.hasSanskrit ? "YES" : "NO"}, Hinglish:${a.hasHinglish ? "YES" : "NO"}, Translation:${a.hasTranslation ? "YES" : "NO"}`;
+}).join("\n");
+
+const userPrompt = `User message: ${incoming}
 
 Retrieved Contexts:
-${contextText}
+${contextText || "(none)"}
 
-Follow these rules: Use ONLY the retrieved contexts above to answer. Quote verse lines if present, then give applied advice, then cite references.`;
+${availabilityText}
+
+IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Translation text is actually present for each reference. 
+You MUST NOT invent or paraphrase Sanskrit lines where Availability shows "Sanskrit:NO". 
+Use ONLY fields that exist (Sanskrit, Hinglish, Translation, Summary) as provided above. 
+Answer concisely, then cite references in "Ref: id1, id2" format.`;
 
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
