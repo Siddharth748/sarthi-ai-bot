@@ -206,22 +206,57 @@ function extractPhoneAndText(body) {
 }
 
 /* ---------------- Greeting / Small talk detection ---------------- */
+/* ---------------- Greeting / Small talk detection (improved) ---------------- */
+
+// normalize: lowercase, remove punctuation (except apostrophes), convert " u " to " you ", collapse spaces
+function normalizeTextForSmallTalk(s) {
+  if (!s) return "";
+  let t = String(s).trim().toLowerCase();
+  // replace common texting contractions
+  t = t.replace(/\bu\b/g, "you");           // u -> you
+  t = t.replace(/\br\b/g, "are");           // r -> are
+  t = t.replace(/\bpls\b/g, "please");
+  t = t.replace(/[^\w'\s]/g, " ");          // remove punctuation except apostrophes
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
 function isGreeting(text) {
   if (!text) return false;
-  const t = text.trim().toLowerCase();
-  const simple = ["hi","hii","hello","hey","namaste","hare krishna","harekrishna","good morning","good evening","gm","greetings"];
-  if (simple.includes(t)) return true;
-  if (/^h+i+!*$/.test(t)) return true;
+  const t = normalizeTextForSmallTalk(text);
+  const greetings = new Set([
+    "hi","hii","hello","hey","namaste","hare krishna","harekrishna",
+    "good morning","good afternoon","good evening","gm","greetings"
+  ]);
+  if (greetings.has(t)) return true;
+  // quick heuristics
+  if (/^(h+i+|hey+)$/.test(t)) return true;
   if (t.length <= 8 && /\b(hello|hi|hey|namaste|hare)\b/.test(t)) return true;
   return false;
 }
+
 function isSmallTalk(text) {
   if (!text) return false;
-  const t = text.trim().toLowerCase();
-  const smalls = ["how are you","how r u","how ru","how are u","how's it going","whats up","what's up","thanks","thank you","ok","okay","good","nice","cool","bye","see you","k"];
-  if (smalls.includes(t)) return true;
+  const t = normalizeTextForSmallTalk(text);
+
+  // exact short phrases to treat as small-talk
+  const smalls = new Set([
+    "how are you", "how are you doing", "how are you doing today",
+    "how r you", "how r u", "how ru", "how are u",
+    "how is it going", "how is it going", "hows it going", "whats up", "what is up",
+    "thank you", "thanks", "thx", "ok", "okay", "good", "nice", "cool",
+    "bye", "see you", "k", "morning", "good night"
+  ]);
+
+  if (smalls.has(t)) return true;
+
+  // short sentences with no "help/need/please" or "?" treated as small talk
   const words = t.split(/\s+/).filter(Boolean);
-  if (words.length <= 3 && !t.includes("?") && !t.includes("please") && !t.includes("need") && !t.includes("help")) return true;
+  if (words.length <= 4 && !/\b(help|need|please|advice|how to|why|what|when|where)\b/.test(t)) return true;
+
+  // questions like "how are you" variant
+  if (/\bhow\b/.test(t) && t.length < 40 && !/\b(problem|stress|anxious|angry|help|need)\b/.test(t)) return true;
+
   return false;
 }
 
