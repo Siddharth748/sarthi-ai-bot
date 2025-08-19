@@ -1,4 +1,4 @@
-// index.js — SarathiAI (ESM) with greeting/small-talk + RAG
+// index.js — SarathiAI (ESM) with strict no-hallucination prompt + greeting/small-talk + RAG
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -12,29 +12,25 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ---------------- Config / env ---------------- */
+/* -------------- Config / env -------------- */
 const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
-// Gupshup
 const GS_API_KEY = (process.env.GS_API_KEY || "").trim();
 const GS_SOURCE = (process.env.GS_SOURCE || "").trim();
 const SEND_URL = (process.env.GUPSHUP_SEND_URL || "https://api.gupshup.io/wa/api/v1/msg").trim();
 
-// OpenAI
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
 
-// Pinecone
-const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim(); // e.g. https://<index>-<proj>.svc.us-east-1.pinecone.io
+const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
 const PINECONE_NAMESPACE = process.env.PINECONE_NAMESPACE || "verses";
 
-// Admin secret
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
-/* ---------------- Startup logs ---------------- */
+/* -------------- Startup logs -------------- */
 console.log("\n🚀", BOT_NAME, "starting...");
 console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, " EMBED_MODEL:", EMBED_MODEL);
@@ -42,8 +38,7 @@ console.log("📦 PINECONE_HOST:", PINECONE_HOST ? "[LOADED]" : "[MISSING]");
 console.log("📦 TRAIN_SECRET:", TRAIN_SECRET ? "[LOADED]" : "[MISSING]");
 console.log();
 
-/* ---------------- Helpers ---------------- */
-
+/* -------------- Helpers -------------- */
 async function sendViaGupshup(destination, replyText) {
   if (!GS_API_KEY || !GS_SOURCE) {
     console.warn("⚠ Gupshup key/source missing — simulating send:");
@@ -103,7 +98,7 @@ async function pineconeQuery(vector, topK = 3, namespace = PINECONE_NAMESPACE) {
   return resp.data;
 }
 
-/* ---------------- Payload extraction ---------------- */
+/* -------------- Payload extraction -------------- */
 function extractPhoneAndText(body) {
   if (!body) return { phone: null, text: null, rawType: null };
   let phone = null, text = null;
@@ -120,7 +115,7 @@ function extractPhoneAndText(body) {
   return { phone, text, rawType };
 }
 
-/* ---------------- Greeting & small-talk detection ---------------- */
+/* -------------- Greeting & small-talk detection -------------- */
 function isGreeting(text) {
   if (!text) return false;
   const t = text.trim().toLowerCase();
@@ -144,7 +139,7 @@ function isSmallTalk(text) {
   return false;
 }
 
-/* ---------------- Message templates ---------------- */
+/* -------------- Message templates -------------- */
 const WELCOME_TEMPLATE = `Hare Krishna 🙏
 
 I am Sarathi, your companion on this journey.
@@ -169,7 +164,7 @@ If you'd like, pick one:
 
 Reply with the number or type your concern (for example: "I'm stressed about exams").`;
 
-/* ---------------- Format retrieved items ---------------- */
+/* -------------- Format retrieved items -------------- */
 function formatRetrievedItems(matches) {
   return (matches || []).map(m => {
     const md = m?.metadata || {};
@@ -188,7 +183,7 @@ function formatRetrievedItems(matches) {
   }).join("\n\n---\n\n");
 }
 
-// ---------------- updated SYSTEM_PROMPT (strict, no-hallucination) ----------------
+/* -------------- Strict system prompt (no hallucinations) -------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, short paragraphs.
 
@@ -196,21 +191,19 @@ CRITICAL RULES (must follow exactly):
 - Use ONLY the content present in the "Retrieved Contexts" supplied by the system prompt. Do NOT invent any additional verse lines, Sanskrit, transliterations, translations, or summaries.
 - If a retrieved item does NOT include a "Sanskrit" field, DO NOT output any Sanskrit for that item. Do not guess, paraphrase, or invent.
 - If a retrieved item includes "Hinglish" or "Translation", you may quote those lines verbatim. If missing, do not invent them.
-- Begin the reply with: `Shri Krishna kehte hain:` followed by a 1-line essence.
+- Begin the reply with: Shri Krishna kehte hain: followed by a 1-line essence (put that exact prefix text).
 - Then provide a 2-4 sentence applied explanation tailored to the user's message.
 - If a short practice is available in the retrieved items, suggest it (<= 90s).
-- End with `Ref: <id1>, <id2>` listing only the reference IDs present in the retrieved metadata.
-- If retrieved contexts are insufficient for a verse-based answer, say so gently and offer a short practice or ask for clarification.
+- End with Ref: <id1>, <id2> listing only the reference IDs used.
+- If the retrieved contexts are insufficient for a verse-based answer, say so gently and offer a short practice or ask for clarification.
 
-Always be explicit about which references you used and never pretend a verse exists where it doesn't.`;
+Always explicitly list the references you used and never pretend a verse exists where it doesn't.`;
 
-
-/* ---------------- Webhook handler ---------------- */
+/* -------------- Webhook handler -------------- */
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Inbound raw payload:", JSON.stringify(req.body));
-    // ACK immediately
-    res.status(200).send("OK");
+    res.status(200).send("OK"); // ack fast
 
     const { phone, text } = extractPhoneAndText(req.body);
     console.log("Detected userPhone:", phone, "userText:", text);
@@ -222,22 +215,19 @@ app.post("/webhook", async (req, res) => {
 
     const incoming = String(text).trim();
 
-    // 1) Greeting -> welcome
     if (isGreeting(incoming)) {
       console.log("ℹ Detected greeting — sending welcome.");
       await sendViaGupshup(phone, WELCOME_TEMPLATE);
       return;
     }
 
-    // 2) Small talk -> short menu
     if (isSmallTalk(incoming)) {
       console.log("ℹ Detected small-talk — sending menu.");
       await sendViaGupshup(phone, SMALLTALK_REPLY);
       return;
     }
 
-    // 3) Substantive query -> RAG flow
-    // 3a) embed
+    // Embed
     let qVec;
     try {
       qVec = await openaiEmbedding(incoming);
@@ -249,7 +239,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 3b) query Pinecone (topK=3)
+    // Pinecone query
     let pineResp;
     try {
       pineResp = await pineconeQuery(qVec, 3);
@@ -264,7 +254,7 @@ app.post("/webhook", async (req, res) => {
     const matches = pineResp?.matches || [];
     console.log("ℹ Retrieved matches count:", matches.length, matches.map(m => m.id));
 
-    // 3c) If retrieval is weak, fallback to practice or clarifying Q
+    // If retrieval weak -> fallback practice
     const topScore = matches[0]?.score ?? 0;
     if (!matches.length || topScore < 0.12) {
       console.log("⚠ Retrieval weak or empty (score:", topScore, ") — sending gentle fallback practice.");
@@ -275,43 +265,39 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 3d) Build prompt with retrieved contexts (safe — explicitly mark which fields exist)
-const contextText = formatRetrievedItems(matches);
+    // Build contextText and availability map
+    const contextText = formatRetrievedItems(matches);
 
-// build a short machine-readable availability map so the model knows what it may quote
-const availability = (matches || []).map(m => {
-  const md = m?.metadata || {};
-  return {
-    id: m.id,
-    reference: md.reference || md.ref || md.id || m.id,
-    hasSanskrit: !!(md.sanskrit && String(md.sanskrit).trim()),
-    hasHinglish: !!( (md.hinglish1 && String(md.hinglish1).trim()) || (md.hinglish && String(md.hinglish).trim()) ),
-    hasTranslation: !!( (md.translation && String(md.translation).trim()) || (md["Translation (English)"] && String(md["Translation (English)"]).trim()) )
-  };
-});
+    const availability = (matches || []).map(m => {
+      const md = m?.metadata || {};
+      return {
+        id: m.id,
+        reference: md.reference || md.ref || md.id || m.id,
+        hasSanskrit: !!(md.sanskrit && String(md.sanskrit).trim()),
+        hasHinglish: !!((md.hinglish1 && String(md.hinglish1).trim()) || (md.hinglish && String(md.hinglish).trim())),
+        hasTranslation: !!((md.translation && String(md.translation).trim()) || (md["Translation (English)"] && String(md["Translation (English)"]).trim()))
+      };
+    });
 
-const availabilityText = "Availability (do not invent):\n" + availability.map(a => {
-  return `- ${a.reference}: Sanskrit:${a.hasSanskrit ? "YES" : "NO"}, Hinglish:${a.hasHinglish ? "YES" : "NO"}, Translation:${a.hasTranslation ? "YES" : "NO"}`;
-}).join("\n");
+    const availabilityText = "Availability (do not invent):\n" + availability.map(a => {
+      return `- ${a.reference}: Sanskrit:${a.hasSanskrit ? "YES" : "NO"}, Hinglish:${a.hasHinglish ? "YES" : "NO"}, Translation:${a.hasTranslation ? "YES" : "NO"}`;
+    }).join("\n");
 
-const userPrompt = `User message: ${incoming}
+    const userPrompt = `User message: ${incoming}
 
 Retrieved Contexts:
 ${contextText || "(none)"}
 
 ${availabilityText}
 
-IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Translation text is actually present for each reference. 
-You MUST NOT invent or paraphrase Sanskrit lines where Availability shows "Sanskrit:NO". 
-Use ONLY fields that exist (Sanskrit, Hinglish, Translation, Summary) as provided above. 
-Answer concisely, then cite references in "Ref: id1, id2" format.`;
+IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Translation text is actually present for each reference. You MUST NOT invent or paraphrase Sanskrit lines where Availability shows "Sanskrit:NO". Use ONLY fields that exist (Sanskrit, Hinglish, Translation, Summary) as provided above. Answer concisely, then cite references in "Ref: id1, id2" format.`;
 
     const messages = [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: userPrompt }
     ];
 
-    // 4) Call OpenAI chat for final reply
+    // Call OpenAI chat
     let finalReply = null;
     try {
       const aiReply = await openaiChat(messages, 700);
@@ -324,7 +310,7 @@ Answer concisely, then cite references in "Ref: id1, id2" format.`;
       finalReply = `Hare Krishna 🙏 — I heard: "${incoming}". I am here to help. Could you tell me a little more?`;
     }
 
-    // 5) Send reply
+    // Send reply
     const sendResult = await sendViaGupshup(phone, finalReply);
     if (!sendResult.ok && !sendResult.simulated) {
       console.error("❗ Problem sending reply:", sendResult);
@@ -336,7 +322,7 @@ Answer concisely, then cite references in "Ref: id1, id2" format.`;
   }
 });
 
-/* ---------------- Root & Admin ---------------- */
+/* -------------- Root & Admin -------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} with RAG is running ✅`));
 
 function findIngestScript() {
@@ -385,5 +371,5 @@ app.get("/test-retrieval", async (req, res) => {
   }
 });
 
-/* ---------------- Start server ---------------- */
+/* -------------- Start server -------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
