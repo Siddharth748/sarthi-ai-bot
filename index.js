@@ -1,4 +1,4 @@
-// index.js — SarathiAI (final) — RAG-enabled, ESM (copy-paste)
+// index.js — SarathiAI (final) — RAG-enabled, ESM, verse-preferring
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -40,7 +40,7 @@ console.log("📦 PINECONE_NAMESPACE(s):", PINECONE_NAMESPACES ? PINECONE_NAMESP
 console.log("📦 TRAIN_SECRET:", TRAIN_SECRET ? "[LOADED]" : "[MISSING]");
 console.log();
 
-/* ---------------- Helpers: Gupshup & OpenAI ---------------- */
+/* ---------------- Helpers ---------------- */
 async function sendViaGupshup(destination, replyText) {
   if (!GS_API_KEY || !GS_SOURCE) {
     console.warn("⚠ Gupshup key/source missing — simulating send:");
@@ -130,13 +130,20 @@ async function multiNamespaceQuery(vector, topK = 5, filter = undefined) {
   });
   const arr = await Promise.all(promises);
   const allMatches = arr.flat();
-  allMatches.sort((a,b) => (b.score || 0) - (a.score || 0));
+  // prioritize: any item with metadata.sanskrit or namespace 'verse' should come first
+  allMatches.sort((a,b) => {
+    const scoreA = a.score || 0, scoreB = b.score || 0;
+    const va = ((a.metadata||{}).sanskrit ? 1000 : 0) + ((a._namespace === "verse") ? 500 : 0) + scoreA;
+    const vb = ((b.metadata||{}).sanskrit ? 1000 : 0) + ((b._namespace === "verse") ? 500 : 0) + scoreB;
+    return vb - va;
+  });
   return allMatches;
 }
 
 /* ---------------- Find verse by commentary reference ---------------- */
 async function findVerseByReference(reference, queryVector = null) {
   if (!reference) return null;
+  // normalize a few common formats to search in the verse namespace
   const tries = [
     reference,
     reference.trim(),
@@ -145,11 +152,11 @@ async function findVerseByReference(reference, queryVector = null) {
     reference.trim().toUpperCase(),
     reference.trim().toLowerCase(),
     reference.replace(/\./g, ""),
-    reference.replace(/\./g,"").replace(/\s+/g,"_")
-  ].filter((v, i, a) => v && a.indexOf(v) === i);
+    reference.replace(/\./g,"").replace(/\s+/g,"_"),
+    reference.replace(/Gita\s*/i, "Gita ")
+  ].filter((v,i,a) => v && a.indexOf(v)===i);
 
-  const nsList = getNamespacesArray();
-  let verseNs = nsList.find(n => n.toLowerCase().includes("verse")) || nsList[0];
+  const verseNs = getNamespacesArray().find(n => n.toLowerCase().includes("verse")) || getNamespacesArray()[0];
 
   for (const t of tries) {
     try {
@@ -157,9 +164,9 @@ async function findVerseByReference(reference, queryVector = null) {
       const filter = { reference: { "$eq": t } };
       const res = await pineconeQuery(vec, 1, verseNs, filter);
       const matches = res?.matches || [];
-      if (matches.length) return matches[0];
+      if (matches.length) return { ...matches[0], _namespace: verseNs };
     } catch (e) {
-      console.warn("❗ findVerseByReference failed for", t, e?.message || e);
+      // ignore & continue tries
     }
   }
   return null;
@@ -182,7 +189,7 @@ function extractPhoneAndText(body) {
   return { phone, text, rawType };
 }
 
-/* ---------------- Greeting & Small talk detection (improved) ---------------- */
+/* ---------------- Greeting & Small talk detection ---------------- */
 function normalizeTextForSmallTalk(s) {
   if (!s) return "";
   let t = String(s).trim().toLowerCase();
@@ -193,47 +200,29 @@ function normalizeTextForSmallTalk(s) {
   t = t.replace(/\s+/g, " ").trim();
   return t;
 }
-
-const CONCERN_KEYWORDS = new Set([
-  "stress","anxiety","depressed","depression","angry","anger",
-  "sleep","insomnia","panic","suicidal","sad","lonely","stressed"
-]);
-
+const CONCERN_KEYWORDS = new Set(["stress","anxiety","depressed","depression","angry","anger","sleep","insomnia","panic","sad","lonely","stressed"]);
 function isGreeting(text) {
   if (!text) return false;
   const t = normalizeTextForSmallTalk(text);
-  const greetings = new Set([
-    "hi","hii","hello","hey","namaste","hare krishna","harekrishna",
-    "good morning","good afternoon","good evening","gm","greetings"
-  ]);
+  const greetings = new Set(["hi","hii","hello","hey","namaste","hare krishna","harekrishna","good morning","good afternoon","good evening","gm","greetings"]);
   if (greetings.has(t)) return true;
   if (/^(h+i+|hey+)$/.test(t)) return true;
   if (t.length <= 8 && /\b(hello|hi|hey|namaste|hare)\b/.test(t)) return true;
   return false;
 }
-
 function isSmallTalk(text) {
   if (!text) return false;
   const t = normalizeTextForSmallTalk(text);
-
   if (CONCERN_KEYWORDS.has(t)) return false;
-
-  const smalls = new Set([
-    "how are you","how are you doing","how are you doing today",
-    "how r you","how ru","how are u","how is it going","hows it going",
-    "whats up","what is up","thank you","thanks","thx","ok","okay",
-    "good","nice","cool","bye","see you","k","morning","good night"
-  ]);
+  const smalls = new Set(["how are you","how are you doing","how r you","how ru","how are u","how is it going","whats up","thank you","thanks","ok","okay","good","nice","cool","bye","see you","k"]);
   if (smalls.has(t)) return true;
-
   const words = t.split(/\s+/).filter(Boolean);
   if (words.length <= 3 && !/\b(help|need|please|advice|how to|why|what|when|where|stress|anxiety|angry|sleep|depressed)\b/.test(t)) return true;
   if (/\bhow\b/.test(t) && t.length < 40 && !/\b(problem|stress|anxious|angry|help|need)\b/.test(t)) return true;
-
   return false;
 }
 
-/* ---------------- Templates ---------------- */
+/* ---------------- Templates & prompts ---------------- */
 const WELCOME_TEMPLATE = `Hare Krishna 🙏
 
 I am Sarathi, your companion on this journey.
@@ -253,7 +242,6 @@ Reply with your concern or pick a number:
 3) Sleep / Calm
 4) Daily practice`;
 
-/* ---------------- System prompt ---------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, concise (2-4 short paragraphs).
 Rules:
@@ -297,14 +285,10 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 1) embed (debug)
+    // 1) embed
     let qVec;
     try {
       qVec = await openaiEmbedding(incoming);
-      console.log("ℹ qVec length:", Array.isArray(qVec) ? qVec.length : "not-array");
-      if (Array.isArray(qVec)) {
-        console.log("ℹ qVec sample[0..7]:", qVec.slice(0, 8).map(n => Number(n).toFixed(6)).join(", "));
-      }
     } catch (e) {
       console.error("❌ Embedding failed:", e?.message || e);
       const ai = await openaiChat([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: incoming }]);
@@ -313,12 +297,11 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 2) retrieval across namespaces (debug)
+    // 2) retrieval (multi-namespace, verse-prioritized)
     let matches = [];
     try {
-      const rawMatches = await multiNamespaceQuery(qVec, 5);
-      matches = rawMatches || [];
-      console.log("ℹ raw retrieval result (top ids & scores):", matches.map(m => ({ id: m.id, score: m.score, ns: m._namespace })));
+      matches = await multiNamespaceQuery(qVec, 8);
+      console.log("ℹ Retrieved matches (top 8):", matches.map(m => ({ id: m.id, score: m.score, ns: m._namespace })));
     } catch (e) {
       console.error("❌ Pinecone query failed:", e?.message || e);
       const ai = await openaiChat([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: incoming }]);
@@ -327,28 +310,22 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    if (!matches || matches.length === 0) {
-      console.log("⚠ Retrieved matches empty for query:", incoming);
-    }
+    // 3) prefer verse match (with content) or attempt to fetch verse by commentary.reference
+    let verseMatch = matches.find(m => (m.metadata||{}).sanskrit || (m.metadata||{}).hinglish1 || (m.metadata||{}).hinglish) ||
+                     matches.find(m => (m._namespace === "verse") && (m.metadata && (m.metadata.sanskrit || m.metadata.hinglish1 || m.metadata.translation)));
 
-    // 3) choose best verse/practice/commentary from matches
-    const verseMatch = matches.find(m => {
-      const md = m.metadata || {};
-      return Boolean(md && (safeText(md, "sanskrit", "Sanskrit", "sanskrit verse") || safeText(md, "hinglish1", "hinglish", "Hinglish", "transliteration_hinglish")));
-    }) || matches.find(m => (String(m.metadata?.reference || m.id || "").toLowerCase().startsWith("gita")) ) || null;
+    // find commentary/practice
+    const commentaryMatch = matches.find(m => (m._namespace === "commentary") || ((m.metadata||{}).source && String((m.metadata||{}).source).toLowerCase().includes("comment")));
+    const practiceMatch = matches.find(m => (m._namespace === "practices") || ((m.metadata||{}).source && String((m.metadata||{}).source).toLowerCase().includes("practice")));
 
-    const commentaryMatch = matches.find(m => ((m.metadata||{}).source || "").toString().toLowerCase().includes("comment") || (m.id||"").toString().toLowerCase().startsWith("comm")) || null;
-    const practiceMatch = matches.find(m => ((m.metadata||{}).source || "").toString().toLowerCase().includes("practice") || (m.id||"").toString().toLowerCase().startsWith("practice") || (m.id||"").toString().toLowerCase().startsWith("breath")) || null;
-
-    // 4) if no verse text but commentary present, attempt to fetch verse by commentary.reference
-    let chosenVerse = verseMatch;
-    if (!chosenVerse && commentaryMatch) {
+    // if no verse but commentary provides a reference, attempt to fetch verse by that reference
+    if (!verseMatch && commentaryMatch) {
       const commentaryRef = safeText(commentaryMatch.metadata, "reference", "Reference", "ref");
       if (commentaryRef) {
         try {
           const found = await findVerseByReference(commentaryRef, qVec);
           if (found) {
-            chosenVerse = found;
+            verseMatch = found;
             console.log("ℹ Found verse by commentary reference:", found.id);
           }
         } catch (e) {
@@ -357,67 +334,57 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // gather refs list (only include non-empty)
+    // prepare refs and texts
     const refs = [];
-    if (chosenVerse) refs.push(chosenVerse.metadata?.reference || chosenVerse.id);
+    if (verseMatch) refs.push(verseMatch.metadata?.reference || verseMatch.id);
     if (commentaryMatch) refs.push(commentaryMatch.metadata?.reference || commentaryMatch.id);
     if (practiceMatch) refs.push(practiceMatch.metadata?.reference || practiceMatch.id);
 
-    // extract texts
-    const verseSanskrit = chosenVerse ? safeText(chosenVerse.metadata, "sanskrit", "Sanskrit", "sanskrit verse") : "";
-    const verseHinglish = chosenVerse ? safeText(chosenVerse.metadata, "hinglish1", "hinglish", "Hinglish (1)", "transliteration_hinglish") : "";
-    const verseTranslation = chosenVerse ? safeText(chosenVerse.metadata, "translation", "Translation (English)", "english") : "";
+    const verseSanskrit = verseMatch ? safeText(verseMatch.metadata, "sanskrit", "Sanskrit", "Sanskrit verse") : "";
+    const verseHinglish = verseMatch ? safeText(verseMatch.metadata, "hinglish1", "hinglish", "transliteration_hinglish") : "";
+    const verseTranslation = verseMatch ? safeText(verseMatch.metadata, "translation", "Translation (English)", "english") : "";
 
     const commentaryText = commentaryMatch ? (safeText(commentaryMatch.metadata, "commentary_summary", "commentary_long", "summary", "commentary") || "") : "";
     const practiceText = practiceMatch ? (safeText(practiceMatch.metadata, "practice_text", "text", "description", "practice") || "") : "";
 
-    // 5) If no verse text present -> fallback to commentary/practice or ask clarifying Q
+    // 4) if no verse content found -> use commentary/practice-only response or ask clarifying question
     if (!verseSanskrit && !verseHinglish) {
-      const ctxParts = [];
-      if (commentaryText) ctxParts.push(`Commentary: ${commentaryText}`);
-      if (practiceText) ctxParts.push(`Practice: ${practiceText}`);
-      const ctx = ctxParts.join("\n\n") || "(no context available)";
-
+      // if commentary or practice exists, build a grounded reply using them (without notarizing "not found")
       if (commentaryText || practiceText) {
-        const systemMsg = `You are SarathiAI — friendly, compassionate. Using ONLY the context below, craft a concise reply (2-4 short paragraphs) to help the user who said: "${incoming}". Begin with a comfort line and offer 1-2 practical suggestions. If a practice is present recommend it. End with "Ref: <ids>" if references exist.`;
-        const userMsg = `Context:\n${ctx}\n\nUser said: "${incoming}"\n\nProduce a short, grounded reply.`;
+        const ctxParts = [];
+        if (commentaryText) ctxParts.push(`Commentary: ${commentaryText}`);
+        if (practiceText) ctxParts.push(`Practice: ${practiceText}`);
+        const systemMsg = `You are SarathiAI. Use ONLY the context below to craft a concise compassionate reply (2-4 short paragraphs). If a practice is present, recommend it. End with "Ref: <ids>" when available.`;
+        const userMsg = `Context:\n${ctxParts.join("\n\n")}\n\nUser said: "${incoming}"\n\nRespond kindly and practically.`;
         let aiResp = null;
         try {
           aiResp = await openaiChat([{ role: "system", content: systemMsg }, { role: "user", content: userMsg }], 400);
         } catch (e) {
           console.warn("OpenAI fallback failed:", e?.message || e);
         }
-
         const replyLines = [];
-        replyLines.push(aiResp && aiResp.trim() ? aiResp.trim() : `I hear you — thank you for sharing. Could you say a bit more about what you're feeling (one short sentence)?`);
-        if (practiceText && !(aiResp || "").includes(practiceText.slice(0,20))) {
-          replyLines.push("", `Practice: ${practiceText}`);
-        }
+        replyLines.push(aiResp && aiResp.trim() ? aiResp.trim() : `I hear you — thank you for sharing. Could you say one sentence more about what's happening?`);
+        if (practiceText && !(aiResp || "").includes(practiceText.slice(0,20))) replyLines.push("", `Practice: ${practiceText}`);
         if (refs.length) replyLines.push("", `Ref: ${refs.join(", ")}`);
         replyLines.push("", "If you'd like, tell me one sentence more about when this started or how often it happens.");
-
         await sendViaGupshup(phone, replyLines.join("\n"));
         return;
       }
 
-      // No context at all -> ask clarifying question + short practice
-      const safeSystem = `You are SarathiAI — empathetic companion. The user message is: "${incoming}". Ask one brief clarifying question to understand their main concern. Offer a short 60-90s breathing practice. Keep tone compassionate.`;
-      const safeUser = `User said: "${incoming}". Ask one clarifying question and offer a short breathing practice.`;
-      let safeAI = null;
-      try {
-        safeAI = await openaiChat([{ role: "system", content: safeSystem }, { role: "user", content: safeUser }], 200);
-      } catch (e) {
-        console.warn("OpenAI safe fallback failed:", e?.message || e);
-      }
+      // no context at all -> ask clarifying question + short practice
       const practiceNow = "Short calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.";
-      const safeReply = (safeAI && safeAI.trim()) ? `${safeAI.trim()}\n\nPractice: ${practiceNow}` : `I hear you — thank you for telling me. Could you say a bit more about what's troubling you (one short sentence)?\n\nPractice: ${practiceNow}`;
+      const safeSystem = `You are SarathiAI — empathetic. Ask one brief clarifying question and offer a short breathing practice.`;
+      const safeUser = `User said: "${incoming}". Ask one clarifying question and offer practice.`;
+      let safeAI = null;
+      try { safeAI = await openaiChat([{ role: "system", content: safeSystem }, { role: "user", content: safeUser }], 200); } catch(e) {}
+      const safeReply = (safeAI && safeAI.trim()) ? `${safeAI.trim()}\n\nPractice: ${practiceNow}` : `I hear you — could you say a bit more (one short sentence)?\n\nPractice: ${practiceNow}`;
       await sendViaGupshup(phone, safeReply);
       return;
     }
 
-    // 6) We have verse text -> build context and ask OpenAI to create final grounded reply
+    // 5) we have verse content -> build context and ask OpenAI for an applied reply
     const contextParts = [];
-    contextParts.push(`Reference: ${chosenVerse.metadata?.reference || chosenVerse.id}`);
+    contextParts.push(`Reference: ${verseMatch.metadata?.reference || verseMatch.id}`);
     if (verseSanskrit) contextParts.push(`Sanskrit: ${verseSanskrit}`);
     if (verseHinglish) contextParts.push(`Hinglish: ${verseHinglish}`);
     if (verseTranslation) contextParts.push(`Translation: ${verseTranslation}`);
@@ -425,7 +392,7 @@ app.post("/webhook", async (req, res) => {
     if (practiceText) contextParts.push(`Practice: ${practiceText}`);
     const contextText = contextParts.join("\n\n");
 
-    const systemMsg = SYSTEM_PROMPT + "\n\nContext follows below. Use ONLY that context to produce the applied guidance.\n";
+    const systemMsg = SYSTEM_PROMPT + `\n\nContext follows below. Use ONLY that context to produce the applied guidance.\n`;
     const userMsg = `User message: "${incoming}"\n\nContext:\n${contextText}\n\nTask: Provide a kind, practical, modern explanation tailored to the user's message. Keep it empathetic and concise (2-4 short paragraphs). If a practice is present, recommend it. End with "Ref: <ids>" listing references used.`;
 
     const messages = [
@@ -440,25 +407,20 @@ app.post("/webhook", async (req, res) => {
       console.error("❌ OpenAI chat failed:", e?.message || e);
     }
 
-    // compose final
     const out = [];
     if (verseSanskrit) out.push(`Shri Krishna kehte hain: "${verseSanskrit}"`);
     if (verseHinglish) out.push(`${verseHinglish}`);
     out.push("");
-    if (aiReply && aiReply.trim()) out.push(aiReply.trim());
-    else out.push("I hear you — thank you for sharing. Could you say a little more so I can help better?");
-    if (practiceText && !(aiReply || "").includes(practiceText.slice(0,20))) {
-      out.push("", `Practice: ${practiceText}`);
-    }
+    out.push(aiReply && aiReply.trim() ? aiReply.trim() : "I hear you — thank you for sharing. Could you say a little more so I can help better?");
+    if (practiceText && !(aiReply || "").includes(practiceText.slice(0,20))) out.push("", `Practice: ${practiceText}`);
     if (refs.length) out.push("", `Ref: ${refs.join(", ")}`);
     out.push("", "Would you like a short 3-day morning practice I can send? Reply YES to try it.");
 
     const finalReply = out.join("\n");
-    console.log("ℹ finalReply (preview 400 chars):", (finalReply || "").slice(0, 400));
+    console.log("ℹ finalReply preview:", (finalReply || "").slice(0,400));
     const sendResult = await sendViaGupshup(phone, finalReply);
     if (!sendResult.ok && !sendResult.simulated) {
       console.error("❗ Problem sending reply:", sendResult);
-      console.log("ℹ sendResult:", sendResult);
     }
 
   } catch (err) {
@@ -477,7 +439,6 @@ function findIngestScript() {
   if (fs.existsSync(js)) return "ingest_all.js";
   return null;
 }
-
 function runCommand(cmd, args = [], onOutput, onExit) {
   const proc = spawn(cmd, args, { shell: true });
   proc.stdout.on("data", (d) => onOutput && onOutput(d.toString()));
@@ -485,7 +446,6 @@ function runCommand(cmd, args = [], onOutput, onExit) {
   proc.on("close", (code) => onExit && onExit(code));
   return proc;
 }
-
 app.get("/train", (req, res) => {
   const secret = req.query.secret;
   if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
@@ -505,7 +465,7 @@ app.get("/test-retrieval", async (req, res) => {
   const query = req.query.query || "I am stressed about exams";
   try {
     const vec = await openaiEmbedding(query);
-    const matches = await multiNamespaceQuery(vec, 5);
+    const matches = await multiNamespaceQuery(vec, 8);
     const ctx = matches.map(m => ({ id: m.id, score: m.score, metadata: m.metadata, namespace: m._namespace }));
     return res.status(200).json({ query, retrieved: ctx });
   } catch (e) {
