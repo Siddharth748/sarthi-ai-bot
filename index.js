@@ -297,16 +297,39 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 1) embed
+        // 1) embed (patched debug)
     let qVec;
     try {
       qVec = await openaiEmbedding(incoming);
+      console.log("ℹ qVec length:", Array.isArray(qVec) ? qVec.length : "not-array");
+      if (Array.isArray(qVec)) {
+        console.log("ℹ qVec sample[0..7]:", qVec.slice(0, 8).map(n => Number(n).toFixed(6)).join(", "));
+      }
     } catch (e) {
       console.error("❌ Embedding failed:", e?.message || e);
       const ai = await openaiChat([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: incoming }]);
       const fallback = ai || `Hare Krishna — I heard: "${incoming}". Could you tell me more?`;
       await sendViaGupshup(phone, fallback);
       return;
+    }
+
+    // 2) retrieval across namespaces (patched debug)
+    let matches = [];
+    try {
+      const rawMatches = await multiNamespaceQuery(qVec, 5);
+      matches = rawMatches || [];
+      console.log("ℹ raw retrieval result (top ids & scores):", matches.map(m => ({ id: m.id, score: m.score, ns: m._namespace })));
+    } catch (e) {
+      console.error("❌ Pinecone query failed:", e?.message || e);
+      const ai = await openaiChat([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: incoming }]);
+      const fallback = ai || `Hare Krishna — I heard: "${incoming}". Could you tell me more?`;
+      await sendViaGupshup(phone, fallback);
+      return;
+    }
+
+    // log empty retrieval event
+    if (!matches || matches.length === 0) {
+      console.log("⚠ Retrieved matches empty for query:", incoming);
     }
 
     // 2) retrieval across namespaces
@@ -435,9 +458,11 @@ app.post("/webhook", async (req, res) => {
     out.push("", "Would you like a short 3-day morning practice I can send? Reply YES to try it.");
 
     const finalReply = out.join("\n");
+        console.log("ℹ finalReply (preview 400 chars):", (finalReply || "").slice(0, 400));
     const sendResult = await sendViaGupshup(phone, finalReply);
     if (!sendResult.ok && !sendResult.simulated) {
       console.error("❗ Problem sending reply:", sendResult);
+          console.log("ℹ sendResult:", sendResult);
     }
 
   } catch (err) {
