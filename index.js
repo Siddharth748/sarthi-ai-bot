@@ -1,4 +1,4 @@
-// index.js — SarathiAI (final) — RAG-enabled, ESM
+// index.js — SarathiAI (final) — RAG-enabled, ESM (copy-paste)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -297,7 +297,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-        // 1) embed (patched debug)
+    // 1) embed (debug)
     let qVec;
     try {
       qVec = await openaiEmbedding(incoming);
@@ -313,7 +313,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 2) retrieval across namespaces (patched debug)
+    // 2) retrieval across namespaces (debug)
     let matches = [];
     try {
       const rawMatches = await multiNamespaceQuery(qVec, 5);
@@ -327,32 +327,28 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // log empty retrieval event
     if (!matches || matches.length === 0) {
       console.log("⚠ Retrieved matches empty for query:", incoming);
     }
 
-    // 2) retrieval across namespaces
-    const matches = await multiNamespaceQuery(qVec, 5);
-    console.log("ℹ Retrieved matches:", matches.map(m => ({ id: m.id, score: m.score, ns: m._namespace })));
-
-    // 3) choose best verse (prefer metadata.sanskrit/hinglish)
-    let verseMatch = matches.find(m => {
+    // 3) choose best verse/practice/commentary from matches
+    const verseMatch = matches.find(m => {
       const md = m.metadata || {};
-      return (md && ((md.sanskrit && md.sanskrit.trim()) || (md.hinglish1 && md.hinglish1.trim()) || (md.hinglish && md.hinglish.trim())));
-    }) || matches.find(m => (m.id || "").toString().toLowerCase().startsWith("gita") || (String(m.metadata?.reference || "").toLowerCase().startsWith("gita")));
+      return Boolean(md && (safeText(md, "sanskrit", "Sanskrit", "sanskrit verse") || safeText(md, "hinglish1", "hinglish", "Hinglish", "transliteration_hinglish")));
+    }) || matches.find(m => (String(m.metadata?.reference || m.id || "").toLowerCase().startsWith("gita")) ) || null;
 
     const commentaryMatch = matches.find(m => ((m.metadata||{}).source || "").toString().toLowerCase().includes("comment") || (m.id||"").toString().toLowerCase().startsWith("comm")) || null;
     const practiceMatch = matches.find(m => ((m.metadata||{}).source || "").toString().toLowerCase().includes("practice") || (m.id||"").toString().toLowerCase().startsWith("practice") || (m.id||"").toString().toLowerCase().startsWith("breath")) || null;
 
     // 4) if no verse text but commentary present, attempt to fetch verse by commentary.reference
-    if (!verseMatch && commentaryMatch) {
+    let chosenVerse = verseMatch;
+    if (!chosenVerse && commentaryMatch) {
       const commentaryRef = safeText(commentaryMatch.metadata, "reference", "Reference", "ref");
       if (commentaryRef) {
         try {
           const found = await findVerseByReference(commentaryRef, qVec);
           if (found) {
-            verseMatch = found;
+            chosenVerse = found;
             console.log("ℹ Found verse by commentary reference:", found.id);
           }
         } catch (e) {
@@ -363,14 +359,14 @@ app.post("/webhook", async (req, res) => {
 
     // gather refs list (only include non-empty)
     const refs = [];
-    if (verseMatch) refs.push(verseMatch.metadata?.reference || verseMatch.id);
+    if (chosenVerse) refs.push(chosenVerse.metadata?.reference || chosenVerse.id);
     if (commentaryMatch) refs.push(commentaryMatch.metadata?.reference || commentaryMatch.id);
     if (practiceMatch) refs.push(practiceMatch.metadata?.reference || practiceMatch.id);
 
     // extract texts
-    const verseSanskrit = verseMatch ? safeText(verseMatch.metadata, "sanskrit", "Sanskrit", "Sanskrit verse") : "";
-    const verseHinglish = verseMatch ? safeText(verseMatch.metadata, "hinglish1", "hinglish", "Hinglish (1)", "transliteration_hinglish") : "";
-    const verseTranslation = verseMatch ? safeText(verseMatch.metadata, "translation", "Translation (English)", "english") : "";
+    const verseSanskrit = chosenVerse ? safeText(chosenVerse.metadata, "sanskrit", "Sanskrit", "sanskrit verse") : "";
+    const verseHinglish = chosenVerse ? safeText(chosenVerse.metadata, "hinglish1", "hinglish", "Hinglish (1)", "transliteration_hinglish") : "";
+    const verseTranslation = chosenVerse ? safeText(chosenVerse.metadata, "translation", "Translation (English)", "english") : "";
 
     const commentaryText = commentaryMatch ? (safeText(commentaryMatch.metadata, "commentary_summary", "commentary_long", "summary", "commentary") || "") : "";
     const practiceText = practiceMatch ? (safeText(practiceMatch.metadata, "practice_text", "text", "description", "practice") || "") : "";
@@ -421,7 +417,7 @@ app.post("/webhook", async (req, res) => {
 
     // 6) We have verse text -> build context and ask OpenAI to create final grounded reply
     const contextParts = [];
-    contextParts.push(`Reference: ${verseMatch.metadata?.reference || verseMatch.id}`);
+    contextParts.push(`Reference: ${chosenVerse.metadata?.reference || chosenVerse.id}`);
     if (verseSanskrit) contextParts.push(`Sanskrit: ${verseSanskrit}`);
     if (verseHinglish) contextParts.push(`Hinglish: ${verseHinglish}`);
     if (verseTranslation) contextParts.push(`Translation: ${verseTranslation}`);
@@ -458,11 +454,11 @@ app.post("/webhook", async (req, res) => {
     out.push("", "Would you like a short 3-day morning practice I can send? Reply YES to try it.");
 
     const finalReply = out.join("\n");
-        console.log("ℹ finalReply (preview 400 chars):", (finalReply || "").slice(0, 400));
+    console.log("ℹ finalReply (preview 400 chars):", (finalReply || "").slice(0, 400));
     const sendResult = await sendViaGupshup(phone, finalReply);
     if (!sendResult.ok && !sendResult.simulated) {
       console.error("❗ Problem sending reply:", sendResult);
-          console.log("ℹ sendResult:", sendResult);
+      console.log("ℹ sendResult:", sendResult);
     }
 
   } catch (err) {
