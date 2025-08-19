@@ -1,4 +1,4 @@
-// index.js — SarathiAI (ESM) with strict no-hallucination enforcement + post-check sanitization
+// index.js — SarathiAI (ESM) with conservative RAG + safety & sanitizer
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -82,7 +82,8 @@ async function openaiChat(messages, maxTokens = 600) {
   }
   const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.65 };
   const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-    headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 20000
+    headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+    timeout: 20000
   });
   return resp.data?.choices?.[0]?.message?.content || resp.data?.choices?.[0]?.text || null;
 }
@@ -183,7 +184,7 @@ function formatRetrievedItems(matches) {
   }).join("\n\n---\n\n");
 }
 
-/* ---------------- Strict system prompt (no hallucinations) ---------------- */
+/* ---------------- Strict system prompt ---------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, short paragraphs.
 
@@ -191,7 +192,7 @@ CRITICAL RULES (follow exactly):
 - Use ONLY the content present in the "Retrieved Contexts" supplied below. Do NOT invent any additional verse lines, Sanskrit, transliterations, translations, or summaries.
 - If a retrieved item does NOT include a "Sanskrit" field, DO NOT output any Sanskrit for that item. Do not guess, paraphrase, or invent.
 - If a retrieved item includes "Hinglish" or "Translation", you may quote those lines verbatim. If missing, do not invent them.
-- Begin the reply with: Shri Krishna kehte hain: followed by a one-line essence.
+- Begin the reply with: Shri Krishna kehte hain: followed by a one-line essence (exact prefix).
 - Then provide a 2-4 sentence applied explanation tailored to the user's message.
 - If a short practice is available in the retrieved items, suggest it (<= 90s).
 - End with Ref: <id1>, <id2> listing only the reference IDs used.
@@ -200,21 +201,9 @@ CRITICAL RULES (follow exactly):
 Always explicitly list the references you used and never pretend a verse exists where it doesn't.`;
 
 /* ---------------- Sanitizer: remove invented verse text ---------------- */
-/**
- * sanitizeAIMsg:
- * - aiText: string returned by AI
- * - matches: array of retrieved matches (with metadata)
- *
- * Rules:
- * - Collect allowed strings from metadata: sanskrit, hinglish1, hinglish2, translation (exact).
- * - Find quoted substrings "..." and Devanagari runs (U+0900–U+097F).
- * - If a found substring is NOT exactly equal to any allowed string, remove it and replace with a safe note.
- * - Ensure final Ref: line only includes refs from matches.
- */
 function sanitizeAIMsg(aiText, matches) {
   if (!aiText || !matches) return aiText;
 
-  // collect allowed texts (exact)
   const allowed = new Set();
   const refIds = [];
   matches.forEach(m => {
@@ -231,37 +220,32 @@ function sanitizeAIMsg(aiText, matches) {
     if (trans) allowed.add(trans);
   });
 
-  // helper: exact-match check (normalize spaces)
   const normalize = s => (s || "").replace(/\s+/g, " ").trim();
 
-  // 1) remove quoted substrings that are not allowed
   let sanitized = aiText;
+
+  // remove quoted substrings that are not allowed
   const quoteRegex = /"([^"]{1,500})"/g;
   sanitized = sanitized.replace(quoteRegex, (match, p1) => {
     const candidate = normalize(p1);
-    for (const a of allowed) if (normalize(a) === candidate) return `"${p1}"`; // allowed
-    // not allowed -> replace
+    for (const a of allowed) if (normalize(a) === candidate) return `"${p1}"`;
     return "[Sanskrit/Hinglish text not available in sources]";
   });
 
-  // 2) remove standalone Devanagari runs not present in allowed
-  // Devanagari Unicode range U+0900–U+097F
+  // remove Devanagari runs not present in allowed
   const devRegex = /[\u0900-\u097F]{2,}/g;
   sanitized = sanitized.replace(devRegex, (match) => {
     const candidate = normalize(match);
-    for (const a of allowed) if (normalize(a) === candidate) return match; // allowed
+    for (const a of allowed) if (normalize(a) === candidate) return match;
     return "[Sanskrit text not available in sources]";
   });
 
-  // 3) ensure "Ref:" line lists only refs we have
-  // find existing Ref: line if any (case-insensitive)
+  // ensure Ref: line lists only refs we have
   const refLineRegex = /Ref:\s*([^\n]+)/i;
-  const foundRef = sanitized.match(refLineRegex);
   const safeRefLine = `Ref: ${refIds.join(", ") || "none"}`;
-  if (foundRef) {
+  if (sanitized.match(refLineRegex)) {
     sanitized = sanitized.replace(refLineRegex, safeRefLine);
   } else {
-    // append safe ref line
     sanitized = sanitized.trim() + "\n\n" + safeRefLine;
   }
 
@@ -284,19 +268,19 @@ app.post("/webhook", async (req, res) => {
 
     const incoming = String(text).trim();
 
+    // Greeting & small talk handling
     if (isGreeting(incoming)) {
       console.log("ℹ Detected greeting — sending welcome.");
       await sendViaGupshup(phone, WELCOME_TEMPLATE);
       return;
     }
-
     if (isSmallTalk(incoming)) {
       console.log("ℹ Detected small-talk — sending menu.");
       await sendViaGupshup(phone, SMALLTALK_REPLY);
       return;
     }
 
-    // Embed
+    // 1) embed
     let qVec;
     try {
       qVec = await openaiEmbedding(incoming);
@@ -308,7 +292,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Pinecone query
+    // 2) query Pinecone
     let pineResp;
     try {
       pineResp = await pineconeQuery(qVec, 3);
@@ -320,34 +304,75 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
+    // 3) safety check: do top matches include verse/hinglish/translation?
     const matches = pineResp?.matches || [];
     console.log("ℹ Retrieved matches count:", matches.length, matches.map(m => m.id));
 
-    // If retrieval weak -> fallback practice
-    const topScore = matches[0]?.score ?? 0;
-    if (!matches.length || topScore < 0.12) {
-      console.log("⚠ Retrieval weak or empty (score:", topScore, ") — sending gentle fallback practice.");
-      const practice = (matches.find(m => (m.metadata||{}).source === "practices") || {}).metadata;
-      const practiceText = practice?.text || practice?.practice_text || "Try this 90s calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.";
-      const fallbackMsg = `Hare Krishna 🙏 — I don't have a direct verse for that right now. ${practiceText}\n\nIf you'd like, can you say a little more about what's troubling you?`;
-      await sendViaGupshup(phone, fallbackMsg);
+    let anyVerseText = false;
+    const refsAvailable = [];
+    const collectedSummaries = [];
+    const collectedPractices = [];
+
+    for (const m of matches) {
+      const md = m.metadata || {};
+      const ref = md.reference || md.ref || md.id || m.id;
+      if (ref) refsAvailable.push(String(ref));
+      const hasSanskrit = !!(md.sanskrit && String(md.sanskrit).trim());
+      const hasHinglish = !!((md.hinglish1 && String(md.hinglish1).trim()) || (md.hinglish && String(md.hinglish).trim()) || (md.hinglish2 && String(md.hinglish2).trim()));
+      const hasTranslation = !!((md.translation && String(md.translation).trim()) || (md["Translation (English)"] && String(md["Translation (English)"]).trim()));
+
+      if (hasSanskrit || hasHinglish || hasTranslation) anyVerseText = true;
+
+      const summ = (md.summary || md["Summary"] || "").toString().trim();
+      if (summ) collectedSummaries.push({ ref, text: summ });
+      const ptxt = (md.practice_text || md.text || md.practice || "").toString().trim();
+      if (ptxt) collectedPractices.push({ ref, text: ptxt });
+    }
+
+    // If none of the top matches contain any verse/translation text, send safe fallback (no OpenAI)
+    if (!anyVerseText) {
+      console.log("⚠ No verse/Hinglish/translation present in top matches — using safe summary/practice fallback.");
+
+      let essence = null;
+      if (collectedSummaries.length) {
+        essence = collectedSummaries.slice(0,2).map(s=>s.text).join(" / ");
+        if (essence.length > 220) essence = essence.slice(0,200) + "...";
+      } else {
+        essence = "Focus on your effort and steady calm, not on the outcome.";
+      }
+
+      let practiceText = null;
+      if (collectedPractices.length) practiceText = collectedPractices[0].text;
+      else practiceText = "Try a short calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.";
+
+      const safeReply = [
+        `Shri Krishna kehte hain: "${essence}"`,
+        ``,
+        `Note: The original Sanskrit/Hinglish text is not available in our sources for these references. I'm sharing guidance based on commentary/practice notes instead.`,
+        ``,
+        `Applied guidance: ${essence}`,
+        ``,
+        `Short practice: ${practiceText}`,
+        ``,
+        `Ref: ${refsAvailable.length ? refsAvailable.join(", ") : "none"}`
+      ].join("\n");
+
+      await sendViaGupshup(phone, safeReply);
       return;
     }
 
-    // Build contextText and availability map
+    // 4) proceed with full RAG prompt (we have verse text to show)
     const contextText = formatRetrievedItems(matches);
-
     const availability = (matches || []).map(m => {
       const md = m?.metadata || {};
       return {
         id: m.id,
         reference: md.reference || md.ref || md.id || m.id,
         hasSanskrit: !!(md.sanskrit && String(md.sanskrit).trim()),
-        hasHinglish: !!((md.hinglish1 && String(md.hinglish1).trim()) || (md.hinglish && String(md.hinglish).trim())),
+        hasHinglish: !!((md.hinglish1 && String(md.hinglish1).trim()) || (md.hinglish && String(md.hinglish).trim()) || (md.hinglish2 && String(md.hinglish2).trim())),
         hasTranslation: !!((md.translation && String(md.translation).trim()) || (md["Translation (English)"] && String(md["Translation (English)"]).trim()))
       };
     });
-
     const availabilityText = "Availability (do not invent):\n" + availability.map(a => {
       return `- ${a.reference}: Sanskrit:${a.hasSanskrit ? "YES" : "NO"}, Hinglish:${a.hasHinglish ? "YES" : "NO"}, Translation:${a.hasTranslation ? "YES" : "NO"}`;
     }).join("\n");
@@ -366,7 +391,7 @@ IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Tr
       { role: "user", content: userPrompt }
     ];
 
-    // Call OpenAI chat
+    // 5) call OpenAI
     let aiRaw = null;
     try {
       aiRaw = await openaiChat(messages, 700);
@@ -378,11 +403,10 @@ IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Tr
     if (!aiRaw || !aiRaw.trim()) {
       finalReply = `Hare Krishna 🙏 — I heard: "${incoming}". I am here to help. Could you tell me a little more?`;
     } else {
-      // sanitize before sending
       finalReply = sanitizeAIMsg(aiRaw, matches);
     }
 
-    // Send reply
+    // 6) send
     const sendResult = await sendViaGupshup(phone, finalReply);
     if (!sendResult.ok && !sendResult.simulated) {
       console.error("❗ Problem sending reply:", sendResult);
