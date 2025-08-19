@@ -1,4 +1,4 @@
-// index.js — SarathiAI (ESM) with strict no-hallucination prompt + greeting/small-talk + RAG
+// index.js — SarathiAI (ESM) with strict no-hallucination enforcement + post-check sanitization
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -12,7 +12,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* -------------- Config / env -------------- */
+/* ---------------- Config / env ---------------- */
 const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
@@ -30,7 +30,7 @@ const PINECONE_NAMESPACE = process.env.PINECONE_NAMESPACE || "verses";
 
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
-/* -------------- Startup logs -------------- */
+/* ---------------- Startup logs ---------------- */
 console.log("\n🚀", BOT_NAME, "starting...");
 console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, " EMBED_MODEL:", EMBED_MODEL);
@@ -38,7 +38,7 @@ console.log("📦 PINECONE_HOST:", PINECONE_HOST ? "[LOADED]" : "[MISSING]");
 console.log("📦 TRAIN_SECRET:", TRAIN_SECRET ? "[LOADED]" : "[MISSING]");
 console.log();
 
-/* -------------- Helpers -------------- */
+/* ---------------- Helpers ---------------- */
 async function sendViaGupshup(destination, replyText) {
   if (!GS_API_KEY || !GS_SOURCE) {
     console.warn("⚠ Gupshup key/source missing — simulating send:");
@@ -98,7 +98,7 @@ async function pineconeQuery(vector, topK = 3, namespace = PINECONE_NAMESPACE) {
   return resp.data;
 }
 
-/* -------------- Payload extraction -------------- */
+/* ---------------- Payload extraction ---------------- */
 function extractPhoneAndText(body) {
   if (!body) return { phone: null, text: null, rawType: null };
   let phone = null, text = null;
@@ -115,7 +115,7 @@ function extractPhoneAndText(body) {
   return { phone, text, rawType };
 }
 
-/* -------------- Greeting & small-talk detection -------------- */
+/* ---------------- Greeting & small-talk detection ---------------- */
 function isGreeting(text) {
   if (!text) return false;
   const t = text.trim().toLowerCase();
@@ -139,7 +139,7 @@ function isSmallTalk(text) {
   return false;
 }
 
-/* -------------- Message templates -------------- */
+/* ---------------- Message templates ---------------- */
 const WELCOME_TEMPLATE = `Hare Krishna 🙏
 
 I am Sarathi, your companion on this journey.
@@ -164,7 +164,7 @@ If you'd like, pick one:
 
 Reply with the number or type your concern (for example: "I'm stressed about exams").`;
 
-/* -------------- Format retrieved items -------------- */
+/* ---------------- Format retrieved items ---------------- */
 function formatRetrievedItems(matches) {
   return (matches || []).map(m => {
     const md = m?.metadata || {};
@@ -183,23 +183,92 @@ function formatRetrievedItems(matches) {
   }).join("\n\n---\n\n");
 }
 
-/* -------------- Strict system prompt (no hallucinations) -------------- */
+/* ---------------- Strict system prompt (no hallucinations) ---------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, short paragraphs.
 
-CRITICAL RULES (must follow exactly):
-- Use ONLY the content present in the "Retrieved Contexts" supplied by the system prompt. Do NOT invent any additional verse lines, Sanskrit, transliterations, translations, or summaries.
+CRITICAL RULES (follow exactly):
+- Use ONLY the content present in the "Retrieved Contexts" supplied below. Do NOT invent any additional verse lines, Sanskrit, transliterations, translations, or summaries.
 - If a retrieved item does NOT include a "Sanskrit" field, DO NOT output any Sanskrit for that item. Do not guess, paraphrase, or invent.
 - If a retrieved item includes "Hinglish" or "Translation", you may quote those lines verbatim. If missing, do not invent them.
-- Begin the reply with: Shri Krishna kehte hain: followed by a 1-line essence (put that exact prefix text).
+- Begin the reply with: Shri Krishna kehte hain: followed by a one-line essence.
 - Then provide a 2-4 sentence applied explanation tailored to the user's message.
 - If a short practice is available in the retrieved items, suggest it (<= 90s).
 - End with Ref: <id1>, <id2> listing only the reference IDs used.
-- If the retrieved contexts are insufficient for a verse-based answer, say so gently and offer a short practice or ask for clarification.
+- If retrieved contexts are insufficient for a verse-based answer, say so gently and offer a short practice or ask for clarification.
 
 Always explicitly list the references you used and never pretend a verse exists where it doesn't.`;
 
-/* -------------- Webhook handler -------------- */
+/* ---------------- Sanitizer: remove invented verse text ---------------- */
+/**
+ * sanitizeAIMsg:
+ * - aiText: string returned by AI
+ * - matches: array of retrieved matches (with metadata)
+ *
+ * Rules:
+ * - Collect allowed strings from metadata: sanskrit, hinglish1, hinglish2, translation (exact).
+ * - Find quoted substrings "..." and Devanagari runs (U+0900–U+097F).
+ * - If a found substring is NOT exactly equal to any allowed string, remove it and replace with a safe note.
+ * - Ensure final Ref: line only includes refs from matches.
+ */
+function sanitizeAIMsg(aiText, matches) {
+  if (!aiText || !matches) return aiText;
+
+  // collect allowed texts (exact)
+  const allowed = new Set();
+  const refIds = [];
+  matches.forEach(m => {
+    const md = m.metadata || {};
+    const rid = md.reference || md.ref || md.id || m.id;
+    if (rid) refIds.push(String(rid));
+    const san = md.sanskrit && String(md.sanskrit).trim();
+    const hin1 = md.hinglish1 && String(md.hinglish1).trim();
+    const hin2 = md.hinglish2 && String(md.hinglish2).trim();
+    const trans = (md.translation || md["Translation (English)"] || md.english) && String((md.translation || md["Translation (English)"] || md.english)).trim();
+    if (san) allowed.add(san);
+    if (hin1) allowed.add(hin1);
+    if (hin2) allowed.add(hin2);
+    if (trans) allowed.add(trans);
+  });
+
+  // helper: exact-match check (normalize spaces)
+  const normalize = s => (s || "").replace(/\s+/g, " ").trim();
+
+  // 1) remove quoted substrings that are not allowed
+  let sanitized = aiText;
+  const quoteRegex = /"([^"]{1,500})"/g;
+  sanitized = sanitized.replace(quoteRegex, (match, p1) => {
+    const candidate = normalize(p1);
+    for (const a of allowed) if (normalize(a) === candidate) return `"${p1}"`; // allowed
+    // not allowed -> replace
+    return "[Sanskrit/Hinglish text not available in sources]";
+  });
+
+  // 2) remove standalone Devanagari runs not present in allowed
+  // Devanagari Unicode range U+0900–U+097F
+  const devRegex = /[\u0900-\u097F]{2,}/g;
+  sanitized = sanitized.replace(devRegex, (match) => {
+    const candidate = normalize(match);
+    for (const a of allowed) if (normalize(a) === candidate) return match; // allowed
+    return "[Sanskrit text not available in sources]";
+  });
+
+  // 3) ensure "Ref:" line lists only refs we have
+  // find existing Ref: line if any (case-insensitive)
+  const refLineRegex = /Ref:\s*([^\n]+)/i;
+  const foundRef = sanitized.match(refLineRegex);
+  const safeRefLine = `Ref: ${refIds.join(", ") || "none"}`;
+  if (foundRef) {
+    sanitized = sanitized.replace(refLineRegex, safeRefLine);
+  } else {
+    // append safe ref line
+    sanitized = sanitized.trim() + "\n\n" + safeRefLine;
+  }
+
+  return sanitized;
+}
+
+/* ---------------- Webhook handler ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Inbound raw payload:", JSON.stringify(req.body));
@@ -298,16 +367,19 @@ IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Tr
     ];
 
     // Call OpenAI chat
-    let finalReply = null;
+    let aiRaw = null;
     try {
-      const aiReply = await openaiChat(messages, 700);
-      finalReply = aiReply && aiReply.trim().length ? aiReply.trim() : null;
+      aiRaw = await openaiChat(messages, 700);
     } catch (e) {
       console.error("❌ OpenAI chat failed:", e?.message || e);
     }
 
-    if (!finalReply) {
+    let finalReply;
+    if (!aiRaw || !aiRaw.trim()) {
       finalReply = `Hare Krishna 🙏 — I heard: "${incoming}". I am here to help. Could you tell me a little more?`;
+    } else {
+      // sanitize before sending
+      finalReply = sanitizeAIMsg(aiRaw, matches);
     }
 
     // Send reply
@@ -322,7 +394,7 @@ IMPORTANT: The "Availability" lines above state whether Sanskrit / Hinglish / Tr
   }
 });
 
-/* -------------- Root & Admin -------------- */
+/* ---------------- Root & Admin ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} with RAG is running ✅`));
 
 function findIngestScript() {
@@ -371,5 +443,5 @@ app.get("/test-retrieval", async (req, res) => {
   }
 });
 
-/* -------------- Start server -------------- */
+/* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
