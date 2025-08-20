@@ -1,4 +1,4 @@
-// index.js — SarathiAI (final) — RAG-enabled, ESM (fixed duplication + attribution)
+// index.js — SarathiAI (final) — RAG-enabled, ESM (fixed duplication + attribution + CTA/memory + no-Ref)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -30,6 +30,23 @@ const PINECONE_NAMESPACE = (process.env.PINECONE_NAMESPACE || "verse").trim();
 const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim(); // optional comma-separated
 
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
+
+/* ---------------- Simple in-memory session (short-term memory) ---------------- */
+const sessions = new Map(); // phone -> { last_bot_prompt, practice_subscribed, next_checkin_ts }
+function getSession(phone) {
+  const now = Date.now();
+  let s = sessions.get(phone);
+  if (!s) {
+    s = { last_bot_prompt: "NONE", practice_subscribed: false, next_checkin_ts: 0, last_checkin_sent_ts: 0 };
+    sessions.set(phone, s);
+  }
+  // optional: clean up very old sessions (4 days idle)
+  for (const [k, v] of sessions) {
+    if (now - (v.last_seen_ts || now) > 4 * 24 * 60 * 60 * 1000) sessions.delete(k);
+  }
+  s.last_seen_ts = now;
+  return s;
+}
 
 /* ---------------- Startup logs ---------------- */
 console.log("\n🚀", BOT_NAME, "starting...");
@@ -243,6 +260,13 @@ function isSmallTalk(text) {
   return false;
 }
 
+/* ---------------- Tiny 3-day practice content ---------------- */
+const THREE_DAY_PRACTICE = [
+  `Day 1 — 90s Calm Start:\n• Inhale 4s, hold 2s, exhale 6s × 6 rounds.\n• Whisper in mind: “I offer my effort, not my worry.”`,
+  `Day 2 — Focus Reset (60–90s):\n• 5 slow breaths.\n• List 1 thing you’ll do today for 15 minutes—only that, no multitask.`,
+  `Day 3 — Gratitude Grounding (60s):\n• Place hand on heart; breathe gently × 5.\n• Name 2 people or gifts you’re grateful for.`
+];
+
 /* ---------------- Templates ---------------- */
 const WELCOME_TEMPLATE = `Hare Krishna 🙏
 
@@ -289,12 +313,9 @@ function safeText(md, ...keys) {
 function inferSpeakerFromSanskrit(san) {
   if (!san) return null;
   const s = String(san);
-  // common patterns: "अर्जुन उवाच" or "अर्जुन उवाच:" etc -> Arjuna said
   if (/\bअर्जुन\s*उवाच\b|\bArjuna\b|\barjuna\b|\bArjun\b|\bArjuna uvacha\b/i.test(s)) return "Arjuna";
   if (/\bकृष्ण\s*उवाच\b|\bश्रीभगवान्\s*उवाच\b|\bKrishna\b|\bKṛṣṇa\b|\bkṛṣṇa\b|\bKrshna\b/i.test(s)) return "Shri Krishna";
-  // look for verbs like 'said' in English transliteration
   if (/\buvacha\b|\buvach\b|\buvaach\b/i.test(s)) {
-    // if 'Arjuna' absent but has 'uvacha', default Arjuna for bhagavad gita opening verses; else null
     if (/\bArjuna\b/i.test(s) || /\barjuna\b/i.test(s)) return "Arjuna";
   }
   return null;
@@ -302,29 +323,19 @@ function inferSpeakerFromSanskrit(san) {
 
 function parseStructuredAI(aiText) {
   if (!aiText) return {};
-  // naive extraction: look for label lines
   const out = {};
   const lines = aiText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const full = aiText;
-  // try label search using regex
   const ess = full.match(/ESSENCE:\s*([^\n\r]*)/i);
   const exp = full.match(/EXPLANATION:\s*([\s\S]*?)(?:OPTIONAL_PRACTICE:|FOLLOWUP:|$)/i);
   const prac = full.match(/OPTIONAL_PRACTICE:\s*([^\n\r]*)/i);
   const follow = full.match(/FOLLOWUP:\s*([^\n\r]*)/i);
-
   if (ess) out.essence = ess[1].trim();
   if (exp) out.explanation = exp[1].trim();
   if (prac) out.practice = prac[1].trim();
   if (follow) out.followup = follow[1].trim();
-
-  // fallback heuristics
-  if (!out.essence && lines.length > 0) {
-    // make first line the essence if it's concise
-    if (lines[0].length <= 120) out.essence = lines[0];
-  }
-  if (!out.explanation && lines.length > 1) {
-    out.explanation = lines.slice(1).join(" ");
-  }
+  if (!out.essence && lines.length > 0 && lines[0].length <= 120) out.essence = lines[0];
+  if (!out.explanation && lines.length > 1) out.explanation = lines.slice(1).join(" ");
   return out;
 }
 
@@ -339,8 +350,33 @@ app.post("/webhook", async (req, res) => {
     if (!phone || !text) { console.log("ℹ No actionable message — skip."); return; }
 
     const incoming = String(text).trim();
+    const session = getSession(phone);
 
-    // greetings/small talk
+    // 🔔 Before anything, if a check-in is due, send it (non-blocking to main flow)
+    try {
+      const now = Date.now();
+      if (session.practice_subscribed && now >= (session.next_checkin_ts || 0) && now - (session.last_checkin_sent_ts || 0) > 60 * 60 * 1000) {
+        await sendViaGupshup(phone, "Quick check-in 🌼 — How did your practice go since we last spoke?");
+        session.last_checkin_sent_ts = now;
+        session.next_checkin_ts = now + 24 * 60 * 60 * 1000; // schedule next soft check when user next messages
+      }
+    } catch {}
+
+    // ✅ YES handler — only when last prompt was PRACTICE_CTA
+    if (/^\s*yes\b/i.test(incoming) && session.last_bot_prompt === "PRACTICE_CTA") {
+      session.last_bot_prompt = "NONE";
+      session.practice_subscribed = true;
+      const now = Date.now();
+      session.next_checkin_ts = now + 24 * 60 * 60 * 1000;
+
+      const day1 = THREE_DAY_PRACTICE[0];
+      await sendViaGupshup(phone,
+        `Wonderful 🌸 For the next 3 mornings, I'll send a tiny practice to center your mind.\n\n${day1}\n\nI’ll check in tomorrow. You’ve got this. 🙏`
+      );
+      return;
+    }
+
+    // greetings/small talk (placed AFTER YES handler so CTA flow wins)
     if (isGreeting(incoming)) {
       await sendViaGupshup(phone, WELCOME_TEMPLATE);
       return;
@@ -401,11 +437,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     // extract metadata
-    const refs = [];
-    if (finalVerse) refs.push(finalVerse.metadata?.reference || finalVerse.id);
-    if (commentaryMatch) refs.push(commentaryMatch.metadata?.reference || commentaryMatch.id);
-    if (practiceMatch) refs.push(practiceMatch.metadata?.reference || practiceMatch.id);
-
     const verseSanskrit = finalVerse ? safeText(finalVerse.metadata, "sanskrit", "Sanskrit", "Sanskrit verse") : "";
     const verseHinglish = finalVerse ? safeText(finalVerse.metadata, "hinglish1", "hinglish", "Hinglish (1)", "transliteration_hinglish") : "";
     const verseTranslation = finalVerse ? safeText(finalVerse.metadata, "translation", "Translation (English)", "english") : "";
@@ -432,8 +463,12 @@ app.post("/webhook", async (req, res) => {
         const replyLines = [];
         replyLines.push(aiResp && aiResp.trim() ? aiResp.trim() : `I hear you — could you say a bit more about what's bothering you (one short sentence)?`);
         if (practiceText) replyLines.push("", `Practice: ${practiceText}`);
-        if (refs.length) replyLines.push("", `Ref: ${refs.join(", ")}`);
+        // ⛔️ no Ref line
         replyLines.push("", "Would you like a short 3-day morning practice I can send? Reply YES to try it.");
+
+        // mark CTA context for YES
+        session.last_bot_prompt = "PRACTICE_CTA";
+
         await sendViaGupshup(phone, replyLines.join("\n"));
         return;
       }
@@ -454,7 +489,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     // We have verse text -> ask model to produce structured essence/explanation (and NOT quote the verse)
-    // Build a context chunk (we will display the verse ourselves)
     const contextParts = [];
     if (finalVerse) {
       contextParts.push(`Reference: ${finalVerse.metadata?.reference || finalVerse.id}`);
@@ -466,8 +500,7 @@ app.post("/webhook", async (req, res) => {
     if (practiceText) contextParts.push(`Practice: ${practiceText}`);
     const contextText = contextParts.join("\n\n");
 
-    // Ask OpenAI to output in the strict labeled format (we will parse)
-    const modelSystem = SYSTEM_PROMPT; // instructs to use labels and not repeat verses
+    const modelSystem = SYSTEM_PROMPT;
     const modelUser = `User message: "${incoming}"\n\nContext (do not repeat Sanskrit/Hinglish in the answer):\n${contextText}\n\nProduce a short reply using the required labels exactly (ESSENCE, EXPLANATION, OPTIONAL_PRACTICE, FOLLOWUP).`;
 
     let aiStructured = null;
@@ -478,7 +511,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     const parsed = parseStructuredAI(aiStructured || "");
-    // fallback: if parsed empty, use heuristics
     const essence = parsed.essence || (aiStructured ? aiStructured.split("\n")[0].slice(0,200) : "Focus on your effort, not the result.");
     const explanation = parsed.explanation || (aiStructured ? aiStructured : "I hear you — try one small step and breathe.");
     const optionalPractice = parsed.practice || practiceText || "";
@@ -488,31 +520,26 @@ app.post("/webhook", async (req, res) => {
     const verseSpeaker = inferSpeakerFromSanskrit(verseSanskrit) || (finalVerse && finalVerse.metadata && finalVerse.metadata.speaker) || null;
     const speakerLine = verseSpeaker ? `${verseSpeaker} said:` : `Verse:`;
 
-    // Compose final message — first show verse (Sanskrit + Hinglish) with speaker attribution,
-    // then "Shri Krishna kehte hain: "<essence>"", then explanation, practice, refs, followup.
+    // Compose final message — show verse (Sanskrit + Hinglish) with speaker attribution,
+    // then “Shri Krishna kehte hain: <essence>”, explanation, optional practice, followup (no Ref).
     const finalParts = [];
-
-    // Show the verse lines (bot is responsible for quoting the verse only once)
     if (verseSanskrit) finalParts.push(`${speakerLine} "${verseSanskrit}"`);
     if (verseHinglish) finalParts.push(`${verseHinglish}`);
     if (verseTranslation) finalParts.push(`${verseTranslation}`);
 
-    // Krishna essence / guidance header
     finalParts.push("", `Shri Krishna kehte hain: "${essence.replace(/"/g, "'")}"`, "");
-
-    // add explanation
     finalParts.push(explanation);
+    if (optionalPractice && optionalPractice.trim()) finalParts.push("", `Practice: ${optionalPractice}`);
 
-    // include practice if available and not already included
-    if (optionalPractice && optionalPractice.trim()) {
-      finalParts.push("", `Practice: ${optionalPractice}`);
-    }
-
-    // single Ref line
-    if (refs.length) finalParts.push("", `Ref: ${refs.join(", ")}`);
-
-    // followup
+    // ⛔️ Removed Ref line
     finalParts.push("", followup);
+
+    // Mark CTA context if this followup is the practice CTA
+    if (/reply\s+yes/i.test(followup) && /3[-\s]?day/i.test(followup) && /practice/i.test(followup)) {
+      session.last_bot_prompt = "PRACTICE_CTA";
+    } else {
+      session.last_bot_prompt = "NONE";
+    }
 
     const finalReply = finalParts.join("\n");
 
