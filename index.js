@@ -1,4 +1,4 @@
-// index.js — SarathiAI (final) — RAG-enabled, ESM (fixed duplication + attribution + CTA/memory + no-Ref)
+// index.js — SarathiAI (final) — RAG-enabled, ESM (fixed duplication + attribution + CTA/memory + no-Ref + fast-ack + caches)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -31,16 +31,37 @@ const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim(); // o
 
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
+/* ---------------- Performance knobs & caches ---------------- */
+const FAST_ACK_MS = Number(process.env.FAST_ACK_MS || 1500); // send a quick ack if processing > 1.5s
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+const embedCache = new Map();   // key: normalized_text -> { ts, value }
+const retrCache  = new Map();   // key: normalized_text -> { ts, value }
+
+function cacheGet(map, key) {
+  const rec = map.get(key);
+  if (!rec) return null;
+  if (Date.now() - rec.ts > CACHE_TTL_MS) { map.delete(key); return null; }
+  return rec.value;
+}
+function cacheSet(map, key, value) {
+  map.set(key, { ts: Date.now(), value });
+}
+
+function normalizeQuery(s) {
+  return String(s || "").trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
+}
+
 /* ---------------- Simple in-memory session (short-term memory) ---------------- */
 const sessions = new Map(); // phone -> { last_bot_prompt, practice_subscribed, next_checkin_ts }
 function getSession(phone) {
   const now = Date.now();
   let s = sessions.get(phone);
   if (!s) {
-    s = { last_bot_prompt: "NONE", practice_subscribed: false, next_checkin_ts: 0, last_checkin_sent_ts: 0 };
+    s = { last_bot_prompt: "NONE", practice_subscribed: false, next_checkin_ts: 0, last_checkin_sent_ts: 0, last_seen_ts: now };
     sessions.set(phone, s);
   }
-  // optional: clean up very old sessions (4 days idle)
+  // clean up very old sessions (optional)
   for (const [k, v] of sessions) {
     if (now - (v.last_seen_ts || now) > 4 * 24 * 60 * 60 * 1000) sessions.delete(k);
   }
@@ -314,7 +335,7 @@ function inferSpeakerFromSanskrit(san) {
   if (!san) return null;
   const s = String(san);
   if (/\bअर्जुन\s*उवाच\b|\bArjuna\b|\barjuna\b|\bArjun\b|\bArjuna uvacha\b/i.test(s)) return "Arjuna";
-  if (/\bकृष्ण\s*उवाच\b|\bश्रीभगवान्\s*उवाच\b|\bKrishna\b|\bKṛṣṇa\b|\bkṛṣṇa\b|\bKrshna\b/i.test(s)) return "Shri Krishna";
+  if (/\bकृष्ण\s*उवाच\b|\bश्रीभगवान्\s*उवाच\b|\bKrishna\b|\bKṛṣṇa\b|\bkṛṣ्ण\b|\bKrshna\b/i.test(s)) return "Shri Krishna";
   if (/\buvacha\b|\buvach\b|\buvaach\b/i.test(s)) {
     if (/\bArjuna\b/i.test(s) || /\barjuna\b/i.test(s)) return "Arjuna";
   }
@@ -341,6 +362,16 @@ function parseStructuredAI(aiText) {
 
 /* ---------------- Webhook/main flow ---------------- */
 app.post("/webhook", async (req, res) => {
+  let ackTimer = null;
+  let responded = false;
+
+  // safeSend defined here so it can clear ackTimer & mark responded
+  async function safeSend(to, text) {
+    if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
+    responded = true;
+    return sendViaGupshup(to, text);
+  }
+
   try {
     console.log("Inbound raw payload:", JSON.stringify(req.body));
     res.status(200).send("OK"); // ACK early
@@ -352,15 +383,25 @@ app.post("/webhook", async (req, res) => {
     const incoming = String(text).trim();
     const session = getSession(phone);
 
-    // 🔔 Before anything, if a check-in is due, send it (non-blocking to main flow)
+    // start ack timer which sends a short quick ack if we haven't responded in FAST_ACK_MS
+    ackTimer = setTimeout(async () => {
+      try {
+        if (!responded) {
+          await sendViaGupshup(phone, `I hear you — giving you a pointed Gita insight…`);
+        }
+      } catch (e) { console.warn("Quick ack failed:", e?.message || e); }
+    }, FAST_ACK_MS);
+
+    // 🔔 Before anything, if a check-in is due, send it (non-blocking)
     try {
       const now = Date.now();
       if (session.practice_subscribed && now >= (session.next_checkin_ts || 0) && now - (session.last_checkin_sent_ts || 0) > 60 * 60 * 1000) {
-        await sendViaGupshup(phone, "Quick check-in 🌼 — How did your practice go since we last spoke?");
+        // non-blocking info message (do not use safeSend here, it's a background check-in)
+        sendViaGupshup(phone, "Quick check-in 🌼 — How did your practice go since we last spoke?");
         session.last_checkin_sent_ts = now;
-        session.next_checkin_ts = now + 24 * 60 * 60 * 1000; // schedule next soft check when user next messages
+        session.next_checkin_ts = now + 24 * 60 * 60 * 1000;
       }
-    } catch {}
+    } catch (e) { console.warn(e); }
 
     // ✅ YES handler — only when last prompt was PRACTICE_CTA
     if (/^\s*yes\b/i.test(incoming) && session.last_bot_prompt === "PRACTICE_CTA") {
@@ -370,7 +411,7 @@ app.post("/webhook", async (req, res) => {
       session.next_checkin_ts = now + 24 * 60 * 60 * 1000;
 
       const day1 = THREE_DAY_PRACTICE[0];
-      await sendViaGupshup(phone,
+      await safeSend(phone,
         `Wonderful 🌸 For the next 3 mornings, I'll send a tiny practice to center your mind.\n\n${day1}\n\nI’ll check in tomorrow. You’ve got this. 🙏`
       );
       return;
@@ -378,37 +419,51 @@ app.post("/webhook", async (req, res) => {
 
     // greetings/small talk (placed AFTER YES handler so CTA flow wins)
     if (isGreeting(incoming)) {
-      await sendViaGupshup(phone, WELCOME_TEMPLATE);
+      await safeSend(phone, WELCOME_TEMPLATE);
       return;
     }
     if (isSmallTalk(incoming)) {
-      await sendViaGupshup(phone, SMALLTALK_REPLY);
+      await safeSend(phone, SMALLTALK_REPLY);
       return;
     }
 
-    // 1) embed
+    // 1) embed — use cache
     let qVec;
     try {
-      qVec = await openaiEmbedding(incoming);
+      const norm = normalizeQuery(incoming);
+      const cachedVec = cacheGet(embedCache, norm);
+      if (cachedVec) {
+        qVec = cachedVec;
+      } else {
+        qVec = await openaiEmbedding(incoming);
+        cacheSet(embedCache, norm, qVec);
+      }
       console.log("ℹ qVec length:", Array.isArray(qVec) ? qVec.length : "not-array");
     } catch (e) {
       console.error("❌ Embedding failed:", e?.message || e);
       const ai = await openaiChat([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: incoming }]);
       const fallback = ai || `Hare Krishna — I heard: "${incoming}". Could you tell me more?`;
-      await sendViaGupshup(phone, fallback);
+      await safeSend(phone, fallback);
       return;
     }
 
-    // 2) retrieve across namespaces
+    // 2) retrieve across namespaces — use cache
     let matches = [];
     try {
-      matches = await multiNamespaceQuery(qVec, 8);
+      const norm = normalizeQuery(incoming);
+      const cached = cacheGet(retrCache, norm);
+      if (cached) {
+        matches = cached;
+      } else {
+        matches = await multiNamespaceQuery(qVec, 8);
+        cacheSet(retrCache, norm, matches);
+      }
       console.log("ℹ Retrieved matches (top):", matches.slice(0,8).map(m => ({ id: m.id, score: m.score, ns: m._namespace })));
     } catch (e) {
       console.error("❌ Pinecone query failed:", e?.message || e);
       const ai = await openaiChat([{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: incoming }]);
       const fallback = ai || `Hare Krishna — I heard: "${incoming}". Could you tell me more?`;
-      await sendViaGupshup(phone, fallback);
+      await safeSend(phone, fallback);
       return;
     }
 
@@ -469,7 +524,7 @@ app.post("/webhook", async (req, res) => {
         // mark CTA context for YES
         session.last_bot_prompt = "PRACTICE_CTA";
 
-        await sendViaGupshup(phone, replyLines.join("\n"));
+        await safeSend(phone, replyLines.join("\n"));
         return;
       }
 
@@ -484,7 +539,7 @@ app.post("/webhook", async (req, res) => {
         console.warn("OpenAI safe fallback failed:", e?.message || e);
       }
       const safeReply = (safeAI && safeAI.trim()) ? `${safeAI.trim()}\n\nPractice: ${safePractice}` : `I hear you — could you say a bit more about what's troubling you?\n\nPractice: ${safePractice}`;
-      await sendViaGupshup(phone, safeReply);
+      await safeSend(phone, safeReply);
       return;
     }
 
@@ -505,7 +560,8 @@ app.post("/webhook", async (req, res) => {
 
     let aiStructured = null;
     try {
-      aiStructured = await openaiChat([{ role: "system", content: modelSystem }, { role: "user", content: modelUser }], 700);
+      // slightly reduced tokens to trim latency
+      aiStructured = await openaiChat([{ role: "system", content: modelSystem }, { role: "user", content: modelUser }], 450);
     } catch (e) {
       console.error("❌ OpenAI chat failed:", e?.message || e);
     }
@@ -544,13 +600,19 @@ app.post("/webhook", async (req, res) => {
     const finalReply = finalParts.join("\n");
 
     console.log("ℹ finalReply preview:", (finalReply || "").slice(0,400));
-    const sendResult = await sendViaGupshup(phone, finalReply);
-    if (!sendResult.ok && !sendResult.simulated) {
-      console.error("❗ Problem sending reply:", sendResult);
+    // final send: use safeSend if not already responded by quick ack
+    if (!responded) {
+      await safeSend(phone, finalReply);
+    } else {
+      // if quick ack already went out, send full reply normally
+      await sendViaGupshup(phone, finalReply);
     }
+    return;
   } catch (err) {
     console.error("❌ Webhook processing error:", err);
     try { res.status(200).send("OK"); } catch (_) {}
+  } finally {
+    if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
   }
 });
 
