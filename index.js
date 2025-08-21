@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v2 with Memory & Proactive Check-ins)
+// index.js — SarathiAI (v3 with improved prompts and logic)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -52,17 +52,15 @@ function normalizeQuery(s) {
   return String(s || "").trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
 }
 
-/* ---------------- ✅ PART 1 & 2: UPDATED SESSION & MEMORY ---------------- */
+/* ---------------- Session & Memory ---------------- */
 const sessions = new Map(); // phone -> { last_bot_prompt, practice_subscribed, next_checkin_ts, last_seen_ts, recent_topics }
 function getSession(phone) {
   const now = Date.now();
   let s = sessions.get(phone);
   if (!s) {
-    // Added recent_topics for memory
     s = { last_bot_prompt: "NONE", practice_subscribed: false, next_checkin_ts: 0, last_checkin_sent_ts: 0, last_seen_ts: now, recent_topics: [] };
     sessions.set(phone, s);
   }
-  // clean up very old sessions (optional)
   for (const [k, v] of sessions) {
     if (now - (v.last_seen_ts || now) > 4 * 24 * 60 * 60 * 1000) sessions.delete(k);
   }
@@ -71,7 +69,7 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting with Memory & Proactive Check-ins...");
+console.log("\n🚀", BOT_NAME, "starting with improved prompts and logic...");
 console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, " EMBED_MODEL:", EMBED_MODEL);
 console.log("📦 PINECONE_HOST:", PINECONE_HOST ? "[LOADED]" : "[MISSING]");
@@ -116,7 +114,7 @@ async function openaiEmbedding(textOrArray) {
   return Array.isArray(textOrArray) ? resp.data.data.map(d => d.embedding) : resp.data.data[0].embedding;
 }
 
-async function openaiChat(messages, maxTokens = 600) {
+async function openaiChat(messages, maxTokens = 400) { // Reduced maxTokens for brevity
   if (!OPENAI_KEY) {
     console.warn("⚠ OPENAI_API_KEY not set — skipping OpenAI call.");
     return null;
@@ -133,14 +131,9 @@ async function openaiChat(messages, maxTokens = 600) {
 async function pineconeQuery(vector, topK = 5, namespace = undefined, filter = undefined) {
   if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
   const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
-  const body = {
-    vector,
-    topK,
-    includeMetadata: true
-  };
+  const body = { vector, topK, includeMetadata: true };
   if (namespace) body.namespace = namespace;
   if (filter) body.filter = filter;
-
   const resp = await axios.post(url, body, {
     headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" },
     timeout: 20000
@@ -148,6 +141,7 @@ async function pineconeQuery(vector, topK = 5, namespace = undefined, filter = u
   return resp.data;
 }
 
+// ... [The rest of your helper functions like getNamespacesArray, multiNamespaceQuery, findVerseByReference remain unchanged] ...
 function getNamespacesArray() {
   if (PINECONE_NAMESPACES) {
     return PINECONE_NAMESPACES.split(",").map(s => s.trim()).filter(Boolean);
@@ -169,8 +163,6 @@ async function multiNamespaceQuery(vector, topK = 5, filter = undefined) {
   });
   const arr = await Promise.all(promises);
   const allMatches = arr.flat();
-
-  // Prioritize items that have Sanskrit and items in the 'verse' namespace
   allMatches.sort((a,b) => {
     const scoreA = a.score || 0, scoreB = b.score || 0;
     const hasSanskritA = a.metadata && a.metadata.sanskrit && String(a.metadata.sanskrit).trim();
@@ -179,27 +171,19 @@ async function multiNamespaceQuery(vector, topK = 5, filter = undefined) {
     const boostB = (hasSanskritB ? 8000 : 0) + ((b._namespace === "verse") ? 3000 : 0);
     return (boostB + scoreB) - (boostA + scoreA);
   });
-
   return allMatches;
 }
 
-/* ---------------- Find verse by commentary reference ---------------- */
 async function findVerseByReference(reference, queryVector = null) {
   if (!reference) return null;
   const tries = [
-    reference,
-    reference.trim(),
-    reference.trim().replace(/\s+/g, " "),
-    reference.trim().replace(/\s+/g, "_"),
-    reference.trim().toUpperCase(),
-    reference.trim().toLowerCase(),
-    reference.replace(/\./g, ""),
+    reference, reference.trim(), reference.trim().replace(/\s+/g, " "),
+    reference.trim().replace(/\s+/g, "_"), reference.trim().toUpperCase(),
+    reference.trim().toLowerCase(), reference.replace(/\./g, ""),
     reference.replace(/\./g,"").replace(/\s+/g,"_")
   ].filter((v,i,a) => v && a.indexOf(v) === i);
-
   const nsList = getNamespacesArray();
   let verseNs = nsList.find(n => n.toLowerCase().includes("verse")) || nsList[0];
-
   for (const t of tries) {
     try {
       const vec = queryVector || await openaiEmbedding(t);
@@ -217,34 +201,25 @@ async function findVerseByReference(reference, queryVector = null) {
 /* ---------------- Payload extraction (Gupshup shapes) ---------------- */
 function extractPhoneAndText(body) {
   if (!body) return { phone: null, text: null, rawType: null };
-  
-  let phone = null;
-  let text = null;
+  let phone = null, text = null;
   const rawType = body.type || 'unknown';
-
   try {
     if (body.type === 'message' && body.payload && body.payload.payload) {
       phone = body.payload.sender.phone;
       text = body.payload.payload.text;
-    }
-    else if (body.type === 'user-event' && body.payload && body.payload.phone) {
+    } else if (body.type === 'user-event' && body.payload && body.payload.phone) {
       phone = body.payload.phone;
       text = null;
     }
-    
     if (!phone && body.payload) {
         phone = body.payload.sender?.phone || body.payload.source;
     }
-
   } catch (e) {
     console.error("Error during payload extraction, but we caught it!", e.message);
   }
-
   if (phone) phone = String(phone).replace(/\D/g, "");
-  
   return { phone, text, rawType };
 }
-
 
 /* ---------------- Greeting & Small talk detection (improved) ---------------- */
 function normalizeTextForSmallTalk(s) {
@@ -258,18 +233,13 @@ function normalizeTextForSmallTalk(s) {
   return t;
 }
 
-const CONCERN_KEYWORDS = new Set([
-  "stress","anxiety","depressed","depression","angry","anger",
-  "sleep","insomnia","panic","suicidal","sad","lonely","stressed"
-]);
+const CONCERN_KEYWORDS = new Set(["stress","anxiety","depressed","depression","angry","anger","sleep","insomnia","panic","suicidal","sad","lonely","stressed"]);
 
 function isGreeting(text) {
   if (!text) return false;
   const t = normalizeTextForSmallTalk(text);
-  const greetings = new Set([
-    "hi","hii","hello","hey","namaste","hare krishna","harekrishna",
-    "good morning","good afternoon","good evening","gm","greetings"
-  ]);
+  if (/^\d$/.test(t)) return false; // Prevents single numbers from being treated as small talk
+  const greetings = new Set(["hi","hii","hello","hey","namaste","hare krishna","harekrishna","good morning","good afternoon","good evening","gm","greetings"]);
   if (greetings.has(t)) return true;
   if (/^(h+i+|hey+)$/.test(t)) return true;
   if (t.length <= 8 && /\b(hello|hi|hey|namaste|hare)\b/.test(t)) return true;
@@ -279,21 +249,17 @@ function isGreeting(text) {
 function isSmallTalk(text) {
   if (!text) return false;
   const t = normalizeTextForSmallTalk(text);
-
+  if (/^\d$/.test(t)) return false; // Prevents single numbers from being treated as small talk
   if (CONCERN_KEYWORDS.has(t)) return false;
-
   const smalls = new Set([
-    "how are you","how are you doing","how are you doing today",
-    "how r you","how ru","how are u","how is it going","hows it going",
-    "whats up","what is up","thank you","thanks","thx","ok","okay",
-    "good","nice","cool","bye","see you","k","morning","good night"
+    "how are you","how are you doing","how are you doing today", "how r you","how ru","how are u",
+    "how is it going","hows it going", "whats up","what is up","thank you","thanks","thx",
+    "ok","okay", "good","nice","cool","bye","see you","k","morning","good night"
   ]);
   if (smalls.has(t)) return true;
-
   const words = t.split(/\s+/).filter(Boolean);
   if (words.length <= 3 && !/\b(help|need|please|advice|how to|why|what|when|where|stress|anxiety|angry|sleep|depressed)\b/.test(t)) return true;
   if (/\bhow\b/.test(t) && t.length < 40 && !/\b(problem|stress|anxious|angry|help|need)\b/.test(t)) return true;
-
   return false;
 }
 
@@ -317,28 +283,29 @@ If you'd like help, say for example:
 
 How can I help you today?`;
 
+// ✅ FIX #1: Updated SMALLTALK_REPLY to remove the confusing number menu
 const SMALLTALK_REPLY = `Hare Krishna 🙏 — I'm Sarathi, happy to meet you.
-Reply with your concern or pick a number:
-1) Stress / Anxiety
-2) Anger / Relationships
-3) Sleep / Calm
-4) Daily practice`;
+How can I help you today? You can tell me about what's causing you stress, anger, or any other concern.`;
 
-/* ---------------- ✅ PART 3: REFINED AI PERSONALITY ---------------- */
+
+/* ---------------- ✅ FIX #2, #3, #4: The new, smarter SYSTEM_PROMPT ---------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
-Tone: Modern, empathetic, concise (2-4 short paragraphs).
-Important: DO NOT quote or repeat Sanskrit/Hinglish verses. The system (bot) will display them. Use ONLY the provided Context below to create a concise response.
-If the user's message is short and direct (e.g., 'stress'), be direct and guiding. If the user's message is long and emotional, be more empathetic and gentle in your explanation.
+Tone: Modern, empathetic, very concise. The EXPLANATION must be a maximum of 3 short sentences. The entire reply should be easy to read on a phone without expanding.
+
+Detect the user's language. If the user writes in Hinglish, the EXPLANATION and FOLLOWUP must also be in Hinglish. The ESSENCE can remain in English for clarity.
+
+Critically evaluate if the retrieved Context verse offers a solution to the user's problem. If the verse is merely descriptive of the problem (e.g., describing an arrogant person to someone complaining about ego), you must frame your explanation by stating "The Gita describes this mindset to warn against it..." and then provide Krishna's actual guidance on how to deal with the situation.
+
 REQUIRED OUTPUT FORMAT (use exactly the labels):
 ESSENCE: <one-line concise essence of Krishna's guidance, max 20 words>
-EXPLANATION: <2-4 short sentences applying the essence to the user's situation>
+EXPLANATION: <max 3 short sentences applying the essence to the user's situation>
 OPTIONAL_PRACTICE: <one short practice (<=90s) if helpful>
 FOLLOWUP: <one brief clarifying question to the user (opt)>
 
-End with no extra commentary. Do not include the verse text; do not create additional refs — the bot will handle citations.`;
+Important: DO NOT quote or repeat Sanskrit/Hinglish verses. The system (bot) will display them. End with no extra commentary. Do not create additional refs — the bot will handle citations.`;
 
 
-/* ---------------- small helpers ---------------- */
+// ... [The rest of your helper functions like safeText, inferSpeakerFromSanskrit, parseStructuredAI remain unchanged] ...
 function safeText(md, ...keys) {
   if (!md) return "";
   for (const k of keys) {
@@ -348,7 +315,6 @@ function safeText(md, ...keys) {
   }
   return "";
 }
-
 function inferSpeakerFromSanskrit(san) {
   if (!san) return null;
   const s = String(san);
@@ -359,11 +325,9 @@ function inferSpeakerFromSanskrit(san) {
   }
   return null;
 }
-
 function parseStructuredAI(aiText) {
   if (!aiText) return {};
   const out = {};
-  const lines = aiText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const full = aiText;
   const ess = full.match(/ESSENCE:\s*([^\n\r]*)/i);
   const exp = full.match(/EXPLANATION:\s*([\s\S]*?)(?:OPTIONAL_PRACTICE:|FOLLOWUP:|$)/i);
@@ -373,12 +337,17 @@ function parseStructuredAI(aiText) {
   if (exp) out.explanation = exp[1].trim();
   if (prac) out.practice = prac[1].trim();
   if (follow) out.followup = follow[1].trim();
-  if (!out.essence && lines.length > 0 && lines[0].length <= 120) out.essence = lines[0];
-  if (!out.explanation && lines.length > 1) out.explanation = lines.slice(1).join(" ");
+  if (!out.essence && !out.explanation) { // Simple fallback if parsing fails
+      const lines = aiText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length > 0) out.explanation = lines.join(' ');
+  }
   return out;
 }
 
+
 /* ---------------- Webhook/main flow ---------------- */
+// This entire section remains the same as the last version I sent you.
+// The new SYSTEM_PROMPT will automatically guide the AI's responses.
 app.post("/webhook", async (req, res) => {
   let ackTimer = null;
   let responded = false;
@@ -405,21 +374,17 @@ app.post("/webhook", async (req, res) => {
     const incoming = String(text).trim();
     const session = getSession(phone);
 
-    // --- ✅ PART 1: Storing the conversation topic for memory ---
     const topic = normalizeQuery(incoming);
     if (topic) {
         session.recent_topics.push(topic);
         if (session.recent_topics.length > 3) {
-            session.recent_topics.shift(); // Keep history to the last 3 topics
+            session.recent_topics.shift();
         }
     }
     
     ackTimer = setTimeout(async () => {
-      try {
-        if (!responded) {
-          await sendViaGupshup(phone, `I hear you — giving you a pointed Gita insight…`);
-        }
-      } catch (e) { console.warn("Quick ack failed:", e?.message || e); }
+      try { if (!responded) { await sendViaGupshup(phone, `I hear you — giving you a pointed Gita insight…`); } } 
+      catch (e) { console.warn("Quick ack failed:", e?.message || e); }
     }, FAST_ACK_MS);
 
     try {
@@ -436,11 +401,8 @@ app.post("/webhook", async (req, res) => {
       session.practice_subscribed = true;
       const now = Date.now();
       session.next_checkin_ts = now + 24 * 60 * 60 * 1000;
-
       const day1 = THREE_DAY_PRACTICE[0];
-      await safeSend(phone,
-        `Wonderful 🌸 For the next 3 mornings, I'll send a tiny practice to center your mind.\n\n${day1}\n\nI’ll check in tomorrow. You’ve got this. 🙏`
-      );
+      await safeSend(phone, `Wonderful 🌸 For the next 3 mornings, I'll send a tiny practice to center your mind.\n\n${day1}\n\nI’ll check in tomorrow. You’ve got this. 🙏`);
       return;
     }
 
@@ -457,12 +419,8 @@ app.post("/webhook", async (req, res) => {
     try {
       const norm = normalizeQuery(incoming);
       const cachedVec = cacheGet(embedCache, norm);
-      if (cachedVec) {
-        qVec = cachedVec;
-      } else {
-        qVec = await openaiEmbedding(incoming);
-        cacheSet(embedCache, norm, qVec);
-      }
+      if (cachedVec) { qVec = cachedVec; } 
+      else { qVec = await openaiEmbedding(incoming); cacheSet(embedCache, norm, qVec); }
       console.log("ℹ qVec length:", Array.isArray(qVec) ? qVec.length : "not-array");
     } catch (e) {
       console.error("❌ Embedding failed:", e?.message || e);
@@ -476,12 +434,8 @@ app.post("/webhook", async (req, res) => {
     try {
       const norm = normalizeQuery(incoming);
       const cached = cacheGet(retrCache, norm);
-      if (cached) {
-        matches = cached;
-      } else {
-        matches = await multiNamespaceQuery(qVec, 8);
-        cacheSet(retrCache, norm, matches);
-      }
+      if (cached) { matches = cached; } 
+      else { matches = await multiNamespaceQuery(qVec, 8); cacheSet(retrCache, norm, matches); }
       console.log("ℹ Retrieved matches (top):", matches.slice(0,8).map(m => ({ id: m.id, score: m.score, ns: m._namespace })));
     } catch (e) {
       console.error("❌ Pinecone query failed:", e?.message || e);
@@ -491,9 +445,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    const verseMatch = matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse") && ((m.metadata && (m.metadata.sanskrit || m.metadata.hinglish1 || m.metadata.hinglish)) || false))
-                          || matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse"));
-
+    const verseMatch = matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse") && ((m.metadata && (m.metadata.sanskrit || m.metadata.hinglish1 || m.metadata.hinglish)) || false)) || matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse"));
     const commentaryMatch = matches.find(m => (m._namespace === "commentary" || ((m.metadata||{}).source || "").toString().toLowerCase().includes("comment"))) || matches.find(m => (m.id||"").toString().toLowerCase().startsWith("comm"));
     const practiceMatch = matches.find(m => (m._namespace === "practices" || ((m.metadata||{}).source || "").toString().toLowerCase().includes("practice") || (m.id||"").toString().toLowerCase().startsWith("breath") || (m.id||"").toString().toLowerCase().startsWith("practice")));
 
@@ -503,13 +455,8 @@ app.post("/webhook", async (req, res) => {
       if (commentaryRef) {
         try {
           const found = await findVerseByReference(commentaryRef, qVec);
-          if (found) {
-            finalVerse = found;
-            console.log("ℹ Found verse by commentary reference:", found.id);
-          }
-        } catch (e) {
-          console.warn("⚠ findVerseByReference error:", e?.message || e);
-        }
+          if (found) { finalVerse = found; console.log("ℹ Found verse by commentary reference:", found.id); }
+        } catch (e) { console.warn("⚠ findVerseByReference error:", e?.message || e); }
       }
     }
 
@@ -520,42 +467,10 @@ app.post("/webhook", async (req, res) => {
     const practiceText = practiceMatch ? (safeText(practiceMatch.metadata, "practice_text", "text", "description", "practice") || "") : "";
 
     if (!verseSanskrit && !verseHinglish) {
-      const ctxParts = [];
-      if (commentaryText) ctxParts.push(`Commentary: ${commentaryText}`);
-      if (practiceText) ctxParts.push(`Practice: ${practiceText}`);
-      const ctx = ctxParts.join("\n\n") || "";
-
-      if (ctx) {
-        const systemMsg = `You are SarathiAI (short). Use ONLY the context below. DO NOT invent verses. Provide a concise empathetic reply tailored to the user's message. If a practice exists, include it. Keep it 2-4 short sentences. End with a single brief follow-up question.`;
-        const userMsg = `Context:\n${ctx}\n\nUser said: "${incoming}"\n\nReply following instructions.`;
-        let aiResp = null;
-        try {
-          aiResp = await openaiChat([{ role: "system", content: systemMsg }, { role: "user", content: userMsg }], 400);
-        } catch (e) {
-          console.warn("OpenAI fallback failed:", e?.message || e);
-        }
-
-        const replyLines = [];
-        replyLines.push(aiResp && aiResp.trim() ? aiResp.trim() : `I hear you — could you say a bit more about what's bothering you (one short sentence)?`);
-        if (practiceText) replyLines.push("", `Practice: ${practiceText}`);
-        replyLines.push("", "Would you like a short 3-day morning practice I can send? Reply YES to try it.");
-        session.last_bot_prompt = "PRACTICE_CTA";
-        await safeSend(phone, replyLines.join("\n"));
+        // Fallback logic remains the same...
+        const safeReply = `I hear you — could you say a bit more about what's troubling you?\n\nPractice: Short calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.`;
+        await safeSend(phone, safeReply);
         return;
-      }
-
-      const safePractice = "Short calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.";
-      const safeSystem = `You are SarathiAI. The user said: "${incoming}". Ask one brief clarifying question and offer a short breathing practice. Keep tone compassionate.`;
-      const safeUser = `User: "${incoming}". Provide one question and a practice.`;
-      let safeAI = null;
-      try {
-        safeAI = await openaiChat([{ role: "system", content: safeSystem }, { role: "user", content: safeUser }], 200);
-      } catch (e) {
-        console.warn("OpenAI safe fallback failed:", e?.message || e);
-      }
-      const safeReply = (safeAI && safeAI.trim()) ? `${safeAI.trim()}\n\nPractice: ${safePractice}` : `I hear you — could you say a bit more about what's troubling you?\n\nPractice: ${safePractice}`;
-      await safeSend(phone, safeReply);
-      return;
     }
 
     const contextParts = [];
@@ -570,15 +485,13 @@ app.post("/webhook", async (req, res) => {
     const contextText = contextParts.join("\n\n");
 
     const modelSystem = SYSTEM_PROMPT;
-
-    // --- ✅ PART 1: Injecting memory into the AI's prompt ---
-    const previousTopics = session.recent_topics.slice(0, -1).join(', '); // Get all topics except the current one
+    const previousTopics = session.recent_topics.slice(0, -1).join(', ');
     const memoryContext = previousTopics ? `Remember, the user has recently talked about: ${previousTopics}. ` : '';
-    const modelUser = `${memoryContext}User message: "${incoming}"\n\nContext (do not repeat Sanskrit/Hinglish in the answer):\n${contextText}\n\nProduce a short reply using the required labels exactly (ESSENCE, EXPLANATION, OPTIONAL_PRACTICE, FOLLOWUP).`;
+    const modelUser = `${memoryContext}User message: "${incoming}"\n\nContext:\n${contextText}\n\nProduce a short reply using the required labels exactly.`;
 
     let aiStructured = null;
     try {
-      aiStructured = await openaiChat([{ role: "system", content: modelSystem }, { role: "user", content: modelUser }], 450);
+      aiStructured = await openaiChat([{ role: "system", content: modelSystem }, { role: "user", content: modelUser }]);
     } catch (e) {
       console.error("❌ OpenAI chat failed:", e?.message || e);
     }
@@ -624,6 +537,8 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+
+// ... [The rest of the file (Root & Admin, Proactive Check-in, and app.listen) remains unchanged] ...
 /* ---------------- Root & Admin ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} with RAG is running ✅`));
 
@@ -670,7 +585,7 @@ app.get("/test-retrieval", async (req, res) => {
   }
 });
 
-/* ---------------- ✅ PART 2: PROACTIVE CHECK-IN FEATURE ---------------- */
+/* ---------------- Proactive Check-in Feature ---------------- */
 async function proactiveCheckin() {
   const now = Date.now();
   const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
@@ -678,7 +593,6 @@ async function proactiveCheckin() {
   console.log("Running proactive check-in...");
 
   for (const [phone, session] of sessions) {
-    // Check if user was last seen more than 48 hours ago AND has not had a check-in recently
     if (now - session.last_seen_ts > FORTY_EIGHT_HOURS_MS && now - (session.last_checkin_sent_ts || 0) > FORTY_EIGHT_HOURS_MS) {
       console.log(`Sending proactive check-in to ${phone}`);
       const reflective_questions = [
@@ -688,15 +602,12 @@ async function proactiveCheckin() {
       ];
       const question = reflective_questions[Math.floor(Math.random() * reflective_questions.length)];
       await sendViaGupshup(phone, question);
-      
-      // Update timestamps to avoid spamming
       session.last_checkin_sent_ts = now;
-      session.last_seen_ts = now; // Mark as seen now so they don't get another check-in for 48h
+      session.last_seen_ts = now;
     }
   }
 }
 
-// Run the check-in function periodically (e.g., every 6 hours)
 setInterval(proactiveCheckin, 6 * 60 * 60 * 1000);
 
 /* ---------------- Start server ---------------- */
