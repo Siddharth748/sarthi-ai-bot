@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v4 - COMPLETE - Query Transformation & Final Fixes)
+// index.js — SarathiAI (v5 - DEFINITIVE FIX for isSmallTalk)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -64,7 +64,7 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting with Query Transformation logic...");
+console.log("\n🚀", BOT_NAME, "starting with definitive logic fixes...");
 console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, " EMBED_MODEL:", EMBED_MODEL);
 console.log("📦 PINECONE_HOST:", PINECONE_HOST ? "[LOADED]" : "[MISSING]");
@@ -155,9 +155,33 @@ async function multiNamespaceQuery(vector, topK = 5, filter) {
   return allMatches;
 }
 
+async function findVerseByReference(reference, queryVector) {
+    if (!reference) return null;
+    const tries = [
+      reference, reference.trim(), reference.trim().replace(/\s+/g, " "),
+      reference.trim().replace(/\s+/g, "_"), reference.trim().toUpperCase(),
+      reference.trim().toLowerCase(), reference.replace(/\./g, ""),
+      reference.replace(/\./g,"").replace(/\s+/g,"_")
+    ].filter((v,i,a) => v && a.indexOf(v) === i);
+    const nsList = getNamespacesArray();
+    let verseNs = nsList.find(n => n.toLowerCase().includes("verse")) || nsList[0];
+    for (const t of tries) {
+      try {
+        const vec = queryVector || await openaiEmbedding(t);
+        const filter = { reference: { "$eq": t } };
+        const res = await pineconeQuery(vec, 1, verseNs, filter);
+        const matches = res?.matches || [];
+        if (matches.length) return matches[0];
+      } catch (e) {
+        console.warn("❗ findVerseByReference failed for", t, e?.message || e);
+      }
+    }
+    return null;
+}
+
 /* ---------------- Query Transformation function ---------------- */
 async function transformQueryForRetrieval(userQuery) {
-  const systemPrompt = `You are an expert in the Bhagavad Gita. Your task is to transform a user's emotional or situational query into a concise, ideal search query that describes the underlying spiritual concept. This transformed query will be used to find the most relevant Gita verse. Examples:\n- User: "I am angry at my husband" -> "overcoming anger in relationships"\n- User: "He is so narcissistic" -> "dealing with ego and arrogance"\n- User: "I am stressed about my exams" -> "finding peace and focus during challenges"\n- User: "Mughe bahut jyada gussa aara hai" -> "managing intense anger"\n- User: "What should I do with my life?" -> "understanding dharma and one's duty"\nOnly return the transformed query text and nothing else.`;
+  const systemPrompt = `You are an expert in the Bhagavad Gita. Transform a user's query into a concise search term describing the underlying spiritual concept. Examples:\n- User: "I am angry at my husband" -> "overcoming anger in relationships"\n- User: "He is so narcissistic" -> "dealing with ego and arrogance"\n- User: "I am stressed about my exams" -> "finding peace and focus during challenges"\n- User: "Mughe bahut jyada gussa aara hai" -> "managing intense anger"\n- User: "What should I do with my life?" -> "understanding dharma and one's duty"\nOnly return the transformed query.`;
   try {
     const response = await openaiChat([{ role: "system", content: systemPrompt }, { role: "user", content: userQuery }], 50);
     const transformed = response.replace(/"/g, "").trim();
@@ -195,7 +219,7 @@ function normalizeTextForSmallTalk(s) {
   return t;
 }
 
-const CONCERN_KEYWORDS = new Set(["stress","anxiety","depressed","depression","angry","anger","sleep","insomnia","panic","suicidal","sad","lonely","stressed"]);
+const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "sleep", "insomnia", "panic", "suicidal", "sad", "lonely"];
 
 function isGreeting(text) {
   if (!text) return false;
@@ -204,20 +228,32 @@ function isGreeting(text) {
   const greetings = new Set(["hi","hii","hello","hey","namaste","hare krishna","harekrishna","good morning","good afternoon","good evening","gm","greetings"]);
   if (greetings.has(t)) return true;
   if (/^(h+i+|hey+)$/.test(t)) return true;
-  if (t.length <= 8 && /\b(hello|hi|hey|namaste|hare)\b/.test(t)) return true;
-  return false;
+  return t.length <= 8 && /\b(hello|hi|hey|namaste|hare)\b/.test(t);
 }
 
+// ✅ DEFINITIVE FIX for isSmallTalk function
 function isSmallTalk(text) {
-  if (!text) return false;
-  const t = normalizeTextForSmallTalk(text);
-  if (/^\d{1,2}$/.test(t)) return false;
-  if (CONCERN_KEYWORDS.has(t)) return false;
-  const smalls = new Set(["how are you","how are you doing","how r you","how ru","how are u","whats up","thank you","thanks","thx","ok","okay","good","nice","cool","bye","see you","k","morning","good night"]);
-  if (smalls.has(t)) return true;
-  const words = t.split(/\s+/).filter(Boolean);
-  if (words.length <= 3 && !/\b(help|need|please|advice|how to|why|what|when|where)\b/.test(t)) return true;
-  return false;
+    if (!text) return false;
+    const t = normalizeTextForSmallTalk(text);
+    if (/^\d{1,2}$/.test(t)) return false;
+
+    // 1. Check if the text CONTAINS a concern keyword. This is the most important fix.
+    for (const keyword of CONCERN_KEYWORDS) {
+        if (t.includes(keyword)) {
+            return false; // It's a real concern, NOT small talk.
+        }
+    }
+    
+    // 2. Check for specific small talk phrases.
+    const smalls = new Set([
+      "how are you", "how are you doing", "how r you", "how ru", "how are u",
+      "whats up", "thank you", "thanks", "thx", "ok", "okay", "good",
+      "nice", "cool", "bye", "see you", "k", "morning", "good night"
+    ]);
+    if (smalls.has(t)) return true;
+
+    // 3. If it's none of the above, it's not small talk.
+    return false;
 }
 
 /* ---------------- Templates & Prompts ---------------- */
@@ -226,17 +262,13 @@ const SMALLTALK_REPLY = `Hare Krishna 🙏 — I'm Sarathi, happy to meet you.\n
 
 const SYSTEM_PROMPT = `You are SarathiAI — a compassionate guide inspired by the Bhagavad Gita.
 Tone: Modern, empathetic, and very concise. The EXPLANATION must be a maximum of 2-3 short sentences. The entire reply MUST be brief and easy to read on a phone without expanding.
-
 STRICTLY match the user's primary language. If their last message was mostly Hinglish, the EXPLANATION and FOLLOWUP must be in Hinglish. Otherwise, reply in English.
-
 Critically evaluate if the retrieved Context verse offers a solution. If the verse is merely descriptive of the problem (e.g., describing an arrogant person to someone complaining about ego), you must frame your explanation by stating "The Gita describes this mindset to warn against it..." and then provide Krishna's actual guidance on how to deal with the situation.
-
 REQUIRED OUTPUT FORMAT:
 ESSENCE: <one-line essence of Krishna's guidance, max 20 words>
 EXPLANATION: <max 2-3 short sentences applying the essence>
 OPTIONAL_PRACTICE: <one short practice (<=90s) if helpful>
 FOLLOWUP: <one brief clarifying question (opt)>
-
 Important: DO NOT quote or repeat the provided verses. End with no extra commentary.`;
 
 /* ---------------- Other Small Helpers ---------------- */
@@ -252,9 +284,8 @@ function safeText(md, ...keys) {
 
 function inferSpeakerFromSanskrit(san) {
   if (!san) return null;
-  const s = String(san);
-  if (/\bअर्जुन\s*उवाच\b|\bArjuna\b/i.test(s)) return "Arjuna";
-  if (/\bकृष्ण\s*उवाच\b|\bश्रीभगवान्\s*उवाच\b|\bKrishna\b/i.test(s)) return "Shri Krishna";
+  if (/\bअर्जुन\s*उवाच\b|\bArjuna\b/i.test(String(san))) return "Arjuna";
+  if (/\bकृष्ण\s*उवाच\b|\bश्रीभगवान्\s*उवाच\b|\bKrishna\b/i.test(String(san))) return "Shri Krishna";
   return null;
 }
 
@@ -291,11 +322,6 @@ app.post("/webhook", async (req, res) => {
     const incoming = String(text).trim();
     const session = getSession(phone);
 
-    if (normalizeQuery(incoming) === "just fuck off" || normalizeQuery(incoming) === "stop") {
-        await sendViaGupshup(phone, SMALLTALK_REPLY);
-        return;
-    }
-
     if (isGreeting(incoming)) {
       await sendViaGupshup(phone, WELCOME_TEMPLATE);
       return;
@@ -305,6 +331,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
+    // Main logic starts here
     const transformedQuery = await transformQueryForRetrieval(incoming);
     const norm = normalizeQuery(transformedQuery);
     let qVec;
@@ -362,7 +389,49 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Root, Admin, Proactive Check-in ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} with RAG is running ✅`));
 
-// ... [admin routes and proactive check-in functions remain] ...
+function findIngestScript() {
+  const cjs = path.join(process.cwd(), "ingest_all.cjs");
+  const js = path.join(process.cwd(), "ingest_all.js");
+  if (fs.existsSync(cjs)) return "ingest_all.cjs";
+  if (fs.existsSync(js)) return "ingest_all.js";
+  return null;
+}
+
+function runCommand(cmd, args = [], onOutput, onExit) {
+  const proc = spawn(cmd, args, { shell: true });
+  proc.stdout.on("data", (d) => onOutput && onOutput(d.toString()));
+  proc.stderr.on("data", (d) => onOutput && onOutput(d.toString()));
+  proc.on("close", (code) => onExit && onExit(code));
+  return proc;
+}
+
+app.get("/train", (req, res) => {
+  const secret = req.query.secret;
+  if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
+  const script = findIngestScript();
+  if (!script) return res.status(500).send("No ingest script found (ingest_all.cjs or ingest_all.js)");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.write(`Starting ingestion using ${script}...\n\n`);
+  runCommand("node", [script],
+    (line) => { try { res.write(line); } catch (e) {} },
+    (code) => { res.write(`\nProcess exited with code ${code}\n`); res.end(); }
+  );
+});
+
+app.get("/test-retrieval", async (req, res) => {
+  const secret = req.query.secret;
+  if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
+  const query = req.query.query || "I am stressed about exams";
+  try {
+    const vec = await openaiEmbedding(query);
+    const matches = await multiNamespaceQuery(vec, 8);
+    const ctx = matches.map(m => ({ id: m.id, score: m.score, metadata: m.metadata, namespace: m._namespace }));
+    return res.status(200).json({ query, retrieved: ctx });
+  } catch (e) {
+    return res.status(500).json({ error: e?.message || e });
+  }
+});
+
 async function proactiveCheckin() {
   const now = Date.now();
   const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
