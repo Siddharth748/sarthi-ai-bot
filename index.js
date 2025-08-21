@@ -1,4 +1,4 @@
-// index.js — SarathiAI (final) — RAG-enabled, ESM (fixed duplication + attribution + CTA/memory + no-Ref + fast-ack + caches)
+// index.js — SarathiAI (v2 with Memory & Proactive Check-ins)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -52,13 +52,14 @@ function normalizeQuery(s) {
   return String(s || "").trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
 }
 
-/* ---------------- Simple in-memory session (short-term memory) ---------------- */
-const sessions = new Map(); // phone -> { last_bot_prompt, practice_subscribed, next_checkin_ts }
+/* ---------------- ✅ PART 1 & 2: UPDATED SESSION & MEMORY ---------------- */
+const sessions = new Map(); // phone -> { last_bot_prompt, practice_subscribed, next_checkin_ts, last_seen_ts, recent_topics }
 function getSession(phone) {
   const now = Date.now();
   let s = sessions.get(phone);
   if (!s) {
-    s = { last_bot_prompt: "NONE", practice_subscribed: false, next_checkin_ts: 0, last_checkin_sent_ts: 0, last_seen_ts: now };
+    // Added recent_topics for memory
+    s = { last_bot_prompt: "NONE", practice_subscribed: false, next_checkin_ts: 0, last_checkin_sent_ts: 0, last_seen_ts: now, recent_topics: [] };
     sessions.set(phone, s);
   }
   // clean up very old sessions (optional)
@@ -70,7 +71,7 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting...");
+console.log("\n🚀", BOT_NAME, "starting with Memory & Proactive Check-ins...");
 console.log("📦 GS_SOURCE:", GS_SOURCE || "[MISSING]");
 console.log("📦 OPENAI_MODEL:", OPENAI_MODEL, " EMBED_MODEL:", EMBED_MODEL);
 console.log("📦 PINECONE_HOST:", PINECONE_HOST ? "[LOADED]" : "[MISSING]");
@@ -222,28 +223,23 @@ function extractPhoneAndText(body) {
   const rawType = body.type || 'unknown';
 
   try {
-    // This structure covers most standard text messages
     if (body.type === 'message' && body.payload && body.payload.payload) {
       phone = body.payload.sender.phone;
       text = body.payload.payload.text;
     }
-    // This covers user events like 'sandbox-start'
     else if (body.type === 'user-event' && body.payload && body.payload.phone) {
       phone = body.payload.phone;
-      text = null; // No text in these events
+      text = null;
     }
     
-    // Add more fallback checks if needed for other message types
     if (!phone && body.payload) {
         phone = body.payload.sender?.phone || body.payload.source;
     }
 
   } catch (e) {
-    // If any of the above fail (e.g., sender is null), this will prevent a crash
     console.error("Error during payload extraction, but we caught it!", e.message);
   }
 
-  // Final cleanup
   if (phone) phone = String(phone).replace(/\D/g, "");
   
   return { phone, text, rawType };
@@ -328,10 +324,11 @@ Reply with your concern or pick a number:
 3) Sleep / Calm
 4) Daily practice`;
 
-/* ---------------- System prompt (model instructions) ---------------- */
+/* ---------------- ✅ PART 3: REFINED AI PERSONALITY ---------------- */
 const SYSTEM_PROMPT = `You are SarathiAI — a friendly, compassionate guide inspired by Shri Krishna (Bhagavad Gita).
 Tone: Modern, empathetic, concise (2-4 short paragraphs).
 Important: DO NOT quote or repeat Sanskrit/Hinglish verses. The system (bot) will display them. Use ONLY the provided Context below to create a concise response.
+If the user's message is short and direct (e.g., 'stress'), be direct and guiding. If the user's message is long and emotional, be more empathetic and gentle in your explanation.
 REQUIRED OUTPUT FORMAT (use exactly the labels):
 ESSENCE: <one-line concise essence of Krishna's guidance, max 20 words>
 EXPLANATION: <2-4 short sentences applying the essence to the user's situation>
@@ -339,6 +336,7 @@ OPTIONAL_PRACTICE: <one short practice (<=90s) if helpful>
 FOLLOWUP: <one brief clarifying question to the user (opt)>
 
 End with no extra commentary. Do not include the verse text; do not create additional refs — the bot will handle citations.`;
+
 
 /* ---------------- small helpers ---------------- */
 function safeText(md, ...keys) {
@@ -385,7 +383,6 @@ app.post("/webhook", async (req, res) => {
   let ackTimer = null;
   let responded = false;
 
-  // safeSend defined here so it can clear ackTimer & mark responded
   async function safeSend(to, text) {
     if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; }
     responded = true;
@@ -408,7 +405,15 @@ app.post("/webhook", async (req, res) => {
     const incoming = String(text).trim();
     const session = getSession(phone);
 
-    // start ack timer which sends a short quick ack if we haven't responded in FAST_ACK_MS
+    // --- ✅ PART 1: Storing the conversation topic for memory ---
+    const topic = normalizeQuery(incoming);
+    if (topic) {
+        session.recent_topics.push(topic);
+        if (session.recent_topics.length > 3) {
+            session.recent_topics.shift(); // Keep history to the last 3 topics
+        }
+    }
+    
     ackTimer = setTimeout(async () => {
       try {
         if (!responded) {
@@ -417,7 +422,6 @@ app.post("/webhook", async (req, res) => {
       } catch (e) { console.warn("Quick ack failed:", e?.message || e); }
     }, FAST_ACK_MS);
 
-    // 🔔 Before anything, if a check-in is due, send it (non-blocking)
     try {
       const now = Date.now();
       if (session.practice_subscribed && now >= (session.next_checkin_ts || 0) && now - (session.last_checkin_sent_ts || 0) > 60 * 60 * 1000) {
@@ -427,7 +431,6 @@ app.post("/webhook", async (req, res) => {
       }
     } catch (e) { console.warn(e); }
 
-    // ✅ YES handler — only when last prompt was PRACTICE_CTA
     if (/^\s*yes\b/i.test(incoming) && session.last_bot_prompt === "PRACTICE_CTA") {
       session.last_bot_prompt = "NONE";
       session.practice_subscribed = true;
@@ -441,7 +444,6 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // greetings/small talk (placed AFTER YES handler so CTA flow wins)
     if (isGreeting(incoming)) {
       await safeSend(phone, WELCOME_TEMPLATE);
       return;
@@ -451,7 +453,6 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 1) embed — use cache
     let qVec;
     try {
       const norm = normalizeQuery(incoming);
@@ -471,7 +472,6 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 2) retrieve across namespaces — use cache
     let matches = [];
     try {
       const norm = normalizeQuery(incoming);
@@ -491,14 +491,12 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // find verse/practice/commentary matches
     const verseMatch = matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse") && ((m.metadata && (m.metadata.sanskrit || m.metadata.hinglish1 || m.metadata.hinglish)) || false))
                           || matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse"));
 
     const commentaryMatch = matches.find(m => (m._namespace === "commentary" || ((m.metadata||{}).source || "").toString().toLowerCase().includes("comment"))) || matches.find(m => (m.id||"").toString().toLowerCase().startsWith("comm"));
     const practiceMatch = matches.find(m => (m._namespace === "practices" || ((m.metadata||{}).source || "").toString().toLowerCase().includes("practice") || (m.id||"").toString().toLowerCase().startsWith("breath") || (m.id||"").toString().toLowerCase().startsWith("practice")));
 
-    // if verse missing but commentary has reference, attempt to fetch verse by reference
     let finalVerse = verseMatch || null;
     if (!finalVerse && commentaryMatch) {
       const commentaryRef = safeText(commentaryMatch.metadata, "reference", "Reference", "ref");
@@ -515,14 +513,12 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // extract metadata
     const verseSanskrit = finalVerse ? safeText(finalVerse.metadata, "sanskrit", "Sanskrit", "Sanskrit verse") : "";
     const verseHinglish = finalVerse ? safeText(finalVerse.metadata, "hinglish1", "hinglish", "Hinglish (1)", "transliteration_hinglish") : "";
     const verseTranslation = finalVerse ? safeText(finalVerse.metadata, "translation", "Translation (English)", "english") : "";
     const commentaryText = commentaryMatch ? (safeText(commentaryMatch.metadata, "commentary_summary", "commentary_long", "summary", "commentary") || "") : "";
     const practiceText = practiceMatch ? (safeText(practiceMatch.metadata, "practice_text", "text", "description", "practice") || "") : "";
 
-    // If no verse text -> fallback to commentary/practice or safe clarifying question
     if (!verseSanskrit && !verseHinglish) {
       const ctxParts = [];
       if (commentaryText) ctxParts.push(`Commentary: ${commentaryText}`);
@@ -542,17 +538,12 @@ app.post("/webhook", async (req, res) => {
         const replyLines = [];
         replyLines.push(aiResp && aiResp.trim() ? aiResp.trim() : `I hear you — could you say a bit more about what's bothering you (one short sentence)?`);
         if (practiceText) replyLines.push("", `Practice: ${practiceText}`);
-        // ⛔️ no Ref line
         replyLines.push("", "Would you like a short 3-day morning practice I can send? Reply YES to try it.");
-
-        // mark CTA context for YES
         session.last_bot_prompt = "PRACTICE_CTA";
-
         await safeSend(phone, replyLines.join("\n"));
         return;
       }
 
-      // No context at all -> ask clarifying question + small practice
       const safePractice = "Short calming breath: inhale 4s, hold 7s, exhale 8s — repeat 3 times.";
       const safeSystem = `You are SarathiAI. The user said: "${incoming}". Ask one brief clarifying question and offer a short breathing practice. Keep tone compassionate.`;
       const safeUser = `User: "${incoming}". Provide one question and a practice.`;
@@ -567,7 +558,6 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // We have verse text -> ask model to produce structured essence/explanation (and NOT quote the verse)
     const contextParts = [];
     if (finalVerse) {
       contextParts.push(`Reference: ${finalVerse.metadata?.reference || finalVerse.id}`);
@@ -580,11 +570,14 @@ app.post("/webhook", async (req, res) => {
     const contextText = contextParts.join("\n\n");
 
     const modelSystem = SYSTEM_PROMPT;
-    const modelUser = `User message: "${incoming}"\n\nContext (do not repeat Sanskrit/Hinglish in the answer):\n${contextText}\n\nProduce a short reply using the required labels exactly (ESSENCE, EXPLANATION, OPTIONAL_PRACTICE, FOLLOWUP).`;
+
+    // --- ✅ PART 1: Injecting memory into the AI's prompt ---
+    const previousTopics = session.recent_topics.slice(0, -1).join(', '); // Get all topics except the current one
+    const memoryContext = previousTopics ? `Remember, the user has recently talked about: ${previousTopics}. ` : '';
+    const modelUser = `${memoryContext}User message: "${incoming}"\n\nContext (do not repeat Sanskrit/Hinglish in the answer):\n${contextText}\n\nProduce a short reply using the required labels exactly (ESSENCE, EXPLANATION, OPTIONAL_PRACTICE, FOLLOWUP).`;
 
     let aiStructured = null;
     try {
-      // slightly reduced tokens to trim latency
       aiStructured = await openaiChat([{ role: "system", content: modelSystem }, { role: "user", content: modelUser }], 450);
     } catch (e) {
       console.error("❌ OpenAI chat failed:", e?.message || e);
@@ -592,32 +585,22 @@ app.post("/webhook", async (req, res) => {
 
     const parsed = parseStructuredAI(aiStructured || "");
     const essence = parsed.essence || (aiStructured ? aiStructured.split("\n")[0].slice(0,200) : "Focus on your effort, not the result.");
-    
-    // ✅ THIS IS THE CORRECTED LINE ✅
     const explanation = parsed.explanation || (aiStructured ? aiStructured : "I hear you — try one small step and breathe.");
-
     const optionalPractice = parsed.practice || practiceText || "";
     const followup = parsed.followup || "Would you like a short 3-day morning practice I can send? Reply YES to try it.";
 
-    // infer speaker for proper attribution of verse line
     const verseSpeaker = inferSpeakerFromSanskrit(verseSanskrit) || (finalVerse && finalVerse.metadata && finalVerse.metadata.speaker) || null;
     const speakerLine = verseSpeaker ? `${verseSpeaker} said:` : `Verse:`;
 
-    // Compose final message — show verse (Sanskrit + Hinglish) with speaker attribution,
-    // then “Shri Krishna kehte hain: <essence>”, explanation, optional practice, followup (no Ref).
     const finalParts = [];
     if (verseSanskrit) finalParts.push(`${speakerLine} "${verseSanskrit}"`);
     if (verseHinglish) finalParts.push(`${verseHinglish}`);
     if (verseTranslation) finalParts.push(`${verseTranslation}`);
-
     finalParts.push("", `Shri Krishna kehte hain: "${essence.replace(/"/g, "'")}"`, "");
     finalParts.push(explanation);
     if (optionalPractice && optionalPractice.trim()) finalParts.push("", `Practice: ${optionalPractice}`);
-
-    // ⛔️ Removed Ref line
     finalParts.push("", followup);
 
-    // Mark CTA context if this followup is the practice CTA
     if (/reply\s+yes/i.test(followup) && /3[-\s]?day/i.test(followup) && /practice/i.test(followup)) {
       session.last_bot_prompt = "PRACTICE_CTA";
     } else {
@@ -625,13 +608,11 @@ app.post("/webhook", async (req, res) => {
     }
 
     const finalReply = finalParts.join("\n");
-
     console.log("ℹ finalReply preview:", (finalReply || "").slice(0,400));
-    // final send: use safeSend if not already responded by quick ack
+    
     if (!responded) {
       await safeSend(phone, finalReply);
     } else {
-      // if quick ack already went out, send full reply normally
       await sendViaGupshup(phone, finalReply);
     }
     return;
@@ -688,6 +669,35 @@ app.get("/test-retrieval", async (req, res) => {
     return res.status(500).json({ error: e?.message || e });
   }
 });
+
+/* ---------------- ✅ PART 2: PROACTIVE CHECK-IN FEATURE ---------------- */
+async function proactiveCheckin() {
+  const now = Date.now();
+  const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
+  
+  console.log("Running proactive check-in...");
+
+  for (const [phone, session] of sessions) {
+    // Check if user was last seen more than 48 hours ago AND has not had a check-in recently
+    if (now - session.last_seen_ts > FORTY_EIGHT_HOURS_MS && now - (session.last_checkin_sent_ts || 0) > FORTY_EIGHT_HOURS_MS) {
+      console.log(`Sending proactive check-in to ${phone}`);
+      const reflective_questions = [
+        "Hare Krishna. Just a gentle thought for your day: Reflect on one small action you took today where you focused on your effort, not the outcome. 🙏",
+        "Hare Krishna. A gentle reminder for your day: Take a moment to notice the stillness between your breaths. 🙏",
+        "Hare Krishna. A thought for you today: What is one thing you can let go of, just for this moment? 🙏"
+      ];
+      const question = reflective_questions[Math.floor(Math.random() * reflective_questions.length)];
+      await sendViaGupshup(phone, question);
+      
+      // Update timestamps to avoid spamming
+      session.last_checkin_sent_ts = now;
+      session.last_seen_ts = now; // Mark as seen now so they don't get another check-in for 48h
+    }
+  }
+}
+
+// Run the check-in function periodically (e.g., every 6 hours)
+setInterval(proactiveCheckin, 6 * 60 * 60 * 1000);
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
