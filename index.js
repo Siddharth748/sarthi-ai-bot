@@ -214,21 +214,42 @@ async function findVerseByReference(reference, queryVector = null) {
 }
 
 /* ---------------- Payload extraction (Gupshup shapes) ---------------- */
+// ✅ THIS IS THE CORRECTED, CRASH-PROOF FUNCTION ✅
 function extractPhoneAndText(body) {
   if (!body) return { phone: null, text: null, rawType: null };
-  let phone = null, text = null;
-  const rawType = body.type || null;
+  
+  let phone = null;
+  let text = null;
+  const rawType = body.type || 'unknown';
 
-  if (body.type === "message" && body.payload) {
-    phone = body.payload?.sender?.phone || body.payload?.source || null;
-    text = body.payload?.payload?.text || body.payload?.text || (typeof body.payload?.payload === "string" ? body.payload.payload : null);
-    if (!text && body.payload?.payload?.caption) text = body.payload.payload.caption;
+  try {
+    // This structure covers most standard text messages
+    if (body.type === 'message' && body.payload && body.payload.payload) {
+      phone = body.payload.sender.phone;
+      text = body.payload.payload.text;
+    }
+    // This covers user events like 'sandbox-start'
+    else if (body.type === 'user-event' && body.payload && body.payload.phone) {
+      phone = body.payload.phone;
+      text = null; // No text in these events
+    }
+    
+    // Add more fallback checks if needed for other message types
+    if (!phone && body.payload) {
+        phone = body.payload.sender?.phone || body.payload.source;
+    }
+
+  } catch (e) {
+    // If any of the above fail (e.g., sender is null), this will prevent a crash
+    console.error("Error during payload extraction, but we caught it!", e.message);
   }
-  if (!phone) phone = body.sender?.phone || body.source || body.from || null;
-  if (!text) text = body.payload?.text || body.text || body.message?.text || null;
+
+  // Final cleanup
   if (phone) phone = String(phone).replace(/\D/g, "");
+  
   return { phone, text, rawType };
 }
+
 
 /* ---------------- Greeting & Small talk detection (improved) ---------------- */
 function normalizeTextForSmallTalk(s) {
@@ -373,12 +394,19 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
-    console.log("Inbound raw payload:", JSON.stringify(req.body));
+    // ✅ ADDED A BETTER LOG TO SEE EXACTLY WHAT GUPSHUP IS SENDING ✅
+    console.log("Inbound raw payload:", JSON.stringify(req.body, null, 2));
     res.status(200).send("OK"); // ACK early
 
-    const { phone, text } = extractPhoneAndText(req.body);
-    console.log("Detected userPhone:", phone, "userText:", text);
-    if (!phone || !text) { console.log("ℹ No actionable message — skip."); return; }
+    const { phone, text, rawType } = extractPhoneAndText(req.body);
+    console.log(`Detected: phone=${phone}, text=${text}, type=${rawType}`);
+
+    if (!phone || !text) {
+        console.log("ℹ No actionable message — skip.");
+        // Clear the timer if we are skipping, so the "I hear you" message doesn't send.
+        if (ackTimer) clearTimeout(ackTimer);
+        return;
+    }
 
     const incoming = String(text).trim();
     const session = getSession(phone);
@@ -469,7 +497,7 @@ app.post("/webhook", async (req, res) => {
 
     // find verse/practice/commentary matches
     const verseMatch = matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse") && ((m.metadata && (m.metadata.sanskrit || m.metadata.hinglish1 || m.metadata.hinglish)) || false))
-                       || matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse"));
+                          || matches.find(m => (m._namespace === "verse" || ((m.metadata||{}).source || "").toString().toLowerCase() === "verse"));
 
     const commentaryMatch = matches.find(m => (m._namespace === "commentary" || ((m.metadata||{}).source || "").toString().toLowerCase().includes("comment"))) || matches.find(m => (m.id||"").toString().toLowerCase().startsWith("comm"));
     const practiceMatch = matches.find(m => (m._namespace === "practices" || ((m.metadata||{}).source || "").toString().toLowerCase().includes("practice") || (m.id||"").toString().toLowerCase().startsWith("breath") || (m.id||"").toString().toLowerCase().startsWith("practice")));
@@ -568,7 +596,7 @@ app.post("/webhook", async (req, res) => {
 
     const parsed = parseStructuredAI(aiStructured || "");
     const essence = parsed.essence || (aiStructured ? aiStructured.split("\n")[0].slice(0,200) : "Focus on your effort, not the result.");
-    const explanation = parsed.explanation || (aiStructured ? aiStructured : "I hear you — try one small step and breathe.");
+    const explanation = parsed.explanation || (aiStructured ? ai brisket : "I hear you — try one small step and breathe.");
     const optionalPractice = parsed.practice || practiceText || "";
     const followup = parsed.followup || "Would you like a short 3-day morning practice I can send? Reply YES to try it.";
 
