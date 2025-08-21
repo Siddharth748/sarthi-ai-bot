@@ -214,7 +214,6 @@ async function findVerseByReference(reference, queryVector = null) {
 }
 
 /* ---------------- Payload extraction (Gupshup shapes) ---------------- */
-// ✅ THIS IS THE CORRECTED, CRASH-PROOF FUNCTION ✅
 function extractPhoneAndText(body) {
   if (!body) return { phone: null, text: null, rawType: null };
   
@@ -394,7 +393,6 @@ app.post("/webhook", async (req, res) => {
   }
 
   try {
-    // ✅ ADDED A BETTER LOG TO SEE EXACTLY WHAT GUPSHUP IS SENDING ✅
     console.log("Inbound raw payload:", JSON.stringify(req.body, null, 2));
     res.status(200).send("OK"); // ACK early
 
@@ -403,7 +401,6 @@ app.post("/webhook", async (req, res) => {
 
     if (!phone || !text) {
         console.log("ℹ No actionable message — skip.");
-        // Clear the timer if we are skipping, so the "I hear you" message doesn't send.
         if (ackTimer) clearTimeout(ackTimer);
         return;
     }
@@ -424,7 +421,6 @@ app.post("/webhook", async (req, res) => {
     try {
       const now = Date.now();
       if (session.practice_subscribed && now >= (session.next_checkin_ts || 0) && now - (session.last_checkin_sent_ts || 0) > 60 * 60 * 1000) {
-        // non-blocking info message (do not use safeSend here, it's a background check-in)
         sendViaGupshup(phone, "Quick check-in 🌼 — How did your practice go since we last spoke?");
         session.last_checkin_sent_ts = now;
         session.next_checkin_ts = now + 24 * 60 * 60 * 1000;
@@ -596,7 +592,10 @@ app.post("/webhook", async (req, res) => {
 
     const parsed = parseStructuredAI(aiStructured || "");
     const essence = parsed.essence || (aiStructured ? aiStructured.split("\n")[0].slice(0,200) : "Focus on your effort, not the result.");
-    const explanation = parsed.explanation || (aiStructured ? ai brisket : "I hear you — try one small step and breathe.");
+    
+    // ✅ THIS IS THE CORRECTED LINE ✅
+    const explanation = parsed.explanation || (aiStructured ? aiStructured : "I hear you — try one small step and breathe.");
+
     const optionalPractice = parsed.practice || practiceText || "";
     const followup = parsed.followup || "Would you like a short 3-day morning practice I can send? Reply YES to try it.";
 
