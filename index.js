@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v8.3 - Final Threshold & Logging Fix)
+// index.js — SarathiAI (v8.4 - Final Threshold Adjustment)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -104,7 +104,6 @@ function extractPhoneAndText(body) {
 function normalizeTextForSmallTalk(s) {
   if (!s) return "";
   let t = String(s).trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
-  // Normalize common chat shorthand
   t = t.replace(/\bu\b/g, "you");
   t = t.replace(/\br\b/g, "are");
   return t;
@@ -122,19 +121,15 @@ const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry
 function isSmallTalk(text) {
     if (!text) return false;
     const t = normalizeTextForSmallTalk(text);
-
     for (const keyword of CONCERN_KEYWORDS) {
         if (t.includes(keyword)) return false;
     }
-    
-    // ✅ FIX #1: Added "how do you do" and other variations
     const smalls = new Set([
       "how are you", "how are you doing", "how do you do", "how r you", "how ru", "how are u",
       "thanks", "thank you", "thx", "ok", "okay", "good", "nice",
       "cool", "bye", "see you", "k"
     ]);
     if (smalls.has(t)) return true;
-
     return false;
 }
 
@@ -191,11 +186,10 @@ app.post("/webhook", async (req, res) => {
 
         const verseMatch = matches?.matches?.[0];
         
-        // ✅ FIX #3: Added debug log to see the score
         console.log(`[Pinecone Match] Best match found with score: ${verseMatch?.score} for query: "${transformedQuery}"`);
 
-        // ✅ FIX #2: Lowered the confidence threshold
-        if (!verseMatch || verseMatch.score < 0.70) {
+        // ✅ THE FINAL FIX: Lowered the confidence threshold from 0.70 to 0.25
+        if (!verseMatch || verseMatch.score < 0.25) {
             const betterFallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
             await sendViaTwilio(phone, betterFallback);
             return;
