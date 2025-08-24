@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v8.1 - Final Greeting Fix)
+// index.js — SarathiAI (v8.2 - Small Talk & Fallback Fix)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -67,19 +67,6 @@ async function sendViaTwilio(destination, replyText) {
     }
 }
 
-async function sendImageViaTwilio(destination, imageUrl, caption) {
-    if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
-        console.warn(`(Simulated Image -> ${destination}): ${imageUrl} | Caption: ${caption}`);
-        return;
-    }
-    try {
-        await twilioClient.messages.create({ from: TWILIO_SANDBOX_NUMBER, to: destination, mediaUrl: [imageUrl], body: caption });
-        console.log(`✅ Twilio image sent to ${destination}`);
-    } catch (err) {
-        console.error("❌ Error sending image to Twilio:", err.message);
-    }
-}
-
 async function openaiChat(messages, maxTokens = 400) {
   if (!OPENAI_KEY) return null;
   const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7 };
@@ -109,17 +96,46 @@ async function getEmbedding(text) {
   return resp.data.data[0].embedding;
 }
 
-/* ---------------- Payload Extraction & Greeting Logic ---------------- */
+/* ---------------- Payload Extraction & Greeting/Small Talk Logic ---------------- */
 function extractPhoneAndText(body) {
     return { phone: body.From, text: body.Body };
 }
 
+function normalizeTextForSmallTalk(s) {
+  if (!s) return "";
+  return String(s).trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
+}
+
 function isGreeting(text) {
   if (!text) return false;
-  const t = String(text).trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
+  const t = normalizeTextForSmallTalk(text);
   const greetings = new Set(["hi","hii","hello","hey","namaste","hare krishna","harekrishna"]);
   return greetings.has(t);
 }
+
+// ✅ FIX #1: Restored the isSmallTalk function
+const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "sleep", "insomnia", "panic", "suicidal", "sad", "lonely"];
+
+function isSmallTalk(text) {
+    if (!text) return false;
+    const t = normalizeTextForSmallTalk(text);
+
+    // If it includes a major concern, it's NOT small talk.
+    for (const keyword of CONCERN_KEYWORDS) {
+        if (t.includes(keyword)) return false;
+    }
+    
+    // Check for specific small talk phrases.
+    const smalls = new Set([
+      "how are you", "how are you doing", "how r you", "how ru", "how are u",
+      "thanks", "thank you", "thx", "ok", "okay", "good", "nice",
+      "cool", "bye", "see you", "k"
+    ]);
+    if (smalls.has(t)) return true;
+
+    return false;
+}
+
 
 /* ---------------- NEW: State-Aware AI Prompts ---------------- */
 const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.
@@ -152,17 +168,24 @@ app.post("/webhook", async (req, res) => {
 
     const session = getSession(phone);
     
-    // ✅ CRITICAL FIX: The missing greeting check is now restored.
+    const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
+    
     if (isGreeting(text)) {
         console.log(`[Action: Greeting] for ${phone}`);
-        session.conversation_stage = "new_topic"; // Reset conversation state
-        session.chat_history = []; // Clear history
-        
-        const welcomeImageUrl = "https://i.imgur.com/8f22W4n.jpeg";
-        const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nThink of me as a link between your mann ki baat and the Gita's timeless gyaan.\n\nHow can I help you today?`;
-        
-        // We will send a text-only welcome for now to ensure stability
+        session.conversation_stage = "new_topic";
+        session.chat_history = [];
         await sendViaTwilio(phone, welcomeMessage);
+        return;
+    }
+
+    // ✅ FIX #1: Added the isSmallTalk check back into the logic
+    if (isSmallTalk(text)) {
+        console.log(`[Action: Small Talk] for ${phone}`);
+        const smallTalkReply = `Hare Krishna 🙏 I am here to listen and offer guidance from the Gita. How can I help you today?`;
+        await sendViaTwilio(phone, smallTalkReply);
+        // We add to history but don't change the conversation stage
+        session.chat_history.push({ role: 'user', content: text });
+        session.chat_history.push({ role: 'assistant', content: smallTalkReply });
         return;
     }
 
@@ -179,8 +202,10 @@ app.post("/webhook", async (req, res) => {
         const matches = await pineconeQuery(qVec);
 
         const verseMatch = matches?.matches?.[0];
+        // ✅ FIX #2: Improved the fallback message
         if (!verseMatch || verseMatch.score < 0.75) {
-            await sendViaTwilio(phone, "I hear your concern, but I couldn't find a directly relevant teaching in the Gita for this. Could you tell me more?");
+            const betterFallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
+            await sendViaTwilio(phone, betterFallback);
             return;
         }
 
@@ -194,7 +219,7 @@ app.post("/webhook", async (req, res) => {
         if (aiResponse) {
             const messageParts = aiResponse.split("||").map(p => p.trim());
             for (const part of messageParts) {
-                if (part) { // Ensure part is not empty
+                if (part) {
                     await sendViaTwilio(phone, part);
                     await new Promise(resolve => setTimeout(resolve, 1500)); 
                 }
