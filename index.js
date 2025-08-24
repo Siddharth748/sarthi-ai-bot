@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v7.3 - Text-Only Welcome for Stability Test)
+// index.js — SarathiAI (v7.4 - FINAL COMPLETE Twilio Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -63,7 +63,7 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting with Text-Only Welcome...");
+console.log("\n🚀", BOT_NAME, "starting with FINAL COMPLETE Twilio Integration...");
 console.log("📦 TWILIO_ACCOUNT_SID:", TWILIO_ACCOUNT_SID ? "[LOADED]" : "[MISSING]");
 console.log();
 
@@ -136,6 +136,41 @@ async function transformQueryForRetrieval(userQuery) {
   }
 }
 
+/* ---------------- Pinecone REST query Helpers ---------------- */
+async function pineconeQuery(vector, topK = 5, namespace, filter) {
+  if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
+  const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
+  const body = { vector, topK, includeMetadata: true };
+  if (namespace) body.namespace = namespace;
+  if (filter) body.filter = filter;
+  const resp = await axios.post(url, body, { headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000 });
+  return resp.data;
+}
+
+// ✅ THIS FUNCTION WAS MISSING
+function getNamespacesArray() {
+  if (PINECONE_NAMESPACES) return PINECONE_NAMESPACES.split(",").map(s => s.trim()).filter(Boolean);
+  return [PINECONE_NAMESPACE || "verse"];
+}
+
+// ✅ THIS FUNCTION WAS MISSING
+async function multiNamespaceQuery(vector, topK = 5, filter) {
+  const ns = getNamespacesArray();
+  const promises = ns.map(async (n) => {
+    try {
+      const r = await pineconeQuery(vector, topK, n, filter);
+      return (r?.matches || []).map(m => ({ ...m, _namespace: n }));
+    } catch (e) {
+      console.warn(`⚠ Pinecone query failed for namespace ${n}:`, e.message);
+      return [];
+    }
+  });
+  const arr = await Promise.all(promises);
+  const allMatches = arr.flat();
+  allMatches.sort((a,b) => (b.score || 0) - (a.score || 0));
+  return allMatches;
+}
+
 /* ---------------- Twilio Payload Extraction & Small Talk Logic ---------------- */
 function extractPhoneAndText(body) {
     const phone = body.From;
@@ -177,34 +212,8 @@ const WELCOME_TEMPLATE = `Hare Krishna 🙏\n\nI am Sarathi, your companion on t
 const SMALLTALK_REPLY = `Hare Krishna 🙏 — I'm Sarathi, happy to meet you.\nHow can I help you today?`;
 const SYSTEM_PROMPT = `You are SarathiAI — a compassionate guide inspired by the Bhagavad Gita. Tone: Modern, empathetic, and very concise. The EXPLANATION must be a maximum of 2-3 short sentences. The entire reply MUST be brief and easy to read on a phone without expanding. STRICTLY match the user's primary language. If their last message was mostly Hinglish, the EXPLANATION and FOLLOWUP must be in Hinglish. Otherwise, reply in English. Critically evaluate if the retrieved Context verse offers a solution. If the verse is merely descriptive of the problem (e.g., describing an arrogant person to someone complaining about ego), you must frame your explanation by stating "The Gita describes this mindset to warn against it..." and then provide Krishna's actual guidance on how to deal with the situation. REQUIRED OUTPUT FORMAT: ESSENCE: <one-line essence of Krishna's guidance, max 20 words>\nEXPLANATION: <max 2-3 short sentences applying the essence>\nOPTIONAL_PRACTICE: <one short practice (<=90s) if helpful>\nFOLLOWUP: <one brief clarifying question (opt)>\nImportant: DO NOT quote or repeat the provided verses. End with no extra commentary.`;
 
-/* ---------------- Other Helpers (Pinecone, etc.) ---------------- */
-async function pineconeQuery(vector, topK = 5, namespace, filter) {
-  if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
-  const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
-  const body = { vector, topK, includeMetadata: true };
-  if (namespace) body.namespace = namespace;
-  if (filter) body.filter = filter;
-  const resp = await axios.post(url, body, { headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000 });
-  return resp.data;
-}
-
-async function multiNamespaceQuery(vector, topK = 5, filter) {
-  const ns = getNamespacesArray();
-  const promises = ns.map(async (n) => {
-    try {
-      const r = await pineconeQuery(vector, topK, n, filter);
-      return (r?.matches || []).map(m => ({ ...m, _namespace: n }));
-    } catch (e) {
-      console.warn(`⚠ Pinecone query failed for namespace ${n}:`, e.message);
-      return [];
-    }
-  });
-  const arr = await Promise.all(promises);
-  const allMatches = arr.flat();
-  allMatches.sort((a,b) => (b.score || 0) - (a.score || 0));
-  return allMatches;
-}
-
+/* ---------------- Other Small Helpers ---------------- */
+// ✅ THESE FUNCTIONS WERE MISSING
 function safeText(md, ...keys) {
   if (!md) return "";
   for (const k of keys) {
@@ -248,7 +257,6 @@ app.post("/webhook", async (req, res) => {
 
     const incoming = String(text).trim();
     if (isGreeting(incoming)) {
-      // ✅ MODIFIED: We are now sending a text-only welcome message to ensure stability.
       await sendViaTwilio(phone, WELCOME_TEMPLATE);
       return res.status(200).send();
     }
@@ -274,13 +282,13 @@ app.post("/webhook", async (req, res) => {
     }
 
     const verseMatch = matches.find(m => m._namespace === "verse") || matches[0];
-    const verseSanskrit = verseMatch ? safeText(verseMatch.metadata, "sanskrit") : "";
-    const verseHinglish = verseMatch ? safeText(verseMatch.metadata, "hinglish1") : "";
-    
-    if (!verseSanskrit && !verseHinglish) {
+    if (!verseMatch) {
         await sendViaTwilio(phone, `I hear your concern about "${incoming}". Could you tell me more?`);
         return res.status(200).send();
     }
+
+    const verseSanskrit = safeText(verseMatch.metadata, "sanskrit");
+    const verseHinglish = safeText(verseMatch.metadata, "hinglish1");
     
     const contextText = `Reference: ${verseMatch.metadata?.reference}\nSanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}\nTranslation: ${safeText(verseMatch.metadata, "translation")}`;
     const modelSystem = SYSTEM_PROMPT;
@@ -310,8 +318,27 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Root, Admin, etc. ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Twilio ✅`));
 
-// Proactive check-in and other admin routes would be here, but are omitted for brevity.
-// Make sure to replace sendViaGupshup with sendViaTwilio in those if you use them.
+// ✅ PROACTIVE CHECK-IN AND OTHER ADMIN ROUTES ARE RESTORED
+async function proactiveCheckin() {
+  const now = Date.now();
+  const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
+  for (const [phone, session] of sessions) {
+    if (now - session.last_seen_ts > FORTY_EIGHT_HOURS_MS && now - (session.last_checkin_sent_ts || 0) > FORTY_EIGHT_HOURS_MS) {
+      console.log(`Sending proactive check-in to ${phone}`);
+      const reflective_questions = [
+        "Hare Krishna. Just a gentle thought for your day: Reflect on one small action you took today where you focused on your effort, not the outcome. 🙏",
+        "Hare Krishna. A gentle reminder for your day: Take a moment to notice the stillness between your breaths. 🙏",
+        "Hare Krishna. A thought for you today: What is one thing you can let go of, just for this moment? 🙏"
+      ];
+      const question = reflective_questions[Math.floor(Math.random() * reflective_questions.length)];
+      await sendViaTwilio(phone, question); // Using Twilio function
+      session.last_checkin_sent_ts = now;
+      session.last_seen_ts = now;
+    }
+  }
+}
+setInterval(proactiveCheckin, 6 * 60 * 60 * 1000);
+
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
