@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v7.1 - FINAL Twilio Integration)
+// index.js — SarathiAI (v7.3 - Text-Only Welcome for Stability Test)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -63,7 +63,7 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting with FINAL Twilio Integration...");
+console.log("\n🚀", BOT_NAME, "starting with Text-Only Welcome...");
 console.log("📦 TWILIO_ACCOUNT_SID:", TWILIO_ACCOUNT_SID ? "[LOADED]" : "[MISSING]");
 console.log();
 
@@ -175,14 +175,65 @@ function isSmallTalk(text) {
 /* ---------------- Templates & Prompts ---------------- */
 const WELCOME_TEMPLATE = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nThink of me as a link between your mann ki baat and the Gita's timeless gyaan.\n\nHow can I help you today?`;
 const SMALLTALK_REPLY = `Hare Krishna 🙏 — I'm Sarathi, happy to meet you.\nHow can I help you today?`;
-const SYSTEM_PROMPT = `You are SarathiAI — a compassionate guide inspired by the Bhagavad Gita...\n[This remains the same as the last full version]`;
+const SYSTEM_PROMPT = `You are SarathiAI — a compassionate guide inspired by the Bhagavad Gita. Tone: Modern, empathetic, and very concise. The EXPLANATION must be a maximum of 2-3 short sentences. The entire reply MUST be brief and easy to read on a phone without expanding. STRICTLY match the user's primary language. If their last message was mostly Hinglish, the EXPLANATION and FOLLOWUP must be in Hinglish. Otherwise, reply in English. Critically evaluate if the retrieved Context verse offers a solution. If the verse is merely descriptive of the problem (e.g., describing an arrogant person to someone complaining about ego), you must frame your explanation by stating "The Gita describes this mindset to warn against it..." and then provide Krishna's actual guidance on how to deal with the situation. REQUIRED OUTPUT FORMAT: ESSENCE: <one-line essence of Krishna's guidance, max 20 words>\nEXPLANATION: <max 2-3 short sentences applying the essence>\nOPTIONAL_PRACTICE: <one short practice (<=90s) if helpful>\nFOLLOWUP: <one brief clarifying question (opt)>\nImportant: DO NOT quote or repeat the provided verses. End with no extra commentary.`;
 
-/* ---------------- Other Helpers (Pinecone, etc.) are assumed to be here, but not shown for brevity in this response */
-async function pineconeQuery(vector, topK = 5, namespace, filter) { /* Full function code */ }
-async function multiNamespaceQuery(vector, topK = 5, filter) { /* Full function code */ }
-function safeText(md, ...keys) { /* Full function code */ }
-function inferSpeakerFromSanskrit(san) { /* Full function code */ }
-function parseStructuredAI(aiText) { /* Full function code */ }
+/* ---------------- Other Helpers (Pinecone, etc.) ---------------- */
+async function pineconeQuery(vector, topK = 5, namespace, filter) {
+  if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
+  const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
+  const body = { vector, topK, includeMetadata: true };
+  if (namespace) body.namespace = namespace;
+  if (filter) body.filter = filter;
+  const resp = await axios.post(url, body, { headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000 });
+  return resp.data;
+}
+
+async function multiNamespaceQuery(vector, topK = 5, filter) {
+  const ns = getNamespacesArray();
+  const promises = ns.map(async (n) => {
+    try {
+      const r = await pineconeQuery(vector, topK, n, filter);
+      return (r?.matches || []).map(m => ({ ...m, _namespace: n }));
+    } catch (e) {
+      console.warn(`⚠ Pinecone query failed for namespace ${n}:`, e.message);
+      return [];
+    }
+  });
+  const arr = await Promise.all(promises);
+  const allMatches = arr.flat();
+  allMatches.sort((a,b) => (b.score || 0) - (a.score || 0));
+  return allMatches;
+}
+
+function safeText(md, ...keys) {
+  if (!md) return "";
+  for (const k of keys) {
+    const v = md[k];
+    if (v && String(v).trim()) return String(v).trim();
+  }
+  return "";
+}
+
+function inferSpeakerFromSanskrit(san) {
+  if (!san) return null;
+  if (/\bअर्जुन\s*उवाच\b|\bArjuna\b/i.test(String(san))) return "Arjuna";
+  if (/\bकृष्ण\s*उवाच\b|\bश्रीभगवान्\s*उवाच\b|\bKrishna\b/i.test(String(san))) return "Shri Krishna";
+  return null;
+}
+
+function parseStructuredAI(aiText) {
+  if (!aiText) return {};
+  const out = {};
+  const ess = aiText.match(/ESSENCE:\s*([^\n\r]*)/i);
+  const exp = aiText.match(/EXPLANATION:\s*([\s\S]*?)(?:OPTIONAL_PRACTICE:|FOLLOWUP:|$)/i);
+  const prac = aiText.match(/OPTIONAL_PRACTICE:\s*([^\n\r]*)/i);
+  const follow = aiText.match(/FOLLOWUP:\s*([^\n\r]*)/i);
+  if (ess) out.essence = ess[1].trim();
+  if (exp) out.explanation = exp[1].trim();
+  if (prac) out.practice = prac[1].trim();
+  if (follow) out.followup = follow[1].trim();
+  return out;
+}
 
 /* ---------------- Webhook/main flow ---------------- */
 app.post("/webhook", async (req, res) => {
@@ -197,8 +248,8 @@ app.post("/webhook", async (req, res) => {
 
     const incoming = String(text).trim();
     if (isGreeting(incoming)) {
-      const welcomeImageUrl = "https://i.imgur.com/8f22W4n.jpeg";
-      await sendImageViaTwilio(phone, welcomeImageUrl, WELCOME_TEMPLATE);
+      // ✅ MODIFIED: We are now sending a text-only welcome message to ensure stability.
+      await sendViaTwilio(phone, WELCOME_TEMPLATE);
       return res.status(200).send();
     }
     
@@ -207,18 +258,47 @@ app.post("/webhook", async (req, res) => {
       return res.status(200).send();
     }
     
-    // ... [The rest of the main logic: transform, embed, query, chat, parse, send]
-    // This part is complex and long, but should be correct from our last full file.
-    // To avoid making this response unreadably long, I am omitting the direct paste
-    // of this section, but it is included in the spirit of a "complete" file.
-    
     const transformedQuery = await transformQueryForRetrieval(incoming);
-    //... and so on...
+    const norm = normalizeQuery(transformedQuery);
+    let qVec = cacheGet(embedCache, norm);
+    if (!qVec) {
+      qVec = await openaiEmbedding(transformedQuery);
+      if (!qVec) throw new Error("Failed to generate embedding vector.");
+      cacheSet(embedCache, norm, qVec);
+    }
+
+    let matches = cacheGet(retrCache, norm);
+    if (!matches) {
+        matches = await multiNamespaceQuery(qVec, 5);
+        cacheSet(retrCache, norm, matches);
+    }
+
+    const verseMatch = matches.find(m => m._namespace === "verse") || matches[0];
+    const verseSanskrit = verseMatch ? safeText(verseMatch.metadata, "sanskrit") : "";
+    const verseHinglish = verseMatch ? safeText(verseMatch.metadata, "hinglish1") : "";
     
-    // Assuming the full logic is here, let's just send a test reply for now
-    await sendViaTwilio(phone, `Received: "${incoming}". Logic to process this would run here.`);
+    if (!verseSanskrit && !verseHinglish) {
+        await sendViaTwilio(phone, `I hear your concern about "${incoming}". Could you tell me more?`);
+        return res.status(200).send();
+    }
+    
+    const contextText = `Reference: ${verseMatch.metadata?.reference}\nSanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}\nTranslation: ${safeText(verseMatch.metadata, "translation")}`;
+    const modelSystem = SYSTEM_PROMPT;
+    const modelUser = `User message: "${incoming}"\n\nContext:\n${contextText}`;
+    const aiStructured = await openaiChat([{ role: "system", content: modelSystem }, { role: "user", content: modelUser }]);
+    if (!aiStructured) throw new Error("OpenAI chat call failed.");
+    
+    const parsed = parseStructuredAI(aiStructured);
+    
+    const finalParts = [];
+    if (verseSanskrit) finalParts.push(`"${verseSanskrit}"`);
+    if (verseHinglish) finalParts.push(`${verseHinglish}`);
+    finalParts.push("", `*${parsed.essence || "Focus on your effort..."}*`, "");
+    finalParts.push(parsed.explanation || "I hear you...");
+    if (parsed.practice) finalParts.push("", `*Practice:* ${parsed.practice}`);
+    if (parsed.followup) finalParts.push("", parsed.followup);
 
-
+    await sendViaTwilio(phone, finalParts.join("\n"));
     return res.status(200).send();
 
   } catch (err) {
@@ -229,7 +309,9 @@ app.post("/webhook", async (req, res) => {
 
 /* ---------------- Root, Admin, etc. ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Twilio ✅`));
-// ... proactive check-in and other admin routes would be here...
+
+// Proactive check-in and other admin routes would be here, but are omitted for brevity.
+// Make sure to replace sendViaGupshup with sendViaTwilio in those if you use them.
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
