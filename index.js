@@ -1,4 +1,5 @@
-// index.js — SarathiAI (v7 - Twilio Integration)
+// index.js — SarathiAI (v5 - DEFINITIVE FIX for isSmallTalk)
+// Triggering a redeploy on August 24, 2025
 import dotenv from "dotenv";
 dotenv.config();
 
