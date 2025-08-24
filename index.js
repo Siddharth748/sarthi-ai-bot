@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v8.0 - Advanced Conversational Engine)
+// index.js — SarathiAI (v8.1 - Final Greeting Fix)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -28,15 +28,14 @@ const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* ---------------- Session & Memory ---------------- */
-// ✅ UPGRADED SESSION to handle conversation state and history
 const sessions = new Map();
 function getSession(phone) {
   const now = Date.now();
   let s = sessions.get(phone);
   if (!s) {
     s = { 
-      chat_history: [], // Stores { role, content }
-      conversation_stage: "new_topic", // Stages: "new_topic", "chatting"
+      chat_history: [], 
+      conversation_stage: "new_topic", 
       last_verse_id: null,
       last_topic_summary: null,
       last_seen_ts: now,
@@ -89,7 +88,6 @@ async function openaiChat(messages, maxTokens = 400) {
 }
 
 async function transformQueryForRetrieval(userQuery) {
-  // This function remains the same, it's still our first step for new topics
   const systemPrompt = `You are an expert in the Bhagavad Gita. Transform a user's query into a concise search term describing the underlying spiritual concept. Examples:\n- User: "I am angry at my husband" -> "overcoming anger in relationships"\n- User: "He is so narcissistic" -> "dealing with ego and arrogance"\nOnly return the transformed query.`;
   const response = await openaiChat([{ role: "system", content: systemPrompt }, { role: "user", content: userQuery }], 50);
   const transformed = response ? response.replace(/"/g, "").trim() : userQuery;
@@ -98,7 +96,7 @@ async function transformQueryForRetrieval(userQuery) {
 }
 
 /* ---------------- Pinecone Helpers ---------------- */
-async function pineconeQuery(vector, topK = 1) { // We only need the top 1 verse now
+async function pineconeQuery(vector, topK = 1) {
   if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
   const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
   const body = { vector, topK, includeMetadata: true, namespace: "verse" };
@@ -115,6 +113,7 @@ async function getEmbedding(text) {
 function extractPhoneAndText(body) {
     return { phone: body.From, text: body.Body };
 }
+
 function isGreeting(text) {
   if (!text) return false;
   const t = String(text).trim().toLowerCase().replace(/[^\w\s]/g," ").replace(/\s+/g," ").trim();
@@ -122,22 +121,20 @@ function isGreeting(text) {
   return greetings.has(t);
 }
 
-/* ---------------- ✅ NEW: State-Aware AI Prompts ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation about a problem. You have been given a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.
+/* ---------------- NEW: State-Aware AI Prompts ---------------- */
+const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.
 - Your entire response MUST use "||" as a separator for each message bubble.
-- Start with the Sanskrit verse.
-- The second part is the Hinglish translation.
-- The third part MUST start with "Shri Krishna kehte hain:" followed by a one-sentence essence in Hinglish, then a 2-3 sentence explanation applying it to the user's situation.
-- The fourth part is a simple follow-up question.
-- Do NOT add any other commentary.
-- Example Output: "[Sanskrit]" || "[Hinglish]" || "Shri Krishna kehte hain: [Essence]. [Explanation]." || "[Follow-up question?]"`;
+- Part 1: The Sanskrit verse.
+- Part 2: The Hinglish translation.
+- Part 3: Start with "Shri Krishna kehte hain:", a one-sentence essence in Hinglish, then a 2-3 sentence explanation.
+- Part 4: A simple follow-up question.
+- Example: "[Sanskrit]" || "[Hinglish]" || "Shri Krishna kehte hain: [Essence]. [Explanation]." || "[Follow-up?]"`;
 
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. You are in the middle of a conversation. The user's chat history is provided.
-- Your primary goal is to listen, be empathetic, and continue the conversation naturally.
-- Offer wisdom based on Gita's principles (like detachment, duty, self-control) IN YOUR OWN WORDS. Do NOT quote new verses.
-- Keep your replies very short (1-3 sentences).
-- If you detect the user is introducing a completely new problem, end your response with the special token: [NEW_TOPIC]
-- Otherwise, just provide a natural, conversational reply.`;
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.
+- Listen, be empathetic, and continue the conversation naturally.
+- Offer wisdom based on Gita's principles (detachment, duty, self-control) IN YOUR OWN WORDS. Do NOT quote new verses.
+- Keep replies very short (1-3 sentences).
+- If you detect the user is introducing a completely new problem, end your response with the special token: [NEW_TOPIC]`;
 
 /* ---------------- Other Small Helpers ---------------- */
 function safeText(md, key) {
@@ -148,34 +145,41 @@ function safeText(md, key) {
 app.post("/webhook", async (req, res) => {
   try {
     console.log("Inbound raw payload:", JSON.stringify(req.body, null, 2));
-    res.status(200).send(); // Acknowledge Twilio immediately
+    res.status(200).send(); 
 
     const { phone, text } = extractPhoneAndText(req.body);
     if (!phone || !text) return console.log("ℹ No actionable message — skip.");
 
     const session = getSession(phone);
     
-    // Add user message to history
+    // ✅ CRITICAL FIX: The missing greeting check is now restored.
+    if (isGreeting(text)) {
+        console.log(`[Action: Greeting] for ${phone}`);
+        session.conversation_stage = "new_topic"; // Reset conversation state
+        session.chat_history = []; // Clear history
+        
+        const welcomeImageUrl = "https://i.imgur.com/8f22W4n.jpeg";
+        const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nThink of me as a link between your mann ki baat and the Gita's timeless gyaan.\n\nHow can I help you today?`;
+        
+        // We will send a text-only welcome for now to ensure stability
+        await sendViaTwilio(phone, welcomeMessage);
+        return;
+    }
+
     session.chat_history.push({ role: 'user', content: text });
-    // Keep history from getting too long
     if (session.chat_history.length > 8) {
         session.chat_history = session.chat_history.slice(-8);
     }
     
-    if (isGreeting(text) && session.conversation_stage !== "chatting") {
-        session.conversation_stage = "new_topic"; // Reset on greeting
-    }
-
     // --- STATE MACHINE LOGIC ---
     if (session.conversation_stage === "new_topic") {
-        // --- Stage 1: The "Hook" ---
         console.log(`[State: new_topic] for ${phone}`);
         const transformedQuery = await transformQueryForRetrieval(text);
         const qVec = await getEmbedding(transformedQuery);
         const matches = await pineconeQuery(qVec);
 
         const verseMatch = matches?.matches?.[0];
-        if (!verseMatch || verseMatch.score < 0.75) { // Confidence threshold
+        if (!verseMatch || verseMatch.score < 0.75) {
             await sendViaTwilio(phone, "I hear your concern, but I couldn't find a directly relevant teaching in the Gita for this. Could you tell me more?");
             return;
         }
@@ -188,22 +192,21 @@ app.post("/webhook", async (req, res) => {
         const aiResponse = await openaiChat([{ role: "system", content: RAG_SYSTEM_PROMPT }, { role: "user", content: modelUser }]);
 
         if (aiResponse) {
-            // Send the "rapid fire" messages
             const messageParts = aiResponse.split("||").map(p => p.trim());
             for (const part of messageParts) {
-                await sendViaTwilio(phone, part);
-                await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5s delay
+                if (part) { // Ensure part is not empty
+                    await sendViaTwilio(phone, part);
+                    await new Promise(resolve => setTimeout(resolve, 1500)); 
+                }
             }
             
-            // Update session state
             session.chat_history.push({ role: 'assistant', content: aiResponse.replace(/\|\|/g, '\n') });
             session.last_verse_id = verseMatch.id;
             session.last_topic_summary = text;
-            session.conversation_stage = "chatting"; // Transition to the next stage
+            session.conversation_stage = "chatting"; 
         }
 
     } else if (session.conversation_stage === "chatting") {
-        // --- Stage 2: The "Guided Chat" ---
         console.log(`[State: chatting] for ${phone}`);
         const aiResponse = await openaiChat([
             { role: "system", content: CHAT_SYSTEM_PROMPT },
@@ -216,7 +219,6 @@ app.post("/webhook", async (req, res) => {
                 if (cleanResponse) await sendViaTwilio(phone, cleanResponse);
                 await sendViaTwilio(phone, "It sounds like we're moving to a new topic. Let me find a teaching for that...");
                 session.conversation_stage = "new_topic";
-                // We don't return, we let the logic loop again in the user's next message
             } else {
                 await sendViaTwilio(phone, aiResponse);
                 session.chat_history.push({ role: 'assistant', content: aiResponse });
@@ -232,7 +234,6 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Root, Admin, Proactive Check-in ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Advanced Conversational Engine ✅`));
 
-// ✅ UPGRADED Proactive check-in
 async function proactiveCheckin() {
   const now = Date.now();
   const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
@@ -251,7 +252,7 @@ async function proactiveCheckin() {
     }
   }
 }
-setInterval(proactiveCheckin, 6 * 60 * 60 * 1000); // Check every 6 hours
+setInterval(proactiveCheckin, 6 * 60 * 60 * 1000); 
 
 
 /* ---------------- Start server ---------------- */
