@@ -9,11 +9,12 @@
     "train": "node ingest_all.cjs"
   },
   "dependencies": {
+    "@pinecone-database/pinecone": "^2.2.1",
     "axios": "^1.6.7",
     "csv-parse": "^5.5.6",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "openai": "^4.0.0",
-    "@pinecone-database/pinecone": "^2.2.1"
+    "twilio": "^5.2.0"
   }
 }
