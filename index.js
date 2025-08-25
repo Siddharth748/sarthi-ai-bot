@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v8.6 - Final Production-Ready Version)
+// index.js — SarathiAI (v9.1 - FINAL COMPLETE Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -19,11 +19,16 @@ const PORT = process.env.PORT || 8080;
 const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || "").trim();
 const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || "").trim();
 const TWILIO_WHATSAPP_NUMBER = (process.env.TWILIO_WHATSAPP_NUMBER || "").trim();
+
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
+
 const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
+const PINECONE_NAMESPACE = (process.env.PINECONE_NAMESPACE || "verse").trim();
+const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
+
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
@@ -34,8 +39,8 @@ function getSession(phone) {
   const now = Date.now();
   let s = sessions.get(phone);
   if (!s) {
-    s = { 
-      chat_history: [], 
+    s = {
+      chat_history: [],
       conversation_stage: "new_topic",
       last_topic_summary: null,
       last_seen_ts: now,
@@ -55,16 +60,16 @@ console.log();
 
 /* ---------------- Provider & AI Helpers ---------------- */
 async function sendViaTwilio(destination, replyText) {
-    if (!TWILIO_WHATSAPP_NUMBER) {
-        console.warn(`(Simulated -> ${destination}): ${replyText}`);
-        return;
-    }
-    try {
-        await twilioClient.messages.create({ from: TWILIO_WHATSAPP_NUMBER, to: destination, body: replyText });
-        console.log(`✅ Twilio message sent to ${destination}`);
-    } catch (err) {
-        console.error("❌ Error sending to Twilio:", err.message);
-    }
+  if (!TWILIO_WHATSAPP_NUMBER) {
+    console.warn(`(Simulated -> ${destination}): ${replyText}`);
+    return;
+  }
+  try {
+    await twilioClient.messages.create({ from: TWILIO_WHATSAPP_NUMBER, to: destination, body: replyText });
+    console.log(`✅ Twilio message sent to ${destination}`);
+  } catch (err) {
+    console.error("❌ Error sending to Twilio:", err.message);
+  }
 }
 
 async function openaiChat(messages, maxTokens = 400) {
@@ -83,13 +88,58 @@ async function transformQueryForRetrieval(userQuery) {
 }
 
 /* ---------------- Pinecone Helpers ---------------- */
-async function pineconeQuery(vector, topK = 1) {
-  if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
-  const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
-  const body = { vector, topK, includeMetadata: true, namespace: "verse" };
-  const resp = await axios.post(url, body, { headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000 });
-  return resp.data;
+async function pineconeQuery(vector, topK = 5, namespace = undefined, filter = undefined) {
+    if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
+    const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
+    const body = { vector, topK, includeMetadata: true };
+    if (namespace) body.namespace = namespace;
+    if (filter) body.filter = filter;
+    const resp = await axios.post(url, body, { headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000 });
+    return resp.data;
 }
+
+function getNamespacesArray() {
+    if (PINECONE_NAMESPACES) {
+        return PINECONE_NAMESPACES.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    return [PINECONE_NAMESPACE || "verse"];
+}
+
+async function multiNamespaceQuery(vector, topK = 5, filter = undefined) {
+    const ns = getNamespacesArray();
+    const promises = ns.map(async (n) => {
+        try {
+            const r = await pineconeQuery(vector, topK, n, filter);
+            const matches = (r?.matches || []).map(m => ({ ...m, _namespace: n }));
+            return matches;
+        } catch (e) {
+            console.warn("⚠ Pinecone query failed for namespace", n, e?.message || e);
+            return [];
+        }
+    });
+    const arr = await Promise.all(promises);
+    const allMatches = arr.flat();
+    allMatches.sort((a,b) => (b.score || 0) - (a.score || 0));
+    return allMatches;
+}
+
+async function findVerseByReference(reference, queryVector = null) {
+    if (!reference) return null;
+    const tries = [ reference, reference.trim(), reference.trim().replace(/\s+/g, "_") ];
+    const verseNs = getNamespacesArray().find(n => n.toLowerCase().includes("verse")) || getNamespacesArray()[0];
+    for (const t of tries) {
+        try {
+            const vec = queryVector || await getEmbedding(t);
+            const filter = { reference: { "$eq": t } };
+            const res = await pineconeQuery(vec, 1, verseNs, filter);
+            if (res?.matches?.length) return res.matches[0];
+        } catch (e) {
+            console.warn(`❗ findVerseByReference failed for "${t}":`, e.message);
+        }
+    }
+    return null;
+}
+
 async function getEmbedding(text) {
   if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY missing");
   const resp = await axios.post("https://api.openai.com/v1/embeddings", { model: EMBED_MODEL, input: text }, { headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 30000 });
@@ -180,9 +230,9 @@ app.post("/webhook", async (req, res) => {
         console.log(`[State: new_topic] for ${phone}`);
         const transformedQuery = await transformQueryForRetrieval(text);
         const qVec = await getEmbedding(transformedQuery);
-        const matches = await pineconeQuery(qVec);
+        const matches = await multiNamespaceQuery(qVec);
 
-        const verseMatch = matches?.matches?.[0];
+        const verseMatch = matches.find(m => m.metadata?.sanskrit);
         
         console.log(`[Pinecone Match] Best match found with score: ${verseMatch?.score} for query: "${transformedQuery}"`);
 
@@ -240,6 +290,49 @@ app.post("/webhook", async (req, res) => {
 
 /* ---------------- Root, Admin, Proactive Check-in ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Advanced Conversational Engine ✅`));
+
+function findIngestScript() {
+    const cjs = path.join(process.cwd(), "ingest_all.cjs");
+    const js = path.join(process.cwd(), "ingest_all.js");
+    if (fs.existsSync(cjs)) return "ingest_all.cjs";
+    if (fs.existsSync(js)) return "ingest_all.js";
+    return null;
+}
+
+function runCommand(cmd, args = [], onOutput, onExit) {
+    const proc = spawn(cmd, args, { shell: true });
+    proc.stdout.on("data", (d) => onOutput && onOutput(d.toString()));
+    proc.stderr.on("data", (d) => onOutput && onOutput(d.toString()));
+    proc.on("close", (code) => onExit && onExit(code));
+    return proc;
+}
+
+app.get("/train", (req, res) => {
+    const secret = req.query.secret;
+    if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
+    const script = findIngestScript();
+    if (!script) return res.status(500).send("No ingest script found");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.write(`Starting ingestion using ${script}...\n\n`);
+    runCommand("node", [script],
+        (line) => { try { res.write(line); } catch (e) {} },
+        (code) => { res.write(`\nProcess exited with code ${code}\n`); res.end(); }
+    );
+});
+
+app.get("/test-retrieval", async (req, res) => {
+    const secret = req.query.secret;
+    if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
+    const query = req.query.query || "I am stressed";
+    try {
+        const vec = await getEmbedding(query);
+        const matches = await multiNamespaceQuery(vec);
+        return res.json({ query, retrieved: matches });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 
 async function proactiveCheckin() {
   const now = Date.now();
