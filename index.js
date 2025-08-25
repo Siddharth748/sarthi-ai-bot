@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v8.4 - Final Threshold Adjustment)
+// index.js — SarathiAI (v8.5 - Go Live Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -18,7 +18,9 @@ const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || "").trim();
 const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || "").trim();
-const TWILIO_SANDBOX_NUMBER = "whatsapp:+14155238886";
+// ✅ LIVE CHANGE: Using your dedicated number from environment variables
+const TWILIO_WHATSAPP_NUMBER = (process.env.TWILIO_WHATSAPP_NUMBER || "").trim();
+
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
@@ -48,19 +50,20 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting with Advanced Conversational Engine...");
+console.log("\n🚀", BOT_NAME, "starting up in LIVE mode...");
 console.log("📦 TWILIO_ACCOUNT_SID:", TWILIO_ACCOUNT_SID ? "[LOADED]" : "[MISSING]");
+console.log("📦 TWILIO_WHATSAPP_NUMBER:", TWILIO_WHATSAPP_NUMBER ? "[LOADED]" : "[MISSING]");
 console.log();
 
 
 /* ---------------- Provider & AI Helpers ---------------- */
 async function sendViaTwilio(destination, replyText) {
-    if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+    if (!TWILIO_WHATSAPP_NUMBER) {
         console.warn(`(Simulated -> ${destination}): ${replyText}`);
         return;
     }
     try {
-        await twilioClient.messages.create({ from: TWILIO_SANDBOX_NUMBER, to: destination, body: replyText });
+        await twilioClient.messages.create({ from: TWILIO_WHATSAPP_NUMBER, to: destination, body: replyText });
         console.log(`✅ Twilio message sent to ${destination}`);
     } catch (err) {
         console.error("❌ Error sending to Twilio:", err.message);
@@ -188,7 +191,6 @@ app.post("/webhook", async (req, res) => {
         
         console.log(`[Pinecone Match] Best match found with score: ${verseMatch?.score} for query: "${transformedQuery}"`);
 
-        // ✅ THE FINAL FIX: Lowered the confidence threshold from 0.70 to 0.25
         if (!verseMatch || verseMatch.score < 0.25) {
             const betterFallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
             await sendViaTwilio(phone, betterFallback);
@@ -245,8 +247,26 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Root, Admin, Proactive Check-in ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Advanced Conversational Engine ✅`));
 
-async function proactiveCheckin() { /* ... function remains the same ... */ }
+async function proactiveCheckin() {
+  const now = Date.now();
+  const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
+
+  for (const [phone, session] of sessions) {
+    if (now - session.last_seen_ts > FORTY_EIGHT_HOURS_MS && now - (session.last_checkin_sent_ts || 0) > FORTY_EIGHT_HOURS_MS && session.last_topic_summary) {
+      console.log(`Sending proactive check-in to ${phone} about "${session.last_topic_summary}"`);
+      
+      const prompt = `A user was previously concerned about "${session.last_topic_summary}". Write a single, short, gentle check-in message (in English) asking how they are doing with that specific issue. Be warm and encouraging.`;
+      const careMessage = await openaiChat([{ role: "system", content: "You are a caring companion." }, { role: "user", content: prompt }], 100);
+
+      if (careMessage) {
+        await sendViaTwilio(phone, careMessage);
+        session.last_checkin_sent_ts = now;
+      }
+    }
+  }
+}
 setInterval(proactiveCheckin, 6 * 60 * 60 * 1000); 
+
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
