@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v8.5 - Go Live Version)
+// index.js — SarathiAI (v8.6 - Final Production-Ready Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -18,14 +18,13 @@ const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || "").trim();
 const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || "").trim();
-// ✅ LIVE CHANGE: Using your dedicated number from environment variables
 const TWILIO_WHATSAPP_NUMBER = (process.env.TWILIO_WHATSAPP_NUMBER || "").trim();
-
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
 const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
+const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
@@ -37,8 +36,7 @@ function getSession(phone) {
   if (!s) {
     s = { 
       chat_history: [], 
-      conversation_stage: "new_topic", 
-      last_verse_id: null,
+      conversation_stage: "new_topic",
       last_topic_summary: null,
       last_seen_ts: now,
       last_checkin_sent_ts: 0
@@ -50,11 +48,10 @@ function getSession(phone) {
 }
 
 /* ---------------- Startup logs ---------------- */
-console.log("\n🚀", BOT_NAME, "starting up in LIVE mode...");
+console.log("\n🚀", BOT_NAME, "starting in LIVE mode...");
 console.log("📦 TWILIO_ACCOUNT_SID:", TWILIO_ACCOUNT_SID ? "[LOADED]" : "[MISSING]");
 console.log("📦 TWILIO_WHATSAPP_NUMBER:", TWILIO_WHATSAPP_NUMBER ? "[LOADED]" : "[MISSING]");
 console.log();
-
 
 /* ---------------- Provider & AI Helpers ---------------- */
 async function sendViaTwilio(destination, replyText) {
@@ -99,7 +96,7 @@ async function getEmbedding(text) {
   return resp.data.data[0].embedding;
 }
 
-/* ---------------- Payload Extraction & Greeting/Small Talk Logic ---------------- */
+/* ---------------- Payload Extraction & Small Talk Logic ---------------- */
 function extractPhoneAndText(body) {
     return { phone: body.From, text: body.Body };
 }
@@ -136,7 +133,6 @@ function isSmallTalk(text) {
     return false;
 }
 
-
 /* ---------------- State-Aware AI Prompts ---------------- */
 const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.\n- Your entire response MUST use "||" as a separator for each message bubble.\n- Part 1: The Sanskrit verse.\n- Part 2: The Hinglish translation.\n- Part 3: Start with "Shri Krishna kehte hain:", a one-sentence essence in Hinglish, then a 2-3 sentence explanation.\n- Part 4: A simple follow-up question.\n- Example: "[Sanskrit]" || "[Hinglish]" || "Shri Krishna kehte hain: [Essence]. [Explanation]." || "[Follow-up?]"`;
 const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.\n- Listen, be empathetic, and continue the conversation naturally.\n- Offer wisdom based on Gita's principles (detachment, duty, self-control) IN YOUR OWN WORDS. Do NOT quote new verses.\n- Keep replies very short (1-3 sentences).\n- If you detect the user is introducing a completely new problem, end your response with the special token: [NEW_TOPIC]`;
@@ -157,12 +153,11 @@ app.post("/webhook", async (req, res) => {
 
     const session = getSession(phone);
     
-    const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
-    
     if (isGreeting(text)) {
         console.log(`[Action: Greeting] for ${phone}`);
         session.conversation_stage = "new_topic";
         session.chat_history = [];
+        const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
         await sendViaTwilio(phone, welcomeMessage);
         return;
     }
@@ -214,7 +209,6 @@ app.post("/webhook", async (req, res) => {
             }
             
             session.chat_history.push({ role: 'assistant', content: aiResponse.replace(/\|\|/g, '\n') });
-            session.last_verse_id = verseMatch.id;
             session.last_topic_summary = text;
             session.conversation_stage = "chatting"; 
         }
@@ -266,7 +260,6 @@ async function proactiveCheckin() {
   }
 }
 setInterval(proactiveCheckin, 6 * 60 * 60 * 1000); 
-
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => console.log(`${BOT_NAME} listening on port ${PORT}`));
