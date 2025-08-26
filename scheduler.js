@@ -1,4 +1,4 @@
-// scheduler.js - Handles sending daily morning messages
+// scheduler.js - Sends Daily Morning Messages from the Database
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -7,13 +7,19 @@ import path from "path";
 import twilio from "twilio";
 import { parse } from "csv-parse/sync";
 import cron from "node-cron";
+import pg from "pg";
+
+const { Pool } = pg;
 
 /* ---------------- Config ---------------- */
 const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || "").trim();
 const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || "").trim();
 const TWILIO_WHATSAPP_NUMBER = (process.env.TWILIO_WHATSAPP_NUMBER || "").trim();
+const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+
 
 /* ---------------- Helpers ---------------- */
 async function sendDailyMessage(destination, content) {
@@ -22,11 +28,13 @@ async function sendDailyMessage(destination, content) {
         return;
     }
     try {
-        // Send the image with the verse and practice as the caption
+        // ✅ UPDATED: Added the "viral footer" to the message body
+        const messageBody = `Hare Krishna 🙏\n\n${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing with friends & family!*\nTo receive your own daily guidance from SarathiAI, click here:\nhttps://wa.me/${TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '')}?text=Hi`;
+        
         await twilioClient.messages.create({
             from: TWILIO_WHATSAPP_NUMBER,
             to: destination,
-            body: `${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}`,
+            body: messageBody,
             mediaUrl: [content.image_url]
         });
         console.log(`✅ Daily message sent to ${destination}`);
@@ -45,38 +53,43 @@ function loadDailyContent() {
     return parse(fileContent, { columns: true, skip_empty_lines: true });
 }
 
-function getSubscribers() {
-    const subsPath = path.join(process.cwd(), "subscribers.txt");
-    if (!fs.existsSync(subsPath)) {
+// ✅ UPDATED: Gets subscribers from the PostgreSQL database
+async function getSubscribers() {
+    try {
+        const res = await dbPool.query('SELECT phone_number FROM users WHERE subscribed_daily = TRUE');
+        return res.rows.map(row => row.phone_number);
+    } catch (err) {
+        console.error("❌ Error fetching subscribers from DB:", err);
         return [];
     }
-    return fs.readFileSync(subsPath, 'utf-8').split('\n').filter(Boolean);
 }
 
 /* ---------------- Scheduler Logic ---------------- */
 console.log("Scheduler started. Waiting for the scheduled time...");
 
-// Schedule to run at 6:30 AM IST every day.
-// IST is UTC+5:30, so 6:30 AM IST is 1:00 AM UTC.
-cron.schedule('30 1 * * *', () => {
+// Schedule to run at 7:00 AM IST.
+// IST is UTC+5:30, so 7:00 AM IST is 1:30 AM UTC.
+cron.schedule('30 1 * * *', async () => {
     console.log('⏰ Firing daily morning message job...');
     const content = loadDailyContent();
-    const subscribers = getSubscribers();
+    const subscribers = await getSubscribers();
     
     if (content.length === 0 || subscribers.length === 0) {
         console.log("No content or no subscribers. Skipping job.");
         return;
     }
     
-    // Rotate content daily
-    const dayIndex = new Date().getDate() % content.length;
+    const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / (1000 * 60 * 60 * 24));
+    const dayIndex = dayOfYear % content.length;
     const todaysContent = content[dayIndex];
     
-    console.log(`Sending content for day ${todaysContent.day_id} to ${subscribers.length} subscribers.`);
+    console.log(`Sending content for day ${todaysContent.day_id} to ${subscribers.length} subscriber(s).`);
     
-    subscribers.forEach(phone => {
-        sendDailyMessage(phone, todaysContent);
-    });
+    for (const phone of subscribers) {
+        await sendDailyMessage(phone, todaysContent);
+        // Add a small delay between messages to avoid sending too fast
+        await new Promise(resolve => setTimeout(resolve, 1000)); 
+    }
 
 }, {
     scheduled: true,
