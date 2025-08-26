@@ -6,13 +6,13 @@
     <title>SarthiAI - Your Guide on the Journey</title>
     <style>
         body { 
-            font-family: sans-serif; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
             text-align: center; 
             padding: 40px; 
-            /* ✅ UPDATED: Changed background color to a divine blue */
             background-color: #e0f7ff; 
-            color: #333; 
+            color: #3a3a3a; 
         }
+        .container { max-width: 650px; margin: 0 auto; }
         .profile-image {
             width: 150px;
             height: 150px;
@@ -22,38 +22,46 @@
             border: 5px solid #cce7ff;
         }
         h1 { font-size: 2.5em; margin-bottom: 10px; }
-        p { font-size: 1.2em; max-width: 600px; margin: 20px auto; line-height: 1.6; }
+        .subtitle { font-size: 1.2em; color: #555; margin-top: 0; }
+        p { font-size: 1.1em; line-height: 1.6; }
         .whatsapp-button {
             display: inline-block;
             padding: 15px 30px;
             background-color: #25d366; /* WhatsApp Green */
             color: white;
-            font-size: 1.3em;
+            font-size: 1.2em;
             border-radius: 30px;
             text-decoration: none;
-            margin-top: 30px;
+            margin-top: 25px;
             box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
             font-weight: bold;
         }
-        .whatsapp-button:hover {
-            background-color: #128c7e;
-        }
+        .whatsapp-button:hover { background-color: #128c7e; }
+        .disclaimer { font-size: 0.8em; color: #777; margin-top: 40px; }
         footer { margin-top: 50px; font-size: 0.9em; color: #555; }
+        footer a { color: #555; text-decoration: underline; }
     </style>
 </head>
 <body>
-    <img src="https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_gy44q1gy44q1gy44-2.png" alt="Sarathi AI Profile" class="profile-image">
-    <h1>Sarathi AI 🙏</h1>
-    <p>Your AI Sarathi (Charioteer) for life's battlefield. 🕉️<br>
-    Navigating modern challenges with the timeless wisdom of the Bhagavad Gita. Ask me for guidance and find your clarity. 🙏<br>
-    In the Kurukshetra of modern life, I am your Sarathi. ☀️</p>
+    <div class="container">
+        <img src="https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_gy44q1gy44q1gy44-2.png" alt="Sarathi AI Profile" class="profile-image">
+        <h1>Sarathi AI 🙏</h1>
+        <p class="subtitle">Your AI Sarathi (Charioteer) for life's battlefield. 🕉️</p>
+        <p>
+            Navigating modern challenges with the timeless wisdom of the Bhagavad Gita. SarathiAI is a WhatsApp-based guide designed to provide clarity, peace, and purpose when you need it most.
+        </p>
 
-    <a href="https://wa.me/15619185833?text=Hi" class="whatsapp-button" target="_blank">
-        Chat with SarathiAI on WhatsApp
-    </a>
+        <a href="https://wa.me/15619185833?text=Hi" class="whatsapp-button" target="_blank">
+            Chat with SarathiAI on WhatsApp
+        </a>
 
-    <footer>
-        <p>Contact: info@sarathiai.in</p>
-    </footer>
+        <p class="disclaimer">
+            <b>Terms of Service:</b> SarathiAI provides spiritual guidance based on the teachings of the Bhagavad Gita. This service is not a substitute for professional medical, legal, or financial advice. For serious mental health concerns, please consult a qualified professional.
+        </p>
+
+        <footer>
+            <p>Contact: info@sarathiai.in | <a href="privacy.html">Privacy Policy</a></p>
+        </footer>
+    </div>
 </body>
 </html>
