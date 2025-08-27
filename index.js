@@ -33,8 +33,10 @@ const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+const sessions = new Map(); // For temporary chat history only
 
 /* ---------------- Database & Session Setup ---------------- */
+// ✅ THIS ENTIRE BLOCK WAS MISSING. IT IS NOW RESTORED.
 async function setupDatabase() {
     try {
         const client = await dbPool.connect();
@@ -44,9 +46,9 @@ async function setupDatabase() {
                 subscribed_daily BOOLEAN DEFAULT FALSE,
                 last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 cooldown_message_sent BOOLEAN DEFAULT FALSE,
+                last_topic_summary TEXT,
                 chat_history JSONB DEFAULT '[]'::jsonb,
-                conversation_stage VARCHAR(50) DEFAULT 'new_topic',
-                last_topic_summary TEXT
+                conversation_stage VARCHAR(50) DEFAULT 'new_topic'
             );
         `);
         // Add columns if they don't exist to avoid errors on redeploy
@@ -60,7 +62,7 @@ async function setupDatabase() {
     }
 }
 
-async function getUserSession(phone) {
+async function getUserState(phone) {
     let result = await dbPool.query('SELECT * FROM users WHERE phone_number = $1', [phone]);
     if (result.rows.length === 0) {
         await dbPool.query('INSERT INTO users (phone_number) VALUES ($1)', [phone]);
@@ -87,6 +89,7 @@ async function updateUserState(phone, updates) {
     values.push(phone);
     await dbPool.query(query, values);
 }
+
 
 /* ---------------- Startup logs ---------------- */
 console.log("\n🚀", BOT_NAME, "starting in LIVE mode...");
@@ -142,7 +145,6 @@ async function detectLanguage(text) {
         return 'English';
     }
 }
-
 
 async function transformQueryForRetrieval(userQuery) {
   const systemPrompt = `You are an expert in the Bhagavad Gita. Transform a user's query into a concise search term describing the underlying spiritual concept. Examples:\n- User: "I am angry at my husband" -> "overcoming anger in relationships"\n- User: "He is so narcissistic" -> "dealing with ego and arrogance"\nOnly return the transformed query.`;
@@ -209,6 +211,7 @@ async function findVerseByReference(reference, queryVector = null) {
     }
     return null;
 }
+
 
 /* ---------------- Payload Extraction & Small Talk Logic ---------------- */
 function extractPhoneAndText(body) {
@@ -343,7 +346,7 @@ app.post("/webhook", async (req, res) => {
         if (!verseMatch || verseMatch.score < 0.25) {
             const betterFallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
             await sendViaTwilio(phone, betterFallback);
-            await updateUserState(phone, { chat_history: chatHistory }); // Save history even on fallback
+            await updateUserState(phone, { chat_history: chatHistory });
             return;
         }
 
@@ -400,10 +403,47 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Root, Admin, Proactive Check-in ---------------- */
 app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Advanced Conversational Engine ✅`));
 
-function findIngestScript() { /* ... same as before ... */ }
-function runCommand(cmd, args = [], onOutput, onExit) { /* ... same as before ... */ }
-app.get("/train", (req, res) => { /* ... same as before ... */ });
-app.get("/test-retrieval", async (req, res) => { /* ... same as before ... */ });
+function findIngestScript() {
+    const cjs = path.join(process.cwd(), "ingest_all.cjs");
+    const js = path.join(process.cwd(), "ingest_all.js");
+    if (fs.existsSync(cjs)) return "ingest_all.cjs";
+    if (fs.existsSync(js)) return "ingest_all.js";
+    return null;
+}
+
+function runCommand(cmd, args = [], onOutput, onExit) {
+    const proc = spawn(cmd, args, { shell: true });
+    proc.stdout.on("data", (d) => onOutput && onOutput(d.toString()));
+    proc.stderr.on("data", (d) => onOutput && onOutput(d.toString()));
+    proc.on("close", (code) => onExit && onExit(code));
+    return proc;
+}
+
+app.get("/train", (req, res) => {
+    const secret = req.query.secret;
+    if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
+    const script = findIngestScript();
+    if (!script) return res.status(500).send("No ingest script found");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.write(`Starting ingestion using ${script}...\n\n`);
+    runCommand("node", [script],
+        (line) => { try { res.write(line); } catch (e) {} },
+        (code) => { res.write(`\nProcess exited with code ${code}\n`); res.end(); }
+    );
+});
+
+app.get("/test-retrieval", async (req, res) => {
+    const secret = req.query.secret;
+    if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
+    const query = req.query.query || "I am stressed";
+    try {
+        const vec = await getEmbedding(query);
+        const matches = await multiNamespaceQuery(vec);
+        return res.json({ query, retrieved: matches });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
 
 async function proactiveCheckin() {
     console.log("Running proactive check-in...");
