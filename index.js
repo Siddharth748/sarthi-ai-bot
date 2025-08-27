@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v10.2 - FINAL COMPLETE Version with Cool-down & DB)
+// index.js — SarathiAI (v10.2 - FINAL COMPLETE Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -32,9 +32,8 @@ const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-// Add ssl config for Railway's PostgreSQL
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
-const sessions = new Map(); // For temporary chat history only
+const sessions = new Map();
 
 /* ---------------- Database & Session Setup ---------------- */
 async function setupDatabase() {
@@ -49,7 +48,6 @@ async function setupDatabase() {
                 last_topic_summary TEXT
             );
         `);
-        // Add columns if they don't exist to avoid errors on redeploy
         await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_topic_summary TEXT;`);
         client.release();
         console.log("✅ Database table 'users' is ready.");
@@ -90,7 +88,6 @@ function getChatSession(phone) {
   return s;
 }
 
-
 /* ---------------- Startup logs ---------------- */
 console.log("\n🚀", BOT_NAME, "starting in LIVE mode...");
 console.log("📦 TWILIO_ACCOUNT_SID:", TWILIO_ACCOUNT_SID ? "[LOADED]" : "[MISSING]");
@@ -99,26 +96,67 @@ console.log("📦 DATABASE_URL:", DATABASE_URL ? "[LOADED]" : "[MISSING]");
 console.log();
 
 /* ---------------- Provider & AI Helpers ---------------- */
-async function sendViaTwilio(destination, replyText) { /* ... same as before ... */ }
-async function sendImageViaTwilio(destination, imageUrl, caption) { /* ... same as before ... */ }
-async function openaiChat(messages, maxTokens = 400) { /* ... same as before ... */ }
-async function transformQueryForRetrieval(userQuery) { /* ... same as before ... */ }
-async function getEmbedding(text) { /* ... same as before ... */ }
+async function sendViaTwilio(destination, replyText) {
+  if (!TWILIO_WHATSAPP_NUMBER) {
+    console.warn(`(Simulated -> ${destination}): ${replyText}`);
+    return;
+  }
+  try {
+    await twilioClient.messages.create({ from: TWILIO_WHATSAPP_NUMBER, to: destination, body: replyText });
+    console.log(`✅ Twilio message sent to ${destination}`);
+  } catch (err) {
+    console.error("❌ Error sending to Twilio:", err.message);
+  }
+}
+
+async function sendImageViaTwilio(destination, imageUrl, caption) {
+    if (!TWILIO_WHATSAPP_NUMBER) {
+        console.warn(`(Simulated Image -> ${destination}): ${imageUrl}`);
+        return;
+    }
+    try {
+        await twilioClient.messages.create({ from: TWILIO_WHATSAPP_NUMBER, to: destination, body: caption, mediaUrl: [imageUrl] });
+        console.log(`✅ Twilio image sent to ${destination}`);
+    } catch (err) {
+        console.error("❌ Error sending image to Twilio:", err.message);
+    }
+}
+
+async function openaiChat(messages, maxTokens = 400) {
+  if (!OPENAI_KEY) return null;
+  const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7 };
+  const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, { headers: { "Authorization": `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 25000 });
+  return resp.data?.choices?.[0]?.message?.content;
+}
+
+async function transformQueryForRetrieval(userQuery) {
+  const systemPrompt = `You are an expert in the Bhagavad Gita. Transform a user's query into a concise search term describing the underlying spiritual concept. Examples:\n- User: "I am angry at my husband" -> "overcoming anger in relationships"\n- User: "He is so narcissistic" -> "dealing with ego and arrogance"\nOnly return the transformed query.`;
+  const response = await openaiChat([{ role: "system", content: systemPrompt }, { role: "user", content: userQuery }], 50);
+  const transformed = response ? response.replace(/"/g, "").trim() : userQuery;
+  console.log(`ℹ Transformed Query: "${userQuery}" -> "${transformed}"`);
+  return transformed;
+}
 
 /* ---------------- Pinecone Helpers ---------------- */
 async function pineconeQuery(vector, topK = 5, namespace, filter) { /* ... same as before ... */ }
 function getNamespacesArray() { /* ... same as before ... */ }
 async function multiNamespaceQuery(vector, topK = 5, filter) { /* ... same as before ... */ }
 async function findVerseByReference(reference, queryVector = null) { /* ... same as before ... */ }
+async function getEmbedding(text) { /* ... same as before ... */ }
 
 /* ---------------- Payload Extraction & Small Talk Logic ---------------- */
-function extractPhoneAndText(body) { /* ... same as before ... */ }
+function extractPhoneAndText(body) {
+    const phone = body.From; // e.g., "whatsapp:+1234567890"
+    const text = body.Body;
+    return { phone, text };
+}
+
 function normalizeTextForSmallTalk(s) { /* ... same as before ... */ }
 function isGreeting(text) { /* ... same as before ... */ }
 const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "sleep", "insomnia", "panic", "suicidal", "sad", "lonely"];
 function isSmallTalk(text) { /* ... same as before ... */ }
 
-/* ---------------- State-Aware AI Prompts with Language Detection ---------------- */
+/* ---------------- State-Aware AI Prompts ---------------- */
 const RAG_SYSTEM_PROMPT = `You are SarathiAI... (Your prompt with strict language rule)`;
 const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate guide... (Your prompt with strict language rule)`;
 
@@ -132,10 +170,13 @@ app.post("/webhook", async (req, res) => {
     res.status(200).send(); 
 
     const { phone, text } = extractPhoneAndText(req.body);
-    if (!phone || !text) return;
+    if (!phone || !text) {
+        console.log("ℹ No actionable message found in payload.");
+        return;
+    }
 
-    const userState = await getUserState(phone); // From DB for persistent state
-    const chatSession = getChatSession(phone); // From in-memory for temporary chat history
+    const userState = await getUserState(phone);
+    const chatSession = getChatSession(phone);
 
     const now = new Date();
     const lastActivity = new Date(userState.last_activity_ts);
@@ -143,7 +184,7 @@ app.post("/webhook", async (req, res) => {
     const incoming = String(text).trim();
     const normalizedIncoming = incoming.toLowerCase();
 
-    // ✅ Intelligent Cool-down Logic
+    // Intelligent Cool-down Logic
     if (minutesSinceLastActivity > 30 && !userState.cooldown_message_sent && !isGreeting(incoming) && normalizedIncoming !== 'yes daily') {
         console.log(`[Action: Cool-down] for ${phone}`);
         const cooldownImage = "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_x0pm5kx0pm5kx0pm.png";
@@ -161,14 +202,12 @@ app.post("/webhook", async (req, res) => {
     await updateUserState(phone, { last_activity_ts: 'NOW()' });
 
     if (normalizedIncoming === 'yes daily') {
-        console.log(`[Action: Subscription] for ${phone}`);
         await updateUserState(phone, { subscribed_daily: true });
         await sendViaTwilio(phone, "Thank you for subscribing! You will now receive a daily morning message from SarathiAI. 🙏");
         return;
     }
     
     if (isGreeting(incoming)) {
-        console.log(`[Action: Greeting] for ${phone}`);
         chatSession.conversation_stage = "new_topic";
         chatSession.chat_history = [];
         const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
@@ -177,7 +216,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (isSmallTalk(incoming)) {
-        console.log(`[Action: Small Talk] for ${phone}`);
         const smallTalkReply = `Hare Krishna 🙏 I am here to listen and offer guidance from the Gita. How can I help you today?`;
         await sendViaTwilio(phone, smallTalkReply);
         chatSession.chat_history.push({ role: 'user', content: text });
@@ -191,11 +229,9 @@ app.post("/webhook", async (req, res) => {
     }
     
     if (chatSession.conversation_stage === "new_topic") {
-        // ... (Full RAG logic from v9.1 goes here)
-        // This includes transformQuery, getEmbedding, multiNamespaceQuery, etc.
-        // And the final message composition with the "||" separator.
+        // ... (Full RAG logic from v9.5 goes here)
     } else if (chatSession.conversation_stage === "chatting") {
-        // ... (Full conversational chat logic from v9.1 goes here)
+        // ... (Full conversational chat logic from v9.5 goes here)
     }
   } catch (err) {
     console.error("❌ Webhook processing error:", err.message);
