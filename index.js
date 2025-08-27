@@ -201,8 +201,9 @@ function isSmallTalk(text) {
     return false;
 }
 
-/* ---------------- State-Aware AI Prompts ---------------- */
+/* ---------------- State-Aware AI Prompts with Language Detection ---------------- */
 const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.\n- Your entire response MUST use "||" as a separator for each message bubble.\n- Part 1: The Sanskrit verse.\n- Part 2: The Hinglish translation.\n- Part 3: Start with "Shri Krishna kehte hain:", a one-sentence essence, then a 2-3 sentence explanation.\n- Part 4: A simple follow-up question.\n- STRICTLY respond in the same language as the user's message (English or Hinglish).`;
+
 const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.\n- Listen, be empathetic, and continue the conversation naturally.\n- Offer wisdom based on Gita's principles in YOUR OWN WORDS. Do NOT quote new verses.\n- Keep replies very short (1-3 sentences).\n- If you detect the user is introducing a completely new problem, end your response with the special token: [NEW_TOPIC]\n- STRICTLY respond in the same language as the user's last message in the history (English or Hinglish).`;
 
 /* ---------------- Other Small Helpers ---------------- */
@@ -223,11 +224,9 @@ app.post("/webhook", async (req, res) => {
     const now = new Date();
     const lastActivity = new Date(session.last_activity_ts);
     const minutesSinceLastActivity = (now - lastActivity) / (1000 * 60);
-    const incoming = String(text).trim();
-    const normalizedIncoming = incoming.toLowerCase();
 
     // ✅ Intelligent Cool-down Logic
-    if (minutesSinceLastActivity > 30 && !session.cooldown_message_sent && !isGreeting(incoming) && normalizedIncoming !== 'yes daily') {
+    if (minutesSinceLastActivity > 30 && !session.cooldown_message_sent) {
         console.log(`[Action: Cool-down] for ${phone}`);
         const cooldownImage = "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_x0pm5kx0pm5kx0pm.png";
         const cooldownQuote = `"कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।\nKarmanye vadhikaraste, ma phaleshu kadachana."\n\n(Focus on your actions, not the results.)`;
@@ -239,9 +238,13 @@ app.post("/webhook", async (req, res) => {
         await sendViaTwilio(phone, optInMessage);
         
         await dbPool.query('UPDATE users SET cooldown_message_sent = TRUE WHERE phone_number = $1', [phone]);
+        // We still continue to process their message below
     }
 
     await updateUserActivity(phone);
+
+    const incoming = String(text).trim(); // Keep original case for AI
+    const normalizedIncoming = incoming.toLowerCase();
 
     if (normalizedIncoming === 'yes daily') {
         console.log(`[Action: Subscription] for ${phone}`);
@@ -250,13 +253,12 @@ app.post("/webhook", async (req, res) => {
         return;
     }
     
-    // Using in-memory session for the chat history part
-    const chatSession = getSession(phone);
+    const sessionData = getSession(phone); // Using the in-memory session for chat history
 
     if (isGreeting(incoming)) {
         console.log(`[Action: Greeting] for ${phone}`);
-        chatSession.conversation_stage = "new_topic";
-        chatSession.chat_history = [];
+        sessionData.conversation_stage = "new_topic";
+        sessionData.chat_history = [];
         const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
         await sendViaTwilio(phone, welcomeMessage);
         return;
@@ -266,17 +268,17 @@ app.post("/webhook", async (req, res) => {
         console.log(`[Action: Small Talk] for ${phone}`);
         const smallTalkReply = `Hare Krishna 🙏 I am here to listen and offer guidance from the Gita. How can I help you today?`;
         await sendViaTwilio(phone, smallTalkReply);
-        chatSession.chat_history.push({ role: 'user', content: text });
-        chatSession.chat_history.push({ role: 'assistant', content: smallTalkReply });
+        sessionData.chat_history.push({ role: 'user', content: text });
+        sessionData.chat_history.push({ role: 'assistant', content: smallTalkReply });
         return;
     }
 
-    chatSession.chat_history.push({ role: 'user', content: text });
-    if (chatSession.chat_history.length > 8) {
-        chatSession.chat_history = chatSession.chat_history.slice(-8);
+    sessionData.chat_history.push({ role: 'user', content: text });
+    if (sessionData.chat_history.length > 8) {
+        sessionData.chat_history = sessionData.chat_history.slice(-8);
     }
     
-    if (chatSession.conversation_stage === "new_topic") {
+    if (sessionData.conversation_stage === "new_topic") {
         console.log(`[State: new_topic] for ${phone}`);
         const transformedQuery = await transformQueryForRetrieval(text);
         const qVec = await getEmbedding(transformedQuery);
@@ -306,16 +308,16 @@ app.post("/webhook", async (req, res) => {
                     await new Promise(resolve => setTimeout(resolve, 1500)); 
                 }
             }
-            chatSession.chat_history.push({ role: 'assistant', content: aiResponse.replace(/\|\|/g, '\n') });
-            chatSession.last_topic_summary = text;
-            chatSession.conversation_stage = "chatting"; 
+            sessionData.chat_history.push({ role: 'assistant', content: aiResponse.replace(/\|\|/g, '\n') });
+            sessionData.last_topic_summary = text;
+            sessionData.conversation_stage = "chatting"; 
         }
 
-    } else if (chatSession.conversation_stage === "chatting") {
+    } else if (sessionData.conversation_stage === "chatting") {
         console.log(`[State: chatting] for ${phone}`);
         const aiResponse = await openaiChat([
             { role: "system", content: CHAT_SYSTEM_PROMPT },
-            ...chatSession.chat_history
+            ...sessionData.chat_history
         ]);
 
         if (aiResponse) {
@@ -323,10 +325,10 @@ app.post("/webhook", async (req, res) => {
                 const cleanResponse = aiResponse.replace("[NEW_TOPIC]", "").trim();
                 if (cleanResponse) await sendViaTwilio(phone, cleanResponse);
                 await sendViaTwilio(phone, "It sounds like we're moving to a new topic. Let me find a teaching for that...");
-                chatSession.conversation_stage = "new_topic";
+                sessionData.conversation_stage = "new_topic";
             } else {
                 await sendViaTwilio(phone, aiResponse);
-                chatSession.chat_history.push({ role: 'assistant', content: aiResponse });
+                sessionData.chat_history.push({ role: 'assistant', content: aiResponse });
             }
         }
     }
@@ -381,26 +383,21 @@ app.get("/test-retrieval", async (req, res) => {
 });
 
 async function proactiveCheckin() {
-  const now = new Date();
+  const now = Date.now();
   const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
 
-  const usersResult = await dbPool.query('SELECT phone_number, last_topic_summary, last_seen_ts, last_checkin_sent_ts FROM users');
-  
-  for (const user of usersResult.rows) {
-      const lastSeen = new Date(user.last_seen_ts);
-      const lastCheckin = new Date(user.last_checkin_sent_ts);
+  for (const [phone, session] of sessions) {
+    if (now - session.last_seen_ts > FORTY_EIGHT_HOURS_MS && now - (session.last_checkin_sent_ts || 0) > FORTY_EIGHT_HOURS_MS && session.last_topic_summary) {
+      console.log(`Sending proactive check-in to ${phone} about "${session.last_topic_summary}"`);
+      
+      const prompt = `A user was previously concerned about "${session.last_topic_summary}". Write a single, short, gentle check-in message (in English) asking how they are doing with that specific issue. Be warm and encouraging.`;
+      const careMessage = await openaiChat([{ role: "system", content: "You are a caring companion." }, { role: "user", content: prompt }], 100);
 
-      if (now - lastSeen > FORTY_EIGHT_HOURS_MS && now - lastCheckin > FORTY_EIGHT_HOURS_MS && user.last_topic_summary) {
-          console.log(`Sending proactive check-in to ${user.phone_number} about "${user.last_topic_summary}"`);
-          
-          const prompt = `A user was previously concerned about "${user.last_topic_summary}". Write a single, short, gentle check-in message (in English) asking how they are doing with that specific issue. Be warm and encouraging.`;
-          const careMessage = await openaiChat([{ role: "system", content: "You are a caring companion." }, { role: "user", content: prompt }], 100);
-
-          if (careMessage) {
-              await sendViaTwilio(user.phone_number, careMessage);
-              await dbPool.query('UPDATE users SET last_checkin_sent_ts = CURRENT_TIMESTAMP WHERE phone_number = $1', [user.phone_number]);
-          }
+      if (careMessage) {
+        await sendViaTwilio(phone, careMessage);
+        session.last_checkin_sent_ts = now;
       }
+    }
   }
 }
 setInterval(proactiveCheckin, 6 * 60 * 60 * 1000); 
