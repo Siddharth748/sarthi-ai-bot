@@ -1,4 +1,4 @@
-// scheduler.js - Sends Daily Morning Messages to ALL Users
+// scheduler.js - Sends Daily Morning Messages (with full WhatsApp link)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,7 +27,11 @@ async function sendDailyMessage(destination, content) {
         return;
     }
     try {
-        const messageBody = `Hare Krishna 🙏\n\n${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing! To get your own daily guidance from SarathiAI, click here:*\nhttps://wa.me/${TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '')}?text=Hi`;
+        const botNumber = TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '');
+        // ✅ UPDATED: Using the full link format you provided.
+        const chatLink = `https://api.whatsapp.com/send/?phone=${botNumber}&text=Hi&type=phone_number&app_absent=0`;
+
+        const messageBody = `Hare Krishna 🙏\n\n${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing! To get your own daily guidance from SarathiAI, click here:*\n${chatLink}`;
         
         await twilioClient.messages.create({
             from: TWILIO_WHATSAPP_NUMBER,
@@ -65,7 +69,6 @@ async function getAllUsers() {
 console.log("Scheduler started. Waiting for the scheduled time...");
 
 // Schedule to run at 7:00 AM IST.
-// IST is UTC+5:30, so 7:00 AM IST is 1:30 AM UTC.
 cron.schedule('30 1 * * *', async () => {
     console.log('⏰ Firing daily morning message job...');
     const content = loadDailyContent();
