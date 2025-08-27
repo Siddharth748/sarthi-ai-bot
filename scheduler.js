@@ -1,4 +1,4 @@
-// scheduler.js - Sends Daily Morning Messages from the Database
+// scheduler.js - Sends Daily Morning Messages to ALL Users
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -20,7 +20,6 @@ const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-
 /* ---------------- Helpers ---------------- */
 async function sendDailyMessage(destination, content) {
     if (!TWILIO_WHATSAPP_NUMBER) {
@@ -28,8 +27,7 @@ async function sendDailyMessage(destination, content) {
         return;
     }
     try {
-        // ✅ UPDATED: Added the "viral footer" to the message body
-        const messageBody = `Hare Krishna 🙏\n\n${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing with friends & family!*\nTo receive your own daily guidance from SarathiAI, click here:\nhttps://wa.me/${TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '')}?text=Hi`;
+        const messageBody = `Hare Krishna 🙏\n\n${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing! To get your own daily guidance from SarathiAI, click here:*\nhttps://wa.me/${TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '')}?text=Hi`;
         
         await twilioClient.messages.create({
             from: TWILIO_WHATSAPP_NUMBER,
@@ -53,13 +51,12 @@ function loadDailyContent() {
     return parse(fileContent, { columns: true, skip_empty_lines: true });
 }
 
-// ✅ UPDATED: Gets subscribers from the PostgreSQL database
-async function getSubscribers() {
+async function getAllUsers() {
     try {
-        const res = await dbPool.query('SELECT phone_number FROM users WHERE subscribed_daily = TRUE');
+        const res = await dbPool.query('SELECT phone_number FROM users');
         return res.rows.map(row => row.phone_number);
     } catch (err) {
-        console.error("❌ Error fetching subscribers from DB:", err);
+        console.error("❌ Error fetching users from DB:", err);
         return [];
     }
 }
@@ -72,10 +69,10 @@ console.log("Scheduler started. Waiting for the scheduled time...");
 cron.schedule('30 1 * * *', async () => {
     console.log('⏰ Firing daily morning message job...');
     const content = loadDailyContent();
-    const subscribers = await getSubscribers();
+    const allUsers = await getAllUsers();
     
-    if (content.length === 0 || subscribers.length === 0) {
-        console.log("No content or no subscribers. Skipping job.");
+    if (content.length === 0 || allUsers.length === 0) {
+        console.log("No content or no users. Skipping job.");
         return;
     }
     
@@ -83,11 +80,10 @@ cron.schedule('30 1 * * *', async () => {
     const dayIndex = dayOfYear % content.length;
     const todaysContent = content[dayIndex];
     
-    console.log(`Sending content for day ${todaysContent.day_id} to ${subscribers.length} subscriber(s).`);
+    console.log(`Sending content for day ${todaysContent.day_id} to ${allUsers.length} user(s).`);
     
-    for (const phone of subscribers) {
+    for (const phone of allUsers) {
         await sendDailyMessage(phone, todaysContent);
-        // Add a small delay between messages to avoid sending too fast
         await new Promise(resolve => setTimeout(resolve, 1000)); 
     }
 
