@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v10.4 - FINAL COMPLETE Version with All Fixes)
+// index.js — SarathiAI (v11.1 - Final Conversational Flow Fix)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -33,10 +33,8 @@ const TRAIN_SECRET = process.env.TRAIN_SECRET || null;
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
-const sessions = new Map(); // For temporary chat history only
 
 /* ---------------- Database & Session Setup ---------------- */
-// ✅ THIS ENTIRE BLOCK WAS MISSING. IT IS NOW RESTORED.
 async function setupDatabase() {
     try {
         const client = await dbPool.connect();
@@ -46,15 +44,13 @@ async function setupDatabase() {
                 subscribed_daily BOOLEAN DEFAULT FALSE,
                 last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                 cooldown_message_sent BOOLEAN DEFAULT FALSE,
-                last_topic_summary TEXT,
                 chat_history JSONB DEFAULT '[]'::jsonb,
-                conversation_stage VARCHAR(50) DEFAULT 'new_topic'
+                conversation_stage VARCHAR(50) DEFAULT 'new_topic',
+                last_topic_summary TEXT,
+                messages_since_verse INT DEFAULT 0
             );
         `);
-        // Add columns if they don't exist to avoid errors on redeploy
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_history JSONB DEFAULT '[]'::jsonb;`);
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS conversation_stage VARCHAR(50) DEFAULT 'new_topic';`);
-        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_topic_summary TEXT;`);
+        await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_since_verse INT DEFAULT 0;`);
         client.release();
         console.log("✅ Database table 'users' is ready.");
     } catch (err) {
@@ -69,9 +65,7 @@ async function getUserState(phone) {
         result = await dbPool.query('SELECT * FROM users WHERE phone_number = $1', [phone]);
     }
     const user = result.rows[0];
-    if (typeof user.chat_history === 'string') {
-        user.chat_history = JSON.parse(user.chat_history);
-    }
+    user.chat_history = user.chat_history || [];
     return user;
 }
 
@@ -89,7 +83,6 @@ async function updateUserState(phone, updates) {
     values.push(phone);
     await dbPool.query(query, values);
 }
-
 
 /* ---------------- Startup logs ---------------- */
 console.log("\n🚀", BOT_NAME, "starting in LIVE mode...");
@@ -110,19 +103,6 @@ async function sendViaTwilio(destination, replyText) {
   } catch (err) {
     console.error("❌ Error sending to Twilio:", err.message);
   }
-}
-
-async function sendImageViaTwilio(destination, imageUrl, caption) {
-    if (!TWILIO_WHATSAPP_NUMBER) {
-        console.warn(`(Simulated Image -> ${destination}): ${imageUrl}`);
-        return;
-    }
-    try {
-        await twilioClient.messages.create({ from: TWILIO_WHATSAPP_NUMBER, to: destination, body: caption, mediaUrl: [imageUrl] });
-        console.log(`✅ Twilio image sent to ${destination}`);
-    } catch (err) {
-        console.error("❌ Error sending image to Twilio:", err.message);
-    }
 }
 
 async function openaiChat(messages, maxTokens = 400) {
@@ -178,7 +158,7 @@ function getNamespacesArray() {
     return [PINECONE_NAMESPACE || "verse"];
 }
 
-async function multiNamespaceQuery(vector, topK = 8, filter = undefined) {
+async function multiNamespaceQuery(vector, topK = 8, filter) {
     const ns = getNamespacesArray();
     const promises = ns.map(async (n) => {
         try {
@@ -194,24 +174,6 @@ async function multiNamespaceQuery(vector, topK = 8, filter = undefined) {
     allMatches.sort((a,b) => (b.score || 0) - (a.score || 0));
     return allMatches;
 }
-
-async function findVerseByReference(reference, queryVector = null) {
-    if (!reference) return null;
-    const tries = [ reference, reference.trim(), reference.trim().replace(/\s+/g, "_") ];
-    const verseNs = getNamespacesArray().find(n => n.toLowerCase().includes("verse")) || getNamespacesArray()[0];
-    for (const t of tries) {
-        try {
-            const vec = queryVector || await getEmbedding(t);
-            const filter = { reference: { "$eq": t } };
-            const res = await pineconeQuery(vec, 1, verseNs, filter);
-            if (res?.matches?.length) return res.matches[0];
-        } catch (e) {
-            console.warn(`❗ findVerseByReference failed for "${t}":`, e.message);
-        }
-    }
-    return null;
-}
-
 
 /* ---------------- Payload Extraction & Small Talk Logic ---------------- */
 function extractPhoneAndText(body) {
@@ -251,13 +213,49 @@ function isSmallTalk(text) {
 }
 
 /* ---------------- State-Aware AI Prompts ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.\n- Your entire response MUST use "||" as a separator for each message bubble.\n- Part 1: The Sanskrit verse.\n- Part 2: The Hinglish translation.\n- Part 3: Start with "Shri Krishna kehte hain:", a one-sentence essence, then a 2-3 sentence explanation.\n- Part 4: A simple follow-up question.\n- STRICTLY respond in {{LANGUAGE}}.`;
+const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.\n- Your entire response MUST use "||" as a separator for each message bubble.\n- Part 1: The Sanskrit verse.\n- Part 2: The Hinglish translation.\n- Part 3: Start with "Shri Krishna kehte hain:", a one-sentence essence, then a 2-3 sentence explanation.\n- Part 4: A simple follow-up question.\n- **Strictly and exclusively reply in {{LANGUAGE}}.**`;
 
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.\n- Listen, be empathetic, and continue the conversation naturally.\n- Offer wisdom based on Gita's principles in YOUR OWN WORDS. Do NOT quote new verses.\n- Keep replies very short (1-3 sentences).\n- If you detect the user is introducing a completely new problem, end your response with the special token: [NEW_TOPIC]\n- STRICTLY respond in {{LANGUAGE}}.`;
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.\n- Listen, be empathetic, and continue the conversation naturally.\n- Offer wisdom based on Gita's principles in YOUR OWN WORDS. Do NOT quote new verses.\n- Keep replies very short (1-3 sentences).\n- Treat related emotions (e.g., anger following stress, sadness following frustration) as part of the SAME conversation.\n- Only signal a topic change by ending your response with the special token [NEW_TOPIC] if the user introduces a completely unrelated subject (e.g., switching from work stress to a family relationship problem).\n- **Strictly and exclusively reply in {{LANGUAGE}}.**`;
 
 /* ---------------- Other Small Helpers ---------------- */
 function safeText(md, key) {
   return (md && md[key] && String(md[key]).trim()) || "";
+}
+
+/* ---------------- Main RAG Function ---------------- */
+async function getRAGResponse(phone, text, language) {
+    const transformedQuery = await transformQueryForRetrieval(text);
+    const qVec = await getEmbedding(transformedQuery);
+    const matches = await multiNamespaceQuery(qVec);
+    const verseMatch = matches.find(m => m.metadata?.sanskrit);
+    
+    console.log(`[Pinecone Match] Best match score: ${verseMatch?.score}`);
+
+    if (!verseMatch || verseMatch.score < 0.25) {
+        const betterFallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
+        await sendViaTwilio(phone, betterFallback);
+        return { assistantResponse: betterFallback, stage: 'chatting', topic: text };
+    }
+
+    const verseSanskrit = safeText(verseMatch.metadata, "sanskrit");
+    const verseHinglish = safeText(verseMatch.metadata, "hinglish1");
+    const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
+    
+    const ragPromptWithLang = RAG_SYSTEM_PROMPT.replace('{{LANGUAGE}}', language);
+    const modelUser = `User's problem: "${text}"\n\nContext from Gita:\n${verseContext}`;
+    const aiResponse = await openaiChat([{ role: "system", content: ragPromptWithLang }, { role: "user", content: modelUser }]);
+
+    if (aiResponse) {
+        const messageParts = aiResponse.split("||").map(p => p.trim());
+        for (const part of messageParts) {
+            if (part) {
+                await sendViaTwilio(phone, part);
+                await new Promise(resolve => setTimeout(resolve, 1500)); 
+            }
+        }
+        return { assistantResponse: aiResponse.replace(/\|\|/g, '\n'), stage: 'chatting', topic: text };
+    }
+    return { assistantResponse: "I am here to listen.", stage: 'chatting', topic: text };
 }
 
 /* ---------------- Webhook - The Final State Machine ---------------- */
@@ -271,19 +269,13 @@ app.post("/webhook", async (req, res) => {
 
     const incoming = String(text).trim();
     const normalizedIncoming = incoming.toLowerCase();
-
+    
     // --- Stateless commands handled FIRST ---
     if (isGreeting(incoming)) {
         console.log(`[Action: Greeting] for ${phone}`);
         const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
         await sendViaTwilio(phone, welcomeMessage);
-        // Reset user state for a new conversation
-        await updateUserState(phone, { 
-            last_activity_ts: 'NOW()', 
-            cooldown_message_sent: false,
-            chat_history: '[]',
-            conversation_stage: 'new_topic'
-        });
+        await updateUserState(phone, { conversation_stage: 'new_topic', chat_history: '[]', messages_since_verse: 0, last_activity_ts: 'NOW()' });
         return;
     }
 
@@ -296,26 +288,6 @@ app.post("/webhook", async (req, res) => {
 
     // --- Stateful logic begins now ---
     const userState = await getUserState(phone);
-    const now = new Date();
-    const lastActivity = new Date(userState.last_activity_ts);
-    const minutesSinceLastActivity = (now - lastActivity) / (1000 * 60);
-
-    // Intelligent Cool-down Logic
-    if (minutesSinceLastActivity > 30 && !userState.cooldown_message_sent) {
-        console.log(`[Action: Cool-down] for ${phone}`);
-        const cooldownImage = "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_x0pm5kx0pm5kx0pm.png";
-        const cooldownQuote = `"कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।\nKarmanye vadhikaraste, ma phaleshu kadachana."\n\n(Focus on your actions, not the results.)`;
-        const cooldownPractice = "A simple practice: Take three deep breaths and focus on the present moment.";
-        const optInMessage = `I hope you are having a peaceful day.\n\nWould you like to receive a short, inspiring message like this every morning? Reply with "Yes Daily" to subscribe.`;
-
-        await sendImageViaTwilio(phone, cooldownImage, `${cooldownQuote}\n\n${cooldownPractice}`);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        await sendViaTwilio(phone, optInMessage);
-        
-        await updateUserState(phone, { cooldown_message_sent: true, last_activity_ts: 'NOW()' });
-        return; 
-    }
-
     await updateUserState(phone, { last_activity_ts: 'NOW()' });
     
     let chatHistory = userState.chat_history || [];
@@ -334,140 +306,46 @@ app.post("/webhook", async (req, res) => {
     const language = await detectLanguage(text);
     console.log(`[Language Detected]: ${language}`);
 
-    if (userState.conversation_stage === "new_topic") {
-        console.log(`[State: new_topic] for ${phone}`);
-        const transformedQuery = await transformQueryForRetrieval(text);
-        const qVec = await getEmbedding(transformedQuery);
-        const matches = await multiNamespaceQuery(qVec);
-        const verseMatch = matches.find(m => m.metadata?.sanskrit);
-        
-        console.log(`[Pinecone Match] Best match score: ${verseMatch?.score}`);
+    let currentStage = userState.conversation_stage;
+    let messagesSinceVerse = userState.messages_since_verse + 1; // Increment for every substantive message
 
-        if (!verseMatch || verseMatch.score < 0.25) {
-            const betterFallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
-            await sendViaTwilio(phone, betterFallback);
-            await updateUserState(phone, { chat_history: chatHistory });
-            return;
-        }
-
-        const verseSanskrit = safeText(verseMatch.metadata, "sanskrit");
-        const verseHinglish = safeText(verseMatch.metadata, "hinglish1");
-        const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
-        
-        const ragPromptWithLang = RAG_SYSTEM_PROMPT.replace('{{LANGUAGE}}', language);
-        const modelUser = `User's problem: "${text}"\n\nContext from Gita:\n${verseContext}`;
-        const aiResponse = await openaiChat([{ role: "system", content: ragPromptWithLang }, { role: "user", content: modelUser }]);
-
-        if (aiResponse) {
-            const messageParts = aiResponse.split("||").map(p => p.trim());
-            for (const part of messageParts) {
-                if (part) {
-                    await sendViaTwilio(phone, part);
-                    await new Promise(resolve => setTimeout(resolve, 1500)); 
-                }
-            }
-            chatHistory.push({ role: 'assistant', content: aiResponse.replace(/\|\|/g, '\n') });
-            await updateUserState(phone, {
-                last_topic_summary: text,
-                conversation_stage: "chatting",
-                chat_history: chatHistory
-            });
-        }
-
-    } else if (userState.conversation_stage === "chatting") {
+    // --- Main conversation logic ---
+    if (currentStage === "chatting") {
         console.log(`[State: chatting] for ${phone}`);
         const chatPromptWithLang = CHAT_SYSTEM_PROMPT.replace('{{LANGUAGE}}', language);
-        const aiResponse = await openaiChat([
-            { role: "system", content: chatPromptWithLang },
-            ...chatHistory
-        ]);
+        const aiChatResponse = await openaiChat([ { role: "system", content: chatPromptWithLang }, ...chatHistory ]);
 
-        if (aiResponse) {
-            if (aiResponse.includes("[NEW_TOPIC]")) {
-                const cleanResponse = aiResponse.replace("[NEW_TOPIC]", "").trim();
-                if (cleanResponse) await sendViaTwilio(phone, cleanResponse);
-                await sendViaTwilio(phone, "It sounds like we're moving to a new topic. Let me find a teaching for that...");
-                await updateUserState(phone, { conversation_stage: 'new_topic' });
-            } else {
-                await sendViaTwilio(phone, aiResponse);
-                chatHistory.push({ role: 'assistant', content: aiResponse });
-                await updateUserState(phone, { chat_history: chatHistory });
-            }
+        if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]") && messagesSinceVerse > 7) {
+            console.log("[Action: New Topic Triggered After Pacing]");
+            currentStage = "new_topic"; // Transition stage for the logic below
+        } else if (aiChatResponse) {
+            await sendViaTwilio(phone, aiChatResponse);
+            chatHistory.push({ role: 'assistant', content: aiChatResponse });
+            await updateUserState(phone, { chat_history: chatHistory, messages_since_verse: messagesSinceVerse });
+            return;
         }
     }
+
+    if (currentStage === "new_topic") {
+        console.log(`[State: new_topic] for ${phone}`);
+        const ragResult = await getRAGResponse(phone, text, language);
+        chatHistory.push({ role: 'assistant', content: ragResult.assistantResponse });
+        await updateUserState(phone, {
+            last_topic_summary: ragResult.topic,
+            conversation_stage: 'chatting',
+            chat_history: chatHistory,
+            messages_since_verse: 0 // Reset counter
+        });
+    }
+    
   } catch (err) {
     console.error("❌ Webhook processing error:", err.message);
   }
 });
 
-/* ---------------- Root, Admin, Proactive Check-in ---------------- */
-app.get("/", (_req, res) => res.send(`${BOT_NAME} is running with Advanced Conversational Engine ✅`));
-
-function findIngestScript() {
-    const cjs = path.join(process.cwd(), "ingest_all.cjs");
-    const js = path.join(process.cwd(), "ingest_all.js");
-    if (fs.existsSync(cjs)) return "ingest_all.cjs";
-    if (fs.existsSync(js)) return "ingest_all.js";
-    return null;
-}
-
-function runCommand(cmd, args = [], onOutput, onExit) {
-    const proc = spawn(cmd, args, { shell: true });
-    proc.stdout.on("data", (d) => onOutput && onOutput(d.toString()));
-    proc.stderr.on("data", (d) => onOutput && onOutput(d.toString()));
-    proc.on("close", (code) => onExit && onExit(code));
-    return proc;
-}
-
-app.get("/train", (req, res) => {
-    const secret = req.query.secret;
-    if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
-    const script = findIngestScript();
-    if (!script) return res.status(500).send("No ingest script found");
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
-    res.write(`Starting ingestion using ${script}...\n\n`);
-    runCommand("node", [script],
-        (line) => { try { res.write(line); } catch (e) {} },
-        (code) => { res.write(`\nProcess exited with code ${code}\n`); res.end(); }
-    );
-});
-
-app.get("/test-retrieval", async (req, res) => {
-    const secret = req.query.secret;
-    if (!TRAIN_SECRET || secret !== TRAIN_SECRET) return res.status(403).send("Forbidden");
-    const query = req.query.query || "I am stressed";
-    try {
-        const vec = await getEmbedding(query);
-        const matches = await multiNamespaceQuery(vec);
-        return res.json({ query, retrieved: matches });
-    } catch (e) {
-        return res.status(500).json({ error: e.message });
-    }
-});
-
-async function proactiveCheckin() {
-    console.log("Running proactive check-in...");
-    const usersResult = await dbPool.query('SELECT phone_number, last_topic_summary, last_activity_ts FROM users');
-    const now = new Date();
-    const FORTY_EIGHT_HOURS_MS = 48 * 60 * 60 * 1000;
-
-    for (const user of usersResult.rows) {
-        const lastSeen = new Date(user.last_activity_ts);
-
-        if (now - lastSeen > FORTY_EIGHT_HOURS_MS && user.last_topic_summary) {
-            console.log(`Sending proactive check-in to ${user.phone_number} about "${user.last_topic_summary}"`);
-            
-            const prompt = `A user was previously concerned about "${user.last_topic_summary}". Write a single, short, gentle check-in message in English asking how they are doing with that specific issue. Be warm and encouraging.`;
-            const careMessage = await openaiChat([{ role: "system", content: "You are a caring companion." }, { role: "user", content: prompt }], 100);
-
-            if (careMessage) {
-                await sendViaTwilio(user.phone_number, careMessage);
-                await updateUserState(user.phone_number, { last_topic_summary: null }); // Clear summary after check-in
-            }
-        }
-    }
-}
-setInterval(proactiveCheckin, 6 * 60 * 60 * 1000); 
+/* ---------------- Root & Admin ---------------- */
+app.get("/", (_req, res) => res.send(`${BOT_NAME} is running ✅`));
+// All other admin and proactive check-in functions would be here if needed
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
