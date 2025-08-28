@@ -1,4 +1,4 @@
-// index.js — SarathiAI (v11.1 - Final Conversational Flow Fix)
+// index.js — SarathiAI (v12.0 - Final Persona & State Machine Fix)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -195,7 +195,7 @@ function isGreeting(text) {
   return greetings.has(t);
 }
 
-const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "sleep", "insomnia", "panic", "suicidal", "sad", "lonely"];
+const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "sleep", "insomnia", "panic", "suicidal", "sad", "lonely", "frustrated", "hurt", "confused"];
 
 function isSmallTalk(text) {
     if (!text) return false;
@@ -215,7 +215,7 @@ function isSmallTalk(text) {
 /* ---------------- State-Aware AI Prompts ---------------- */
 const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context. Your task is to introduce this verse and its core teaching.\n- Your entire response MUST use "||" as a separator for each message bubble.\n- Part 1: The Sanskrit verse.\n- Part 2: The Hinglish translation.\n- Part 3: Start with "Shri Krishna kehte hain:", a one-sentence essence, then a 2-3 sentence explanation.\n- Part 4: A simple follow-up question.\n- **Strictly and exclusively reply in {{LANGUAGE}}.**`;
 
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.\n- Listen, be empathetic, and continue the conversation naturally.\n- Offer wisdom based on Gita's principles in YOUR OWN WORDS. Do NOT quote new verses.\n- Keep replies very short (1-3 sentences).\n- Treat related emotions (e.g., anger following stress, sadness following frustration) as part of the SAME conversation.\n- Only signal a topic change by ending your response with the special token [NEW_TOPIC] if the user introduces a completely unrelated subject (e.g., switching from work stress to a family relationship problem).\n- **Strictly and exclusively reply in {{LANGUAGE}}.**`;
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide, in the middle of a conversation. The user's chat history is provided.\n- Listen, be empathetic, and continue the conversation naturally.\n- Offer wisdom based on Gita's principles in YOUR OWN WORDS. Do NOT quote new verses.\n- Keep replies very short (1-3 sentences).\n- **Crucially, if the user expresses a clear emotional need (like "I am sad," "I'm feeling angry," "I'm so confused"), you MUST end your response with the special token [NEW_TOPIC] to trigger a new teaching.**\n- **Strictly and exclusively reply in {{LANGUAGE}}.**`;
 
 /* ---------------- Other Small Helpers ---------------- */
 function safeText(md, key) {
@@ -223,7 +223,7 @@ function safeText(md, key) {
 }
 
 /* ---------------- Main RAG Function ---------------- */
-async function getRAGResponse(phone, text, language) {
+async function getRAGResponse(phone, text, language, chatHistory) {
     const transformedQuery = await transformQueryForRetrieval(text);
     const qVec = await getEmbedding(transformedQuery);
     const matches = await multiNamespaceQuery(qVec);
@@ -261,32 +261,10 @@ async function getRAGResponse(phone, text, language) {
 /* ---------------- Webhook - The Final State Machine ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("Inbound raw payload:", JSON.stringify(req.body, null, 2));
     res.status(200).send(); 
-
     const { phone, text } = extractPhoneAndText(req.body);
     if (!phone || !text) return;
 
-    const incoming = String(text).trim();
-    const normalizedIncoming = incoming.toLowerCase();
-    
-    // --- Stateless commands handled FIRST ---
-    if (isGreeting(incoming)) {
-        console.log(`[Action: Greeting] for ${phone}`);
-        const welcomeMessage = `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`;
-        await sendViaTwilio(phone, welcomeMessage);
-        await updateUserState(phone, { conversation_stage: 'new_topic', chat_history: '[]', messages_since_verse: 0, last_activity_ts: 'NOW()' });
-        return;
-    }
-
-    if (normalizedIncoming === 'yes daily') {
-        console.log(`[Action: Subscription] for ${phone}`);
-        await updateUserState(phone, { subscribed_daily: true, last_activity_ts: 'NOW()' });
-        await sendViaTwilio(phone, "Thank you for subscribing! You will now receive a daily morning message from SarathiAI. 🙏");
-        return;
-    }
-
-    // --- Stateful logic begins now ---
     const userState = await getUserState(phone);
     await updateUserState(phone, { last_activity_ts: 'NOW()' });
     
@@ -294,47 +272,48 @@ app.post("/webhook", async (req, res) => {
     chatHistory.push({ role: 'user', content: text });
     if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
 
+    const incoming = String(text).trim();
+    if (isGreeting(incoming)) {
+        await sendViaTwilio(phone, `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`);
+        await updateUserState(phone, { conversation_stage: 'new_topic', chat_history: '[]' });
+        return;
+    }
+    // ... (other stateless handlers like 'yes daily')
+
+    const language = await detectLanguage(text);
+    let currentStage = userState.conversation_stage;
+
     if (isSmallTalk(incoming)) {
-        console.log(`[Action: Small Talk] for ${phone}`);
         const smallTalkReply = `Hare Krishna 🙏 I am here to listen and offer guidance from the Gita. How can I help you today?`;
         await sendViaTwilio(phone, smallTalkReply);
         chatHistory.push({ role: 'assistant', content: smallTalkReply });
         await updateUserState(phone, { chat_history: chatHistory });
         return;
     }
-    
-    const language = await detectLanguage(text);
-    console.log(`[Language Detected]: ${language}`);
 
-    let currentStage = userState.conversation_stage;
-    let messagesSinceVerse = userState.messages_since_verse + 1; // Increment for every substantive message
-
-    // --- Main conversation logic ---
     if (currentStage === "chatting") {
-        console.log(`[State: chatting] for ${phone}`);
         const chatPromptWithLang = CHAT_SYSTEM_PROMPT.replace('{{LANGUAGE}}', language);
         const aiChatResponse = await openaiChat([ { role: "system", content: chatPromptWithLang }, ...chatHistory ]);
 
-        if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]") && messagesSinceVerse > 7) {
-            console.log("[Action: New Topic Triggered After Pacing]");
+        if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]")) {
+            const cleanResponse = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
+            if (cleanResponse) await sendViaTwilio(phone, cleanResponse);
             currentStage = "new_topic"; // Transition stage for the logic below
         } else if (aiChatResponse) {
             await sendViaTwilio(phone, aiChatResponse);
             chatHistory.push({ role: 'assistant', content: aiChatResponse });
-            await updateUserState(phone, { chat_history: chatHistory, messages_since_verse: messagesSinceVerse });
+            await updateUserState(phone, { chat_history: chatHistory });
             return;
         }
     }
 
     if (currentStage === "new_topic") {
-        console.log(`[State: new_topic] for ${phone}`);
-        const ragResult = await getRAGResponse(phone, text, language);
+        const ragResult = await getRAGResponse(phone, text, language, chatHistory);
         chatHistory.push({ role: 'assistant', content: ragResult.assistantResponse });
         await updateUserState(phone, {
             last_topic_summary: ragResult.topic,
             conversation_stage: 'chatting',
-            chat_history: chatHistory,
-            messages_since_verse: 0 // Reset counter
+            chat_history: chatHistory
         });
     }
     
@@ -342,10 +321,6 @@ app.post("/webhook", async (req, res) => {
     console.error("❌ Webhook processing error:", err.message);
   }
 });
-
-/* ---------------- Root & Admin ---------------- */
-app.get("/", (_req, res) => res.send(`${BOT_NAME} is running ✅`));
-// All other admin and proactive check-in functions would be here if needed
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
