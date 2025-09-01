@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Sends Approved Template to ALL Users)
+// scheduler.js - FINAL Version (Sends Approved Template to ALL Users, with one-time immediate trigger)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,17 +27,19 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90"; // Your approved Template SID
+        // ✅ YOUR APPROVED TEMPLATE SID IS NOW USED HERE
+        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90";
 
-        const verseAndPractice = `${content.sanskrit_verse}\n\n*Morning Practice:*\n${content.practice_text}`;
+        // This text will be inserted into the {{2}} variable of your template
+        const guidanceText = `${content.sanskrit_verse}\n\n*Morning Practice:*\n${content.practice_text}`;
 
         await twilioClient.messages.create({
             contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
             to: user.phone_number,
             contentVariables: JSON.stringify({
-                '1': user.profile_name || "friend",
-                '2': verseAndPractice
+                '1': user.profile_name || "friend", // Variable {{1}}
+                '2': guidanceText                  // Variable {{2}}
             })
         });
         console.log(`✅ Daily message template sent to ${user.phone_number}`);
@@ -59,6 +61,7 @@ function loadDailyContent() {
 // ✅ CORRECTED: This function now gets ALL users from the database.
 async function getAllUsers() {
     try {
+        // Fetches all users who have ever interacted with the bot.
         const res = await dbPool.query('SELECT * FROM users');
         return res.rows;
     } catch (err) {
@@ -86,7 +89,7 @@ async function runDailyMessageJob() {
     
     for (const user of allUsers) {
         await sendDailyMessage(user, todaysContent);
-        await new Promise(resolve => setTimeout(resolve, 1000)); 
+        await new Promise(resolve => setTimeout(resolve, 1000)); // 1-second pause between messages
     }
 }
 
@@ -98,7 +101,7 @@ runDailyMessageJob();
 
 console.log("Waiting for the next scheduled time...");
 
-// Schedule to run at 7:00 AM IST.
+// Schedule to run at 7:00 AM IST (1:30 AM UTC).
 cron.schedule('30 1 * * *', runDailyMessageJob, {
     scheduled: true,
     timezone: "UTC"
