@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Sends to ALL Users, with one-time immediate trigger)
+// scheduler.js - FINAL Version using Approved Meta Template
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -21,26 +21,32 @@ const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 /* ---------------- Helpers ---------------- */
-async function sendDailyMessage(destination, content) {
+async function sendDailyMessage(user, content) {
     if (!TWILIO_WHATSAPP_NUMBER) {
-        console.warn(`(Simulated Daily Message -> ${destination})`);
+        console.warn(`(Simulated Daily Message -> ${user.phone_number})`);
         return;
     }
     try {
+        // ✅ USING YOUR APPROVED TEMPLATE SID
+        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90";
+
         const botNumber = TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '');
         const chatLink = `https://api.whatsapp.com/send/?phone=${botNumber}&text=Hi&type=phone_number&app_absent=0`;
 
-        const messageBody = `Hare Krishna 🙏\n\n${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing! To get your own daily guidance from SarathiAI, click here:*\n${chatLink}`;
-        
+        const verseAndPractice = `${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing! To get your own daily guidance from SarathiAI, click here:*\n${chatLink}`;
+
         await twilioClient.messages.create({
+            contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
-            to: destination,
-            body: messageBody,
-            mediaUrl: [content.image_url]
+            to: user.phone_number,
+            contentVariables: JSON.stringify({
+                '1': user.profile_name || "friend", // Uses a friendly fallback if name is unknown
+                '2': verseAndPractice
+            })
         });
-        console.log(`✅ Daily message sent to ${destination}`);
+        console.log(`✅ Daily message template sent to ${user.phone_number}`);
     } catch (err) {
-        console.error(`❌ Error sending daily message to ${destination}:`, err.message);
+        console.error(`❌ Error sending daily message template to ${user.phone_number}:`, err.message);
     }
 }
 
@@ -54,12 +60,13 @@ function loadDailyContent() {
     return parse(fileContent, { columns: true, skip_empty_lines: true });
 }
 
-async function getAllUsers() {
+async function getSubscribedUsers() {
     try {
-        const res = await dbPool.query('SELECT phone_number FROM users');
-        return res.rows.map(row => row.phone_number);
+        // Fetching the whole user object to potentially use the name later
+        const res = await dbPool.query('SELECT * FROM users WHERE subscribed_daily = TRUE');
+        return res.rows;
     } catch (err) {
-        console.error("❌ Error fetching users from DB:", err);
+        console.error("❌ Error fetching subscribers from DB:", err);
         return [];
     }
 }
@@ -68,10 +75,10 @@ async function getAllUsers() {
 async function runDailyMessageJob() {
     console.log('⏰ Firing daily morning message job...');
     const content = loadDailyContent();
-    const allUsers = await getAllUsers();
+    const subscribedUsers = await getSubscribedUsers();
     
-    if (content.length === 0 || allUsers.length === 0) {
-        console.log("No content or no users. Skipping job.");
+    if (content.length === 0 || subscribedUsers.length === 0) {
+        console.log("No content or no subscribers. Skipping job.");
         return;
     }
     
@@ -79,10 +86,10 @@ async function runDailyMessageJob() {
     const dayIndex = dayOfYear % content.length;
     const todaysContent = content[dayIndex];
     
-    console.log(`Sending content for day ${todaysContent.day_id} to ${allUsers.length} user(s).`);
+    console.log(`Sending content for day ${todaysContent.day_id} to ${subscribedUsers.length} subscriber(s).`);
     
-    for (const phone of allUsers) {
-        await sendDailyMessage(phone, todaysContent);
+    for (const user of subscribedUsers) {
+        await sendDailyMessage(user, todaysContent);
         await new Promise(resolve => setTimeout(resolve, 1000)); 
     }
 }
@@ -90,7 +97,7 @@ async function runDailyMessageJob() {
 /* ---------------- Scheduler Logic ---------------- */
 console.log("Scheduler started.");
 
-// ✅ NEW: Run the job once immediately on startup
+// Run the job once immediately on startup for today's message
 runDailyMessageJob();
 
 console.log("Waiting for the next scheduled time...");
