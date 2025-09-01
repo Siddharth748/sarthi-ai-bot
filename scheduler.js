@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Sends Approved Template to ALL Users, with one-time immediate trigger)
+// scheduler.js - FINAL Version (Uses Approved Meta Template)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,7 +27,7 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        // ✅ YOUR APPROVED TEMPLATE SID IS NOW USED HERE
+        // ✅ YOUR APPROVED TEMPLATE SID
         const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90";
 
         // This text will be inserted into the {{2}} variable of your template
@@ -58,10 +58,8 @@ function loadDailyContent() {
     return parse(fileContent, { columns: true, skip_empty_lines: true });
 }
 
-// ✅ CORRECTED: This function now gets ALL users from the database.
 async function getAllUsers() {
     try {
-        // Fetches all users who have ever interacted with the bot.
         const res = await dbPool.query('SELECT * FROM users');
         return res.rows;
     } catch (err) {
@@ -89,19 +87,14 @@ async function runDailyMessageJob() {
     
     for (const user of allUsers) {
         await sendDailyMessage(user, todaysContent);
-        await new Promise(resolve => setTimeout(resolve, 1000)); // 1-second pause between messages
+        await new Promise(resolve => setTimeout(resolve, 1000)); 
     }
 }
 
 /* ---------------- Scheduler Logic ---------------- */
-console.log("Scheduler started.");
+console.log("Scheduler started. Waiting for the scheduled time...");
 
-// Run the job once immediately on startup for today's message
-runDailyMessageJob();
-
-console.log("Waiting for the next scheduled time...");
-
-// Schedule to run at 7:00 AM IST (1:30 AM UTC).
+// Schedule to run at 7:00 AM IST.
 cron.schedule('30 1 * * *', runDailyMessageJob, {
     scheduled: true,
     timezone: "UTC"
