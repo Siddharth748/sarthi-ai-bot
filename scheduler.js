@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version using Approved Meta Template
+// scheduler.js - FINAL Version (Sends Approved Template to ALL Users)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,20 +27,16 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        // ✅ USING YOUR APPROVED TEMPLATE SID
-        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90";
+        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90"; // Your approved Template SID
 
-        const botNumber = TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '');
-        const chatLink = `https://api.whatsapp.com/send/?phone=${botNumber}&text=Hi&type=phone_number&app_absent=0`;
-
-        const verseAndPractice = `${content.sanskrit_verse}\n${content.hinglish_verse}\n\n*Morning Practice:*\n${content.practice_text}\n\n---\n*Share this blessing! To get your own daily guidance from SarathiAI, click here:*\n${chatLink}`;
+        const verseAndPractice = `${content.sanskrit_verse}\n\n*Morning Practice:*\n${content.practice_text}`;
 
         await twilioClient.messages.create({
             contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
             to: user.phone_number,
             contentVariables: JSON.stringify({
-                '1': user.profile_name || "friend", // Uses a friendly fallback if name is unknown
+                '1': user.profile_name || "friend",
                 '2': verseAndPractice
             })
         });
@@ -60,13 +56,13 @@ function loadDailyContent() {
     return parse(fileContent, { columns: true, skip_empty_lines: true });
 }
 
-async function getSubscribedUsers() {
+// ✅ CORRECTED: This function now gets ALL users from the database.
+async function getAllUsers() {
     try {
-        // Fetching the whole user object to potentially use the name later
-        const res = await dbPool.query('SELECT * FROM users WHERE subscribed_daily = TRUE');
+        const res = await dbPool.query('SELECT * FROM users');
         return res.rows;
     } catch (err) {
-        console.error("❌ Error fetching subscribers from DB:", err);
+        console.error("❌ Error fetching users from DB:", err);
         return [];
     }
 }
@@ -75,10 +71,10 @@ async function getSubscribedUsers() {
 async function runDailyMessageJob() {
     console.log('⏰ Firing daily morning message job...');
     const content = loadDailyContent();
-    const subscribedUsers = await getSubscribedUsers();
+    const allUsers = await getAllUsers();
     
-    if (content.length === 0 || subscribedUsers.length === 0) {
-        console.log("No content or no subscribers. Skipping job.");
+    if (content.length === 0 || allUsers.length === 0) {
+        console.log("No content or no users in the database. Skipping job.");
         return;
     }
     
@@ -86,9 +82,9 @@ async function runDailyMessageJob() {
     const dayIndex = dayOfYear % content.length;
     const todaysContent = content[dayIndex];
     
-    console.log(`Sending content for day ${todaysContent.day_id} to ${subscribedUsers.length} subscriber(s).`);
+    console.log(`Sending content for day ${todaysContent.day_id} to ${allUsers.length} user(s).`);
     
-    for (const user of subscribedUsers) {
+    for (const user of allUsers) {
         await sendDailyMessage(user, todaysContent);
         await new Promise(resolve => setTimeout(resolve, 1000)); 
     }
