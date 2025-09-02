@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Sends Approved Template to ALL Users with immediate trigger)
+// scheduler.js - FINAL Version (Correct Two-Message Template Usage)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,25 +27,41 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90"; // Your approved Template SID
-
-        // This text will be inserted into the {{2}} variable of your template
-        const guidanceText = `${content.sanskrit_verse}\n\n*Morning Practice:*\n${content.practice_text}`;
+        // --- Step 1: Send the approved template to open the conversation window ---
+        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90"; // Your approved SID
+        const templateBody = `Hare Krishna, ${user.profile_name || "friend"}. 🙏\n\nYour SarathiAI guidance for today is here:\n\n${content.practice_text}\n\nTo reflect on this teaching, reply to this message.`;
 
         await twilioClient.messages.create({
             contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
             to: user.phone_number,
             contentVariables: JSON.stringify({
-                '1': user.profile_name || "friend", // Variable {{1}}
-                '2': guidanceText                  // Variable {{2}}
+                '1': user.profile_name || "friend",
+                '2': content.practice_text // Filling the second variable as required by the template
             })
         });
-        console.log(`✅ Daily message template sent to ${user.phone_number}`);
+        console.log(`✅ Daily template message sent to ${user.phone_number}`);
+
+        // --- Step 2: Send the rich content message (image, verse, footer) ---
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2-second pause for better flow
+
+        const botNumber = TWILIO_WHATSAPP_NUMBER.replace('whatsapp:+', '');
+        const chatLink = `https://wa.me/${botNumber}?text=Hi`;
+        const messageBody = `${content.sanskrit_verse}\n${content.hinglish_verse}\n\n---\n*Share this blessing! New users can start here:*\n${chatLink}`;
+        
+        await twilioClient.messages.create({
+            from: TWILIO_WHATSAPP_NUMBER,
+            to: user.phone_number,
+            body: messageBody,
+            mediaUrl: [content.image_url]
+        });
+        console.log(`✅ Daily content (image/verse) sent to ${user.phone_number}`);
+
     } catch (err) {
-        console.error(`❌ Error sending daily message template to ${user.phone_number}:`, err.message);
+        console.error(`❌ Error sending daily message to ${user.phone_number}:`, err.message);
     }
 }
+
 
 function loadDailyContent() {
     const csvPath = path.join(process.cwd(), "data", "daily_content.csv");
@@ -86,17 +102,12 @@ async function runDailyMessageJob() {
     
     for (const user of allUsers) {
         await sendDailyMessage(user, todaysContent);
-        await new Promise(resolve => setTimeout(resolve, 1000)); 
+        await new Promise(resolve => setTimeout(resolve, 2000)); 
     }
 }
 
 /* ---------------- Scheduler Logic ---------------- */
-console.log("Scheduler started.");
-
-// ✅ NEW: Run the job once immediately on startup for today's message
-runDailyMessageJob();
-
-console.log("Waiting for the next scheduled time...");
+console.log("Scheduler started. Waiting for the scheduled time...");
 
 // Schedule to run at 7:00 AM IST (1:30 AM UTC).
 cron.schedule('30 1 * * *', runDailyMessageJob, {
