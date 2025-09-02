@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Uses Approved Meta Template)
+// scheduler.js - FINAL Version (Sends Approved Template to ALL Users with immediate trigger)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,8 +27,7 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        // ✅ YOUR APPROVED TEMPLATE SID
-        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90";
+        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90"; // Your approved Template SID
 
         // This text will be inserted into the {{2}} variable of your template
         const guidanceText = `${content.sanskrit_verse}\n\n*Morning Practice:*\n${content.practice_text}`;
@@ -92,9 +91,14 @@ async function runDailyMessageJob() {
 }
 
 /* ---------------- Scheduler Logic ---------------- */
-console.log("Scheduler started. Waiting for the scheduled time...");
+console.log("Scheduler started.");
 
-// Schedule to run at 7:00 AM IST.
+// ✅ NEW: Run the job once immediately on startup for today's message
+runDailyMessageJob();
+
+console.log("Waiting for the next scheduled time...");
+
+// Schedule to run at 7:00 AM IST (1:30 AM UTC).
 cron.schedule('30 1 * * *', runDailyMessageJob, {
     scheduled: true,
     timezone: "UTC"
