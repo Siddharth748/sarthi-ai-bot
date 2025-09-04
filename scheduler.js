@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Correct Multi-Variable Template Usage)
+// scheduler.js - FINAL Version (Using Approved Media Template)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,7 +27,7 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        // Your approved Template SID for the multi-part message
+        // ✅ YOUR NEW, APPROVED MEDIA TEMPLATE SID
         const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1";
 
         await twilioClient.messages.create({
@@ -36,7 +36,7 @@ async function sendDailyMessage(user, content) {
             to: user.phone_number,
             // The MediaUrl is for the Header image in your template
             mediaUrl: [content.image_url],
-            // ✅ FIX: Correctly mapping all four variables
+            // The ContentVariables map to the {{placeholders}} in your template body
             contentVariables: JSON.stringify({
                 '1': user.profile_name || "friend",
                 '2': content.practice_text,
@@ -62,6 +62,7 @@ function loadDailyContent() {
 
 async function getAllUsers() {
     try {
+        // Fetches all users who have ever interacted with the bot.
         const res = await dbPool.query('SELECT * FROM users');
         return res.rows;
     } catch (err) {
