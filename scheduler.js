@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (Correct Media Template Formatting)
+// scheduler.js - FINAL Version (Correct Multi-Variable Template Usage)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,11 +27,16 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        // ✅ CORRECTED API CALL using Twilio's Content API for templates
+        // Your approved Template SID for the multi-part message
+        const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1";
+
         await twilioClient.messages.create({
+            contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
             to: user.phone_number,
-            contentSid: 'HXbfe20bd3ac3756dbd9e36988c21a7d90', // Your approved Template SID
+            // The MediaUrl is for the Header image in your template
+            mediaUrl: [content.image_url],
+            // ✅ FIX: Correctly mapping all four variables
             contentVariables: JSON.stringify({
                 '1': user.profile_name || "friend",
                 '2': content.practice_text,
