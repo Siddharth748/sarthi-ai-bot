@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (with one-time immediate trigger)
+// scheduler.js - FINAL Version (Correct Media Template Formatting)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -27,17 +27,16 @@ async function sendDailyMessage(user, content) {
         return;
     }
     try {
-        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90"; // Your approved Template SID
-
-        const verseAndPractice = `${content.sanskrit_verse}\n\n*Morning Practice:*\n${content.practice_text}`;
-
+        // ✅ CORRECTED API CALL using Twilio's Content API for templates
         await twilioClient.messages.create({
-            contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
             to: user.phone_number,
+            contentSid: 'HXbfe20bd3ac3756dbd9e36988c21a7d90', // Your approved Template SID
             contentVariables: JSON.stringify({
                 '1': user.profile_name || "friend",
-                '2': verseAndPractice
+                '2': content.practice_text,
+                '3': content.sanskrit_verse,
+                '4': content.hinglish_verse
             })
         });
         console.log(`✅ Daily message template sent to ${user.phone_number}`);
@@ -85,14 +84,15 @@ async function runDailyMessageJob() {
     
     for (const user of allUsers) {
         await sendDailyMessage(user, todaysContent);
-        await new Promise(resolve => setTimeout(resolve, 1000)); 
+        await new Promise(resolve => setTimeout(resolve, 1500)); 
     }
+    console.log('✅ Daily message job complete.');
 }
 
 /* ---------------- Scheduler Logic ---------------- */
 console.log("Scheduler started.");
 
-// ✅ NEW: Run the job once immediately on startup
+// Run the job once immediately on startup for today's message
 runDailyMessageJob();
 
 console.log("Waiting for the next scheduled time...");
