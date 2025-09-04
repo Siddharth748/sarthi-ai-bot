@@ -1,4 +1,4 @@
-// scheduler.js - FINAL DIAGNOSTIC TEST (Extremely Short Content)
+// scheduler.js - FINAL DIAGNOSTIC TEST (Text-Only Template)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -18,14 +18,13 @@ const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthori
 
 /* ---------------- Main Job Logic ---------------- */
 async function runTestMessageJob() {
-    console.log('⏰ Firing a single, very short test message...');
+    console.log('⏰ Firing a single, text-only test message...');
 
     const testUser = {
         phone_number: "whatsapp:+918427792857", // Your personal WhatsApp number
         profile_name: "Siddharth"
     };
 
-    // Hardcoded, extremely short content
     const testContent = {
         sanskrit_verse: "कर्मण्येवाधिकारस्ते।",
         hinglish_verse: "Focus on your actions.",
@@ -39,7 +38,7 @@ async function runTestMessageJob() {
             contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
             to: testUser.phone_number,
-            mediaUrl: ["https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_fswgn0fswgn0fswg.png"],
+            // ✅ CHANGE: The mediaUrl line has been removed for this test.
             contentVariables: JSON.stringify({
                 '1': testUser.profile_name,
                 '2': testContent.practice_text,
