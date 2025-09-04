@@ -1,4 +1,4 @@
-// scheduler.js - Send WhatsApp Message with Fixed Header Media Template
+// scheduler.js - Minimal Test for Twilio WhatsApp Template
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -14,40 +14,27 @@ const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* ---------------- Main Job Logic ---------------- */
 async function runTestMessageJob() {
-  console.log("⏰ Sending single test message...");
-
-  const testUser = {
-    phone_number: "whatsapp:+918427792857", // your number
-    profile_name: "Siddharth",
-  };
-
-  const testContent = {
-    sanskrit_verse: "कर्मण्येवाधिकारस्ते।",
-    hinglish_verse: "Focus on your actions.",
-    practice_text: "Breathe deeply for one minute.",
-  };
+  console.log("⏰ Sending test message with exactly 4 variables...");
 
   try {
-    const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1";
-
     await twilioClient.messages.create({
       from: TWILIO_WHATSAPP_NUMBER,
-      to: testUser.phone_number,
-      contentSid: templateSid,
+      to: "whatsapp:+918427792857", // your number
+      contentSid: "HXd9a2d4dcd3b22cf925233c45b2b595c1",
       contentVariables: JSON.stringify({
-        "1": testUser.profile_name,
-        "2": testContent.practice_text,
-        "3": testContent.sanskrit_verse,
-        "4": testContent.hinglish_verse,
+        "1": "Siddharth", 
+        "2": "Morning practice: Take 3 deep breaths.",
+        "3": "You are stronger than you think.",
+        "4": "Keep faith, act with focus."
       }),
     });
 
-    console.log(`✅ Test message sent to ${testUser.phone_number}`);
+    console.log("✅ Test message sent successfully!");
   } catch (err) {
-    console.error(`❌ Error sending test message:`, err.message);
+    console.error("❌ Error sending test message:", err.message);
   }
 }
 
 /* ---------------- Run ---------------- */
-console.log("Scheduler started for a one-time test.");
+console.log("Scheduler started for one-time test.");
 runTestMessageJob();
