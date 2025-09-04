@@ -1,4 +1,4 @@
-// scheduler.js - FINAL Version (7 AM IST Schedule Only)
+// scheduler.js - FINAL Version (with one-time immediate trigger)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -90,7 +90,12 @@ async function runDailyMessageJob() {
 }
 
 /* ---------------- Scheduler Logic ---------------- */
-console.log("Scheduler started. Waiting for the scheduled time...");
+console.log("Scheduler started.");
+
+// ✅ NEW: Run the job once immediately on startup
+runDailyMessageJob();
+
+console.log("Waiting for the next scheduled time...");
 
 // Schedule to run at 7:00 AM IST (1:30 AM UTC).
 cron.schedule('30 1 * * *', runDailyMessageJob, {
