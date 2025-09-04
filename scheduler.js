@@ -1,4 +1,4 @@
-// scheduler.js - QUICK TEST Version (Sends a single, shortened message)
+// scheduler.js - FINAL DIAGNOSTIC TEST (Extremely Short Content)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -18,23 +18,22 @@ const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthori
 
 /* ---------------- Main Job Logic ---------------- */
 async function runTestMessageJob() {
-    console.log('⏰ Firing a single test message...');
+    console.log('⏰ Firing a single, very short test message...');
 
-    // A hardcoded user (your phone number)
     const testUser = {
         phone_number: "whatsapp:+918427792857", // Your personal WhatsApp number
         profile_name: "Siddharth"
     };
 
-    // Hardcoded, shortened content that is guaranteed to be compliant
+    // Hardcoded, extremely short content
     const testContent = {
-        sanskrit_verse: "कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।",
-        hinglish_verse: "Karmanye vadhikaraste, ma phaleshu kadachana.",
-        practice_text: "Focus on one task for 15 minutes without distraction."
+        sanskrit_verse: "कर्मण्येवाधिकारस्ते।",
+        hinglish_verse: "Focus on your actions.",
+        practice_text: "Breathe deeply for one minute."
     };
 
     try {
-        const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1"; // Your approved Template SID
+        const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1";
 
         await twilioClient.messages.create({
             contentSid: templateSid,
@@ -56,6 +55,4 @@ async function runTestMessageJob() {
 
 /* ---------------- Scheduler Logic ---------------- */
 console.log("Scheduler started for a one-time test.");
-
-// Run the job once immediately on startup
 runTestMessageJob();
