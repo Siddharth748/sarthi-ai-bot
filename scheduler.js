@@ -1,12 +1,8 @@
-// scheduler.js - FINAL Version (Using Approved Media Template)
+// scheduler.js - QUICK TEST Version (Sends a single, shortened message)
 import dotenv from "dotenv";
 dotenv.config();
 
-import fs from "fs";
-import path from "path";
 import twilio from "twilio";
-import { parse } from "csv-parse/sync";
-import cron from "node-cron";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -20,91 +16,46 @@ const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-/* ---------------- Helpers ---------------- */
-async function sendDailyMessage(user, content) {
-    if (!TWILIO_WHATSAPP_NUMBER) {
-        console.warn(`(Simulated Daily Message -> ${user.phone_number})`);
-        return;
-    }
+/* ---------------- Main Job Logic ---------------- */
+async function runTestMessageJob() {
+    console.log('⏰ Firing a single test message...');
+
+    // A hardcoded user (your phone number)
+    const testUser = {
+        phone_number: "whatsapp:+918427792857", // Your personal WhatsApp number
+        profile_name: "Siddharth"
+    };
+
+    // Hardcoded, shortened content that is guaranteed to be compliant
+    const testContent = {
+        sanskrit_verse: "कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।",
+        hinglish_verse: "Karmanye vadhikaraste, ma phaleshu kadachana.",
+        practice_text: "Focus on one task for 15 minutes without distraction."
+    };
+
     try {
-        // ✅ YOUR NEW, APPROVED MEDIA TEMPLATE SID
-        const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1";
+        const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1"; // Your approved Template SID
 
         await twilioClient.messages.create({
             contentSid: templateSid,
             from: TWILIO_WHATSAPP_NUMBER,
-            to: user.phone_number,
-            // The MediaUrl is for the Header image in your template
-            mediaUrl: [content.image_url],
-            // The ContentVariables map to the {{placeholders}} in your template body
+            to: testUser.phone_number,
+            mediaUrl: ["https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/images/Gemini_Generated_Image_fswgn0fswgn0fswg.png"],
             contentVariables: JSON.stringify({
-                '1': user.profile_name || "friend",
-                '2': content.practice_text,
-                '3': content.sanskrit_verse,
-                '4': content.hinglish_verse
+                '1': testUser.profile_name,
+                '2': testContent.practice_text,
+                '3': testContent.sanskrit_verse,
+                '4': testContent.hinglish_verse
             })
         });
-        console.log(`✅ Daily message template sent to ${user.phone_number}`);
+        console.log(`✅ Test message template sent to ${testUser.phone_number}`);
     } catch (err) {
-        console.error(`❌ Error sending daily message template to ${user.phone_number}:`, err.message);
+        console.error(`❌ Error sending test message template to ${testUser.phone_number}:`, err.message);
     }
-}
-
-function loadDailyContent() {
-    const csvPath = path.join(process.cwd(), "data", "daily_content.csv");
-    if (!fs.existsSync(csvPath)) {
-        console.error("❌ daily_content.csv not found in /data folder.");
-        return [];
-    }
-    const fileContent = fs.readFileSync(csvPath);
-    return parse(fileContent, { columns: true, skip_empty_lines: true });
-}
-
-async function getAllUsers() {
-    try {
-        // Fetches all users who have ever interacted with the bot.
-        const res = await dbPool.query('SELECT * FROM users');
-        return res.rows;
-    } catch (err) {
-        console.error("❌ Error fetching users from DB:", err);
-        return [];
-    }
-}
-
-/* ---------------- Main Job Logic ---------------- */
-async function runDailyMessageJob() {
-    console.log('⏰ Firing daily morning message job...');
-    const content = loadDailyContent();
-    const allUsers = await getAllUsers();
-    
-    if (content.length === 0 || allUsers.length === 0) {
-        console.log("No content or no users in the database. Skipping job.");
-        return;
-    }
-    
-    const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / (1000 * 60 * 60 * 24));
-    const dayIndex = dayOfYear % content.length;
-    const todaysContent = content[dayIndex];
-    
-    console.log(`Sending content for day ${todaysContent.day_id} to ${allUsers.length} user(s).`);
-    
-    for (const user of allUsers) {
-        await sendDailyMessage(user, todaysContent);
-        await new Promise(resolve => setTimeout(resolve, 1500)); 
-    }
-    console.log('✅ Daily message job complete.');
 }
 
 /* ---------------- Scheduler Logic ---------------- */
-console.log("Scheduler started.");
+console.log("Scheduler started for a one-time test.");
 
-// Run the job once immediately on startup for today's message
-runDailyMessageJob();
-
-console.log("Waiting for the next scheduled time...");
-
-// Schedule to run at 7:00 AM IST (1:30 AM UTC).
-cron.schedule('30 1 * * *', runDailyMessageJob, {
-    scheduled: true,
-    timezone: "UTC"
-});
+// Run the job once immediately on startup
+runTestMessageJob();
