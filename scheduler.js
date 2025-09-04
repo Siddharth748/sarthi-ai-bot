@@ -1,4 +1,4 @@
-// scheduler.js - Test WhatsApp Message with Fixed Header Image
+// scheduler.js - Send WhatsApp Message with Fixed Header Media Template
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -14,7 +14,7 @@ const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* ---------------- Main Job Logic ---------------- */
 async function runTestMessageJob() {
-  console.log("⏰ Firing a single test message with fixed media header...");
+  console.log("⏰ Sending single test message...");
 
   const testUser = {
     phone_number: "whatsapp:+918427792857", // your number
@@ -31,23 +31,20 @@ async function runTestMessageJob() {
     const templateSid = "HXd9a2d4dcd3b22cf925233c45b2b595c1";
 
     await twilioClient.messages.create({
-      contentSid: templateSid,
       from: TWILIO_WHATSAPP_NUMBER,
       to: testUser.phone_number,
+      contentSid: templateSid,
       contentVariables: JSON.stringify({
-        "1": testUser.profile_name,      // maps to {{1}} in body
-        "2": testContent.practice_text,  // maps to {{2}}
-        "3": testContent.sanskrit_verse, // maps to {{3}}
-        "4": testContent.hinglish_verse  // maps to {{4}}
+        "1": testUser.profile_name,
+        "2": testContent.practice_text,
+        "3": testContent.sanskrit_verse,
+        "4": testContent.hinglish_verse,
       }),
     });
 
     console.log(`✅ Test message sent to ${testUser.phone_number}`);
   } catch (err) {
-    console.error(
-      `❌ Error sending test message to ${testUser.phone_number}:`,
-      err.message
-    );
+    console.error(`❌ Error sending test message:`, err.message);
   }
 }
 
