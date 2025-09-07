@@ -1,4 +1,4 @@
-// scheduler.js - Test Mode with Full Error Logging
+// scheduler.js - FINAL Version (Using Approved Text-Only Template)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -7,45 +7,44 @@ import path from "path";
 import twilio from "twilio";
 import { parse } from "csv-parse/sync";
 import cron from "node-cron";
+import pg from "pg";
+
+const { Pool } = pg;
 
 /* ---------------- Config ---------------- */
 const TWILIO_ACCOUNT_SID = (process.env.TWILIO_ACCOUNT_SID || "").trim();
 const TWILIO_AUTH_TOKEN = (process.env.TWILIO_AUTH_TOKEN || "").trim();
 const TWILIO_WHATSAPP_NUMBER = (process.env.TWILIO_WHATSAPP_NUMBER || "").trim();
+const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 
 const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
 /* ---------------- Helpers ---------------- */
-async function sendDailyMessageToMe(content) {
+async function sendDailyMessage(user, content) {
+    if (!TWILIO_WHATSAPP_NUMBER) {
+        console.warn(`(Simulated Daily Message -> ${user.phone_number})`);
+        return;
+    }
     try {
-        // ✅ Approved template SID
-        const templateSid = "HXef3147b89c85a30fe235c861270aba2b";
+        // ✅ YOUR APPROVED TEMPLATE SID
+        const templateSid = "HXbfe20bd3ac3756dbd9e36988c21a7d90";
 
-        // ✅ Your test number
-        const myNumber = "whatsapp:+918427792857";
+        // ✅ Content for variable {{2}}
+        const guidanceText = `Morning Practice: ${content.practice_text}`;
 
-        // ✅ Variable {{1}} content
-        const reflectionText = content.practice_text || "Today’s reflection goes here.";
-
-        console.log("📩 Preparing to send reflection:", reflectionText);
-
-        const message = await twilioClient.messages.create({
-            from: TWILIO_WHATSAPP_NUMBER,
-            to: myNumber,
+        await twilioClient.messages.create({
             contentSid: templateSid,
+            from: TWILIO_WHATSAPP_NUMBER,
+            to: user.phone_number,
             contentVariables: JSON.stringify({
-                "1": reflectionText
+                '1': user.profile_name || "friend", // For {{1}}
+                '2': guidanceText                  // For {{2}}
             })
         });
-
-        console.log("✅ Test message sent:", message.sid);
+        console.log(`✅ Daily message template sent to ${user.phone_number}`);
     } catch (err) {
-        console.error("❌ Error sending test message:");
-        console.error("Status:", err.status);
-        console.error("Code:", err.code);
-        console.error("Message:", err.message);
-        console.error("More Info:", err.moreInfo);
-        console.error("Details:", JSON.stringify(err, null, 2));
+        console.error(`❌ Error sending daily message template to ${user.phone_number}:`, err.message);
     }
 }
 
@@ -59,33 +58,44 @@ function loadDailyContent() {
     return parse(fileContent, { columns: true, skip_empty_lines: true });
 }
 
+async function getAllUsers() {
+    try {
+        const res = await dbPool.query('SELECT * FROM users');
+        return res.rows;
+    } catch (err) {
+        console.error("❌ Error fetching users from DB:", err);
+        return [];
+    }
+}
+
 /* ---------------- Main Job Logic ---------------- */
 async function runDailyMessageJob() {
-    console.log("⏰ Firing daily morning message job (Test Mode)...");
-
+    console.log('⏰ Firing daily morning message job...');
     const content = loadDailyContent();
-    if (content.length === 0) {
-        console.log("No content in CSV. Skipping job.");
+    const allUsers = await getAllUsers();
+    
+    if (content.length === 0 || allUsers.length === 0) {
+        console.log("No content or no users in the database. Skipping job.");
         return;
     }
-
-    // Pick today’s reflection
+    
     const dayOfYear = Math.floor((new Date() - new Date(new Date().getFullYear(), 0, 0)) / (1000 * 60 * 60 * 24));
     const dayIndex = dayOfYear % content.length;
     const todaysContent = content[dayIndex];
-
-    console.log(`👉 Sending content for day ${todaysContent.day_id} to ONLY my number (test mode).`);
-    await sendDailyMessageToMe(todaysContent);
+    
+    console.log(`Sending content for day ${todaysContent.day_id} to ${allUsers.length} user(s).`);
+    
+    for (const user of allUsers) {
+        await sendDailyMessage(user, todaysContent);
+        await new Promise(resolve => setTimeout(resolve, 1000)); 
+    }
 }
 
 /* ---------------- Scheduler Logic ---------------- */
 console.log("Scheduler started. Waiting for the scheduled time...");
 
-// Schedule to run at 7:00 AM IST (1:30 AM UTC)
-cron.schedule("30 1 * * *", runDailyMessageJob, {
+// Schedule to run at 7:00 AM IST (1:30 AM UTC).
+cron.schedule('30 1 * * *', runDailyMessageJob, {
     scheduled: true,
     timezone: "UTC"
 });
-
-// Run immediately for quick testing
-runDailyMessageJob();
