@@ -1,5 +1,4 @@
 // index.js — SarathiAI (Heltar Integration)
-// This file is a complete rewrite to handle Heltar's webhook payload and API calls.
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -95,13 +94,8 @@ async function sendViaHeltar(phone, message) {
             return;
         }
 
-        // CORRECTED Heltar API endpoint
-        // You MUST replace this URL with the correct one from Heltar's API documentation.
-        // It likely includes your phone number ID or a specific path for messages.
-        const HELTAR_API_URL = "https://api.heltar.com/v1/messages"; 
-
         const resp = await axios.post(
-            HELTAR_API_URL,
+            `https://api.heltar.com/v1/phone_numbers/${HELTAR_PHONE_ID}/messages`,
             { 
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
