@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Heltar Integration & Full Logic)
+// index.js — SarathiAI (Heltar Integration + Restored State Machine + Debug Logging)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -6,8 +6,8 @@ import express from "express";
 import axios from "axios";
 import fs from "fs";
 import pg from "pg";
-const { Pool } = pg;
 
+const { Pool } = pg;
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -29,11 +29,10 @@ const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 /* Heltar Config */
 const HELTAR_API_KEY = process.env.HELTAR_API_KEY;
 const HELTAR_PHONE_ID = process.env.HELTAR_PHONE_ID;
-const HELTAR_WEBHOOK_URL = process.env.HELTAR_WEBHOOK_URL;
 
-/* ---------------- Database Setup ---------------- */
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
+/* ---------------- Database Setup ---------------- */
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
@@ -49,14 +48,16 @@ async function setupDatabase() {
         messages_since_verse INT DEFAULT 0
       );
     `);
+    await client.query(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_since_verse INT DEFAULT 0;`
+    );
     client.release();
     console.log("✅ Database table 'users' is ready.");
   } catch (err) {
-    console.error("❌ Error setting up database:", err);
+    console.error("❌ Error setting up database table:", err);
   }
 }
 
-/* ---------------- Database User State Helpers ---------------- */
 async function getUserState(phone) {
   try {
     let result = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
@@ -80,7 +81,8 @@ async function updateUserState(phone, updates) {
     let valueCount = 1;
     for (const key in updates) {
       setClauses.push(`${key} = $${valueCount++}`);
-      const value = typeof updates[key] === "object" ? JSON.stringify(updates[key]) : updates[key];
+      const value =
+        typeof updates[key] === "object" ? JSON.stringify(updates[key]) : updates[key];
       values.push(value);
     }
     if (setClauses.length === 0) return;
@@ -92,7 +94,7 @@ async function updateUserState(phone, updates) {
   }
 }
 
-/* ---------------- Heltar send ---------------- */
+/* ---------------- Heltar Send ---------------- */
 async function sendViaHeltar(phone, message) {
   try {
     if (!HELTAR_API_KEY) {
@@ -119,21 +121,28 @@ async function sendViaHeltar(phone, message) {
       }
     );
 
-    console.log(`✅ Heltar message sent to ${phone}`);
+    console.log(`✅ Heltar message sent to ${phone}: ${message}`);
     return resp.data;
   } catch (err) {
     console.error("❌ Heltar send error:", err.response?.data || err.message);
     fs.appendFileSync(
       "heltar-error.log",
-      `${new Date().toISOString()} | ${phone} | Send Failed | ${JSON.stringify(err.response?.data || err.message)}\n`
+      `${new Date().toISOString()} | ${phone} | Send Failed | ${JSON.stringify(
+        err.response?.data || err.message
+      )}\n`
     );
   }
 }
 
-/* ---------------- OpenAI Helpers ---------------- */
+/* ---------------- OpenAI + Pinecone Helpers ---------------- */
 async function openaiChat(messages, maxTokens = 400) {
   if (!OPENAI_KEY) return null;
-  const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7 };
+  const body = {
+    model: OPENAI_MODEL,
+    messages,
+    max_tokens: maxTokens,
+    temperature: 0.7,
+  };
   const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
     headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
     timeout: 25000,
@@ -141,23 +150,14 @@ async function openaiChat(messages, maxTokens = 400) {
   return resp.data?.choices?.[0]?.message?.content;
 }
 
-async function detectLanguage(text) {
-  const prompt = `Is the following text primarily in English or Hinglish? Respond with only one word: "English" or "Hinglish".\n\nText: "${text}"`;
-  try {
-    const response = await openaiChat([{ role: "user", content: prompt }], 5);
-    return response?.toLowerCase().includes("hinglish") ? "Hinglish" : "English";
-  } catch {
-    console.warn("⚠️ Language detection failed, defaulting to English.");
-    return "English";
-  }
-}
-
-/* ---------------- Pinecone ---------------- */
 async function getEmbedding(text) {
   const resp = await axios.post(
     "https://api.openai.com/v1/embeddings",
     { model: EMBED_MODEL, input: text },
-    { headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 30000 }
+    {
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+      timeout: 30000,
+    }
   );
   return resp.data.data[0].embedding;
 }
@@ -175,91 +175,168 @@ async function pineconeQuery(vector, topK = 5, namespace, filter) {
 }
 
 function getNamespacesArray() {
-  return PINECONE_NAMESPACES
-    ? PINECONE_NAMESPACES.split(",").map((s) => s.trim()).filter(Boolean)
-    : [PINECONE_NAMESPACE || "verse"];
+  if (PINECONE_NAMESPACES) {
+    return PINECONE_NAMESPACES.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [PINECONE_NAMESPACE || "verse"];
 }
 
 async function multiNamespaceQuery(vector, topK = 8, filter) {
   const ns = getNamespacesArray();
-  const arr = await Promise.all(
-    ns.map(async (n) => {
-      try {
-        const r = await pineconeQuery(vector, topK, n, filter);
-        return (r?.matches || []).map((m) => ({ ...m, _namespace: n }));
-      } catch (e) {
-        console.warn("⚠ Pinecone query failed:", e?.message || e);
-        return [];
-      }
-    })
-  );
+  const promises = ns.map(async (n) => {
+    try {
+      const r = await pineconeQuery(vector, topK, n, filter);
+      return (r?.matches || []).map((m) => ({ ...m, _namespace: n }));
+    } catch (e) {
+      console.warn("⚠ Pinecone query failed for namespace", n, e?.message || e);
+      return [];
+    }
+  });
+  const arr = await Promise.all(promises);
   const allMatches = arr.flat();
   allMatches.sort((a, b) => (b.score || 0) - (a.score || 0));
   return allMatches;
 }
 
-/* ---------------- Small Talk Helpers ---------------- */
+/* ---------------- Text Classification ---------------- */
 function normalizeTextForSmallTalk(s) {
-  return String(s || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\bu\b/g, "you")
-    .replace(/\br\b/g, "are");
+  if (!s) return "";
+  let t = String(s).trim().toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(/\bu\b/g, "you");
+  t = t.replace(/\br\b/g, "are");
+  return t;
 }
+
 function isGreeting(text) {
+  if (!text) return false;
   const t = normalizeTextForSmallTalk(text);
-  return ["hi", "hii", "hello", "hey", "namaste", "hare krishna", "harekrishna"].includes(t);
+  const greetings = new Set(["hi", "hii", "hello", "hey", "namaste", "hare krishna", "harekrishna"]);
+  return greetings.has(t);
 }
-const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "anger", "sleep", "panic", "sad", "lonely"];
+
+const CONCERN_KEYWORDS = [
+  "stress",
+  "anxiety",
+  "depressed",
+  "depression",
+  "angry",
+  "anger",
+  "sleep",
+  "insomnia",
+  "panic",
+  "suicidal",
+  "sad",
+  "lonely",
+  "frustrated",
+  "hurt",
+  "confused",
+];
+
 function isSmallTalk(text) {
+  if (!text) return false;
   const t = normalizeTextForSmallTalk(text);
-  return !CONCERN_KEYWORDS.some((k) => t.includes(k)) &&
-    ["how are you", "thanks", "ok", "bye", "good", "nice", "cool"].includes(t);
+  for (const keyword of CONCERN_KEYWORDS) {
+    if (t.includes(keyword)) return false;
+  }
+  const smalls = new Set([
+    "how are you",
+    "how are you doing",
+    "how do you do",
+    "how r you",
+    "how ru",
+    "how are u",
+    "thanks",
+    "thank you",
+    "thx",
+    "ok",
+    "okay",
+    "good",
+    "nice",
+    "cool",
+    "bye",
+    "see you",
+    "k",
+  ]);
+  return smalls.has(t);
 }
 
 /* ---------------- System Prompts ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation... (same as before)`;
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI... (same as before)`;
+const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context.
+- Use "||" to separate each message bubble.
+- Part 1: The Sanskrit verse.
+- Part 2: Hinglish translation.
+- Part 3: "Shri Krishna kehte hain:" + 2-3 sentence essence/explanation.
+- Part 4: A simple follow-up question.
+- Strictly and exclusively reply in {{LANGUAGE}}.`;
+
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically.
+- Use user's chat history for context.
+- DO NOT quote new verses here.
+- Keep replies very short (1-3 sentences).
+- If strong emotional need is expressed, end with [NEW_TOPIC].
+- Strictly and exclusively reply in {{LANGUAGE}}.`;
 
 /* ---------------- Main RAG ---------------- */
+function safeText(md, key) {
+  return (md && md[key] && String(md[key]).trim()) || "";
+}
+
 async function getRAGResponse(phone, text, language, chatHistory) {
   const qVec = await getEmbedding(text);
   const matches = await multiNamespaceQuery(qVec);
   const verseMatch = matches.find((m) => m.metadata?.sanskrit);
+
   if (!verseMatch || verseMatch.score < 0.25) {
-    const fallback = "I hear your concern. Could you share more?";
+    const fallback = "I hear your concern. Could you share more so I can guide you better?";
     await sendViaHeltar(phone, fallback);
     return { assistantResponse: fallback, stage: "chatting", topic: text };
   }
-  const verseSanskrit = verseMatch.metadata?.sanskrit || "";
-  const verseHinglish = verseMatch.metadata?.hinglish1 || "";
-  const ragPromptWithLang = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
-  const modelUser = `User's problem: "${text}"\n\nContext from Gita:\nSanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
-  const aiResponse = await openaiChat([{ role: "system", content: ragPromptWithLang }, { role: "user", content: modelUser }]);
+
+  const verseSanskrit = safeText(verseMatch.metadata, "sanskrit");
+  const verseHinglish = safeText(verseMatch.metadata, "hinglish1");
+  const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
+  const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
+
+  const aiResponse = await openaiChat([
+    { role: "system", content: ragPrompt },
+    { role: "user", content: `User's concern: "${text}"\n\nContext:\n${verseContext}` },
+  ]);
+
   if (aiResponse) {
-    for (const part of aiResponse.split("||")) {
-      if (part.trim()) await sendViaHeltar(phone, part.trim());
+    const messageParts = aiResponse.split("||").map((p) => p.trim());
+    for (const part of messageParts) {
+      if (part) {
+        await sendViaHeltar(phone, part);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
     }
-    return { assistantResponse: aiResponse, stage: "chatting", topic: text };
+    return { assistantResponse: aiResponse.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
   }
+
   return { assistantResponse: "I am here to listen.", stage: "chatting", topic: text };
 }
 
 /* ---------------- Webhook ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
-    res.sendStatus(200);
+    res.status(200).send("OK");
     const body = req.body;
     const msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+
     if (!msg) {
-      console.log("⚠️ Ignoring webhook payload (not a user message).");
+      console.log("⚠️ Ignoring non-message webhook event.");
       return;
     }
-    const phone = msg.from;
-    const text = msg.text?.body;
-    if (!phone || !text) return;
+
+    const phone = msg?.from;
+    const text = msg?.text?.body;
+
+    if (!phone || !text) {
+      console.warn("⚠️ Webhook missing phone/text.");
+      return;
+    }
+
+    console.log(`📩 Incoming from ${phone}: "${text}"`);
 
     const userState = await getUserState(phone);
     await updateUserState(phone, { last_activity_ts: "NOW()" });
@@ -268,27 +345,28 @@ app.post("/webhook", async (req, res) => {
     chatHistory.push({ role: "user", content: text });
     if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
 
-    const incoming = String(text).trim();
-    if (isGreeting(incoming)) {
-      await sendViaHeltar(phone, "Hare Krishna 🙏\nI am Sarathi. How can I help?");
-      await updateUserState(phone, { conversation_stage: "new_topic", chat_history: [] });
+    const incoming = text.trim();
+
+    // 1. Greeting / small talk
+    if (isGreeting(incoming) || isSmallTalk(incoming)) {
+      console.log("💬 Detected greeting/small talk");
+      await sendViaHeltar(
+        phone,
+        `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`
+      );
+      await updateUserState(phone, { conversation_stage: "new_topic", chat_history: "[]" });
       return;
     }
-    const language = await detectLanguage(text);
+
+    // 2. Stage-based flow
     let currentStage = userState.conversation_stage;
 
-    if (isSmallTalk(incoming)) {
-      const reply = "Hare Krishna 🙏 I am here to listen. How can I help you today?";
-      await sendViaHeltar(phone, reply);
-      chatHistory.push({ role: "assistant", content: reply });
-      await updateUserState(phone, { chat_history: chatHistory });
-      return;
-    }
-
     if (currentStage === "chatting") {
-      const chatPrompt = CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
+      console.log("🤝 Stage = chatting");
+      const chatPrompt = CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", "Hinglish");
       const aiChatResponse = await openaiChat([{ role: "system", content: chatPrompt }, ...chatHistory]);
-      if (aiChatResponse?.includes("[NEW_TOPIC]")) {
+
+      if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]")) {
         const clean = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
         if (clean) await sendViaHeltar(phone, clean);
         currentStage = "new_topic";
@@ -301,9 +379,14 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (currentStage === "new_topic") {
-      const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+      console.log("📖 Stage = new_topic → Fetching verse");
+      const ragResult = await getRAGResponse(phone, text, "Hinglish", chatHistory);
       chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-      await updateUserState(phone, { last_topic_summary: ragResult.topic, conversation_stage: "chatting", chat_history: chatHistory });
+      await updateUserState(phone, {
+        last_topic_summary: ragResult.topic,
+        conversation_stage: "chatting",
+        chat_history: chatHistory,
+      });
     }
   } catch (err) {
     console.error("❌ Webhook error:", err.message);
@@ -311,8 +394,8 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-/* ---------------- Start Server ---------------- */
+/* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
-  console.log(`🚀 ${BOT_NAME} is live on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} is live on port ${PORT}`);
   setupDatabase();
 });
