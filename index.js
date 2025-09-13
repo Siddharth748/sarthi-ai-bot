@@ -1,4 +1,6 @@
 // index.js — SarathiAI (Heltar Integration)
+// This file is a complete rewrite to handle Heltar's webhook payload and API calls.
+
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -88,15 +90,29 @@ async function updateUserState(phone, updates) {
 /* ---------------- Heltar send ---------------- */
 async function sendViaHeltar(phone, message) {
     try {
+        if (!HELTAR_API_KEY || !HELTAR_PHONE_ID) {
+            console.warn(`(Simulated -> ${phone}): ${message}`);
+            return;
+        }
+
         const resp = await axios.post(
             "https://api.heltar.com/v1/messages",
-            { to: phone, type: "text", text: message },
-            { headers: { Authorization: `Bearer ${HELTAR_API_KEY}` } }
+            { 
+                messaging_product: "whatsapp",
+                recipient_type: "individual",
+                to: phone,
+                type: "text",
+                text: { body: message }
+            },
+            { headers: { Authorization: `Bearer ${HELTAR_API_KEY}`, "Content-Type": "application/json" } }
         );
+
         console.log(`✅ Heltar message sent to ${phone}`);
+        return resp.data;
     } catch (err) {
         console.error("❌ Heltar send error:", err.response?.data || err.message);
-        fs.appendFileSync('heltar-error.log', `${new Date().toISOString()} | ${phone} | ${message} | ${err.message}\n`);
+        fs.appendFileSync('heltar-error.log', `${new Date().toISOString()} | ${phone} | Send Failed | ${JSON.stringify(err.response?.data || err.message)}\n`);
+        throw err;
     }
 }
 
@@ -149,13 +165,22 @@ async function multiNamespaceQuery(vector, topK = 8, filter) {
 /* ---------------- Webhook ---------------- */
 app.post("/webhook", async (req, res) => {
     try {
-        res.status(200).send(); // 200 immediately
+        res.status(200).send("OK"); // Respond immediately with 200 OK
+
         const body = req.body;
-        const phone = body.from || body.From;
-        const text = body.text?.body || body.Body;
+        console.log("📥 Incoming Heltar Webhook Payload:", JSON.stringify(body, null, 2));
 
-        if (!phone || !text) return;
+        const msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+        const phone = msg?.from;
+        const text = msg?.text?.body;
 
+        if (!phone || !text) {
+            console.warn("⚠️ Webhook payload did not contain a valid phone number or text message. Ignoring.");
+            return;
+        }
+
+        console.log(`✅ Message received from ${phone}: "${text}"`);
+        
         const userState = await getUserState(phone);
         await updateUserState(phone, { last_activity_ts: 'NOW()' });
 
@@ -189,13 +214,13 @@ app.post("/webhook", async (req, res) => {
         await updateUserState(phone, { chat_history: chatHistory, conversation_stage: 'chatting' });
 
     } catch (err) {
-        console.error("❌ Webhook error:", err.message);
-        fs.appendFileSync('heltar-error.log', `${new Date().toISOString()} | ${err.message}\n`);
+        console.error("❌ Webhook processing error:", err.message);
+        fs.appendFileSync('heltar-error.log', `${new Date().toISOString()} | Webhook Error | ${err.message}\n`);
     }
 });
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
     console.log(`\n🚀 ${BOT_NAME} is listening on port ${PORT}`);
-    setupDatabase(); 
+    setupDatabase();
 });
