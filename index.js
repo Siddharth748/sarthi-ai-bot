@@ -96,7 +96,7 @@ async function sendViaHeltar(phone, message) {
         }
 
         const resp = await axios.post(
-            "https://api.heltar.com/v1/messages",
+            `https://api.heltar.com/v1/messages`,
             { 
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
