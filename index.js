@@ -89,19 +89,19 @@ async function updateUserState(phone, updates) {
 /* ---------------- Heltar send ---------------- */
 async function sendViaHeltar(phone, message) {
     try {
-        if (!HELTAR_API_KEY || !HELTAR_PHONE_ID) {
+        if (!HELTAR_API_KEY) {
             console.warn(`(Simulated -> ${phone}): ${message}`);
             return;
         }
 
         const resp = await axios.post(
-            `https://api.heltar.com/v1/phone_numbers/${HELTAR_PHONE_ID}/messages`,
+            `https://api.heltar.com/v1/messages/send`,
             { 
-                messaging_product: "whatsapp",
-                recipient_type: "individual",
-                to: phone,
-                type: "text",
-                text: { body: message }
+                messages: [{
+                    clientWaNumber: phone,
+                    message: message,
+                    messageType: "text"
+                }]
             },
             { 
                 headers: { 
@@ -174,7 +174,18 @@ app.post("/webhook", async (req, res) => {
         const body = req.body;
         console.log("📥 Incoming Heltar Webhook Payload:", JSON.stringify(body, null, 2));
 
-        const msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+        const entry = body?.entry?.[0];
+        const changes = entry?.changes?.[0];
+        const value = changes?.value;
+        const messages = value?.messages;
+
+        // Check if the payload contains a user-sent message
+        if (!messages) {
+            console.log("⚠️ Ignoring webhook payload as it does not contain a new user message.");
+            return;
+        }
+
+        const msg = messages?.[0];
         const phone = msg?.from;
         const text = msg?.text?.body;
 
