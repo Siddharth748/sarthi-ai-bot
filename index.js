@@ -95,8 +95,13 @@ async function sendViaHeltar(phone, message) {
             return;
         }
 
+        // CORRECTED Heltar API endpoint
+        // You MUST replace this URL with the correct one from Heltar's API documentation.
+        // It likely includes your phone number ID or a specific path for messages.
+        const HELTAR_API_URL = "https://api.heltar.com/v1/messages"; 
+
         const resp = await axios.post(
-            `https://api.heltar.com/v1/messages`,
+            HELTAR_API_URL,
             { 
                 messaging_product: "whatsapp",
                 recipient_type: "individual",
@@ -104,7 +109,12 @@ async function sendViaHeltar(phone, message) {
                 type: "text",
                 text: { body: message }
             },
-            { headers: { Authorization: `Bearer ${HELTAR_API_KEY}`, "Content-Type": "application/json" } }
+            { 
+                headers: { 
+                    Authorization: `Bearer ${HELTAR_API_KEY}`,
+                    "Content-Type": "application/json"
+                } 
+            }
         );
 
         console.log(`✅ Heltar message sent to ${phone}`);
