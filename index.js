@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Heltar Integration + Restored State Machine + Debug Logging)
+// index.js — SarathiAI (Heltar Integration + State Machine + Analytics)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -45,14 +45,19 @@ async function setupDatabase() {
         chat_history JSONB DEFAULT '[]'::jsonb,
         conversation_stage VARCHAR(50) DEFAULT 'new_topic',
         last_topic_summary TEXT,
-        messages_since_verse INT DEFAULT 0
+        messages_since_verse INT DEFAULT 0,
+        first_seen_date DATE,
+        last_seen_date DATE,
+        total_sessions INT DEFAULT 0,
+        total_incoming INT DEFAULT 0,
+        total_outgoing INT DEFAULT 0,
+        last_message TEXT,
+        last_message_role VARCHAR(20),
+        last_response_type VARCHAR(20)
       );
     `);
-    await client.query(
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS messages_since_verse INT DEFAULT 0;`
-    );
     client.release();
-    console.log("✅ Database table 'users' is ready.");
+    console.log("✅ Database table 'users' is ready with analytics columns.");
   } catch (err) {
     console.error("❌ Error setting up database table:", err);
   }
@@ -62,7 +67,7 @@ async function getUserState(phone) {
   try {
     let result = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (result.rows.length === 0) {
-      await dbPool.query("INSERT INTO users (phone_number) VALUES ($1)", [phone]);
+      await dbPool.query("INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1)", [phone]);
       result = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     }
     const user = result.rows[0];
@@ -94,8 +99,63 @@ async function updateUserState(phone, updates) {
   }
 }
 
+/* ---------------- Analytics Helpers ---------------- */
+async function trackIncoming(phone, text) {
+  try {
+    const user = await getUserState(phone);
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+
+    let addSession = false;
+    if (user.last_activity_ts) {
+      const last = new Date(user.last_activity_ts);
+      const diffHours = (now - last) / (1000 * 60 * 60);
+      if (diffHours > 12) addSession = true;
+    } else {
+      addSession = true;
+    }
+
+    const updates = {
+      last_activity_ts: "NOW()",
+      last_seen_date: today,
+      last_message: text,
+      last_message_role: "user",
+      total_incoming: (user.total_incoming || 0) + 1,
+    };
+
+    if (!user.first_seen_date) {
+      updates.first_seen_date = today;
+    }
+    if (addSession) {
+      updates.total_sessions = (user.total_sessions || 0) + 1;
+    }
+
+    await updateUserState(phone, updates);
+    console.log(`📊 Incoming tracked: ${phone}`);
+  } catch (e) {
+    console.error("❌ trackIncoming failed:", e.message);
+  }
+}
+
+async function trackOutgoing(phone, reply, type = "chat") {
+  try {
+    const user = await getUserState(phone);
+    const updates = {
+      last_activity_ts: "NOW()",
+      last_message: reply,
+      last_message_role: "assistant",
+      last_response_type: type,
+      total_outgoing: (user.total_outgoing || 0) + 1,
+    };
+    await updateUserState(phone, updates);
+    console.log(`📊 Outgoing tracked: ${phone} (${type})`);
+  } catch (e) {
+    console.error("❌ trackOutgoing failed:", e.message);
+  }
+}
+
 /* ---------------- Heltar Send ---------------- */
-async function sendViaHeltar(phone, message) {
+async function sendViaHeltar(phone, message, type = "chat") {
   try {
     if (!HELTAR_API_KEY) {
       console.warn(`(Simulated -> ${phone}): ${message}`);
@@ -122,6 +182,7 @@ async function sendViaHeltar(phone, message) {
     );
 
     console.log(`✅ Heltar message sent to ${phone}: ${message}`);
+    await trackOutgoing(phone, message, type);
     return resp.data;
   } catch (err) {
     console.error("❌ Heltar send error:", err.response?.data || err.message);
@@ -288,7 +349,7 @@ async function getRAGResponse(phone, text, language, chatHistory) {
 
   if (!verseMatch || verseMatch.score < 0.25) {
     const fallback = "I hear your concern. Could you share more so I can guide you better?";
-    await sendViaHeltar(phone, fallback);
+    await sendViaHeltar(phone, fallback, "fallback");
     return { assistantResponse: fallback, stage: "chatting", topic: text };
   }
 
@@ -306,7 +367,7 @@ async function getRAGResponse(phone, text, language, chatHistory) {
     const messageParts = aiResponse.split("||").map((p) => p.trim());
     for (const part of messageParts) {
       if (part) {
-        await sendViaHeltar(phone, part);
+        await sendViaHeltar(phone, part, "verse");
         await new Promise((r) => setTimeout(r, 1500));
       }
     }
@@ -337,6 +398,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     console.log(`📩 Incoming from ${phone}: "${text}"`);
+    await trackIncoming(phone, text);
 
     const userState = await getUserState(phone);
     await updateUserState(phone, { last_activity_ts: "NOW()" });
@@ -352,7 +414,8 @@ app.post("/webhook", async (req, res) => {
       console.log("💬 Detected greeting/small talk");
       await sendViaHeltar(
         phone,
-        `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`
+        `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`,
+        "welcome"
       );
       await updateUserState(phone, { conversation_stage: "new_topic", chat_history: "[]" });
       return;
@@ -368,10 +431,10 @@ app.post("/webhook", async (req, res) => {
 
       if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]")) {
         const clean = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
-        if (clean) await sendViaHeltar(phone, clean);
+        if (clean) await sendViaHeltar(phone, clean, "chat");
         currentStage = "new_topic";
       } else if (aiChatResponse) {
-        await sendViaHeltar(phone, aiChatResponse);
+        await sendViaHeltar(phone, aiChatResponse, "chat");
         chatHistory.push({ role: "assistant", content: aiChatResponse });
         await updateUserState(phone, { chat_history: chatHistory });
         return;
