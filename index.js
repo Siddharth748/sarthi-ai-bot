@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Improved Full Flow)
+// index.js — SarathiAI (Final Production-Ready)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -37,19 +37,9 @@ async function setupDatabase() {
         phone_number VARCHAR(255) PRIMARY KEY,
         subscribed_daily BOOLEAN DEFAULT FALSE,
         last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        cooldown_message_sent BOOLEAN DEFAULT FALSE,
         chat_history JSONB DEFAULT '[]'::jsonb,
         conversation_stage VARCHAR(50) DEFAULT 'new_topic',
         last_topic_summary TEXT,
-        messages_since_verse INT DEFAULT 0,
-        first_seen_date DATE,
-        last_seen_date DATE,
-        total_sessions INT DEFAULT 0,
-        total_incoming INT DEFAULT 0,
-        total_outgoing INT DEFAULT 0,
-        last_message TEXT,
-        last_message_role VARCHAR(20),
-        last_response_type VARCHAR(20),
         current_lesson INT DEFAULT 0,
         language_preference VARCHAR(10) DEFAULT 'English'
       );
@@ -76,7 +66,7 @@ async function getUserState(phone) {
     const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (res.rows.length === 0) {
       await dbPool.query(
-        "INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1)",
+        "INSERT INTO users (phone_number, last_activity_ts) VALUES ($1, CURRENT_TIMESTAMP)",
         [phone]
       );
       return (await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone])).rows[0];
@@ -112,26 +102,8 @@ async function updateUserState(phone, updates) {
 async function trackIncoming(phone, text) {
   try {
     const user = await getUserState(phone);
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
-    let addSession = false;
-    if (user.last_activity_ts) {
-      const diff = (now - new Date(user.last_activity_ts)) / (1000 * 60 * 60);
-      if (diff > 12) addSession = true;
-    } else addSession = true;
-
-    const updates = {
-      last_activity_ts: "NOW()",
-      last_seen_date: today,
-      last_message: text,
-      last_message_role: "user",
-      total_incoming: (user.total_incoming || 0) + 1,
-    };
-    if (!user.first_seen_date) updates.first_seen_date = today;
-    if (addSession) updates.total_sessions = (user.total_sessions || 0) + 1;
-
+    const updates = { last_activity_ts: "NOW()" };
     await updateUserState(phone, updates);
-    console.log(`📊 Incoming tracked: ${phone}`);
   } catch (err) {
     console.error("trackIncoming failed:", err.message);
   }
@@ -139,16 +111,7 @@ async function trackIncoming(phone, text) {
 
 async function trackOutgoing(phone, reply, type = "chat") {
   try {
-    const user = await getUserState(phone);
-    const updates = {
-      last_activity_ts: "NOW()",
-      last_message: reply,
-      last_message_role: "assistant",
-      last_response_type: type,
-      total_outgoing: (user.total_outgoing || 0) + 1,
-    };
-    await updateUserState(phone, updates);
-    console.log(`📊 Outgoing tracked: ${phone} (${type})`);
+    await updateUserState(phone, { last_message_role: "assistant", last_message: reply, last_response_type: type, last_activity_ts: "NOW()" });
   } catch (err) {
     console.error("trackOutgoing failed:", err.message);
   }
@@ -193,28 +156,15 @@ async function sendLesson(phone, lessonNumber) {
   }
 }
 
-/* ---------------- Text classification ---------------- */
+/* ---------------- Text Classification / Intent ---------------- */
 function normalizeText(s) { return String(s).trim().toLowerCase(); }
 
-function isGreeting(t) {
-  return /(hi|hello|hey|hii|namaste|hare\s*krishna)/i.test(t);
-}
+function isGreeting(t) { return /(hi|hello|hey|hii|namaste|hare\s*krishna)/i.test(t); }
+function isSmallTalk(t) { return /(thanks|thank you|ok|okay|good|nice|cool|bye)/i.test(t); }
+function isLessonRequest(t) { return /(teach|lesson|gita)/i.test(t); }
+function isLanguageSwitch(t) { if (/english/i.test(t)) return "English"; if (/hindi|हिन्दी/i.test(t)) return "Hindi"; return null; }
 
-function isSmallTalk(t) {
-  return /(thanks|thank you|ok|okay|good|nice|cool|bye)/i.test(t);
-}
-
-function isLessonRequest(t) {
-  return /(teach|lesson|gita)/i.test(t);
-}
-
-function isLanguageSwitch(t) {
-  if (/english/i.test(t)) return "English";
-  if (/hindi|हिन्दी/i.test(t)) return "Hindi";
-  return null;
-}
-
-/* ---------------- OpenAI & Pinecone ---------------- */
+/* ---------------- OpenAI + Pinecone ---------------- */
 async function openaiChat(messages, maxTokens = 400) {
   if (!OPENAI_KEY) return null;
   try {
@@ -244,17 +194,16 @@ async function pineconeQuery(vector, topK = 3, namespace) {
   return resp.data;
 }
 
-/* ---------------- RAG flow ---------------- */
+/* ---------------- RAG Response ---------------- */
 async function getRAGResponse(phone, text, user) {
   try {
     const vec = await getEmbedding(text);
     const results = await pineconeQuery(vec, 5, PINECONE_NAMESPACE);
     if (!results?.matches?.length) {
-      await sendViaHeltar(phone, "I hear you 🙏. Please share more.", "fallback");
+      await sendViaHeltar(phone, "I hear you 🙏. Can you tell me more?", "fallback");
       return { assistantResponse: "I hear you.", topic: text };
     }
 
-    // Combine top 3 results for context
     const topMatches = results.matches.slice(0, 3);
     const context = topMatches.map(m => {
       const verse = m.metadata?.sanskrit || m.metadata?.verse || "";
@@ -262,13 +211,10 @@ async function getRAGResponse(phone, text, user) {
       return `Sanskrit: ${verse}\nHinglish: ${translation}`;
     }).join("\n\n");
 
-    const historyMessages = (user.chat_history || []).slice(-10).map(m => ({
-      role: m.role,
-      content: m.content
-    }));
+    const historyMessages = (user.chat_history || []).slice(-10).map(m => ({ role: m.role, content: m.content }));
 
     const prompt = [
-      { role: "system", content: "You are SarathiAI, a friendly and wise companion." },
+      { role: "system", content: "You are SarathiAI, a friendly and wise companion of Shri Krishna. You provide guidance, explain verses in Hinglish/English, and engage in casual conversation." },
       ...historyMessages,
       { role: "user", content: text },
       { role: "system", content: `Context from verses:\n${context}` }
@@ -288,6 +234,7 @@ app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   const msg = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
   if (!msg) return console.log("⚠️ Ignoring non-message event");
+
   const phone = msg?.from;
   const text = msg?.text?.body || "";
   console.log(`📩 Incoming from ${phone}: "${text}"`);
@@ -296,7 +243,7 @@ app.post("/webhook", async (req, res) => {
   const user = await getUserState(phone);
   const lower = normalizeText(text);
 
-  // -------- Language switch --------
+  // ----- Language switch -----
   const lang = isLanguageSwitch(text);
   if (lang) {
     await updateUserState(phone, { language_preference: lang });
@@ -304,18 +251,19 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
-  // -------- Greetings & Small Talk --------
+  // ----- Greetings -----
   if (isGreeting(lower)) {
     await sendViaHeltar(phone,
       user.language_preference === "Hindi"
-        ? `Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?`
-        : `Hare Krishna 🙏\nI am Sarathi, your companion.\nHow can I help you today?`,
+        ? "Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?"
+        : "Hare Krishna 🙏\nI am Sarathi, your companion.\nHow can I help you today?",
       "welcome"
     );
     await updateUserState(phone, { conversation_stage: "new_topic" });
     return;
   }
 
+  // ----- Small talk -----
   if (isSmallTalk(lower)) {
     await sendViaHeltar(phone,
       user.language_preference === "Hindi"
@@ -326,7 +274,7 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
-  // -------- Lesson request --------
+  // ----- Lesson request -----
   if (isLessonRequest(lower)) {
     const nextLesson = (user.current_lesson || 0) + 1;
     await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
@@ -334,7 +282,7 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
-  // -------- Lesson continuation --------
+  // ----- Lesson continuation -----
   if (user.conversation_stage === "lesson_mode") {
     if (lower === "next" || lower.includes("hare krishna")) {
       const nextLesson = (user.current_lesson || 0) + 1;
@@ -344,7 +292,7 @@ app.post("/webhook", async (req, res) => {
     }
   }
 
-  // -------- Fallback to RAG --------
+  // ----- RAG fallback -----
   const ragResult = await getRAGResponse(phone, text, user);
   const updatedHistory = [...(user.chat_history || []), { role: "user", content: text }, { role: "assistant", content: ragResult.assistantResponse }];
   await updateUserState(phone, {
