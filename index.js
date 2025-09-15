@@ -452,7 +452,11 @@ app.post("/webhook", async (req, res) => {
     }
 
     const phone = msg?.from;
-    const rawText = msg?.text?.body || msg?.button?.payload || msg?.interactive?.button_reply?.id || "";
+    const rawText =
+      msg?.text?.body ||
+      msg?.button?.payload ||
+      msg?.interactive?.button_reply?.id ||
+      "";
     const text = String(rawText || "").trim();
     if (!phone || !text) {
       console.warn("⚠️ Webhook missing phone/text.");
@@ -463,164 +467,143 @@ app.post("/webhook", async (req, res) => {
     await trackIncoming(phone, text);
 
     const userState = await getUserState(phone);
-
     const lower = text.toLowerCase();
 
-    /* ---------- Lesson flow (explicit intent) ---------- */
-    if (lower.includes("teach me") || lower.includes("bhagavad gita") || lower === "teach gita" || lower.includes("gita")) {
-      // start/continue course
+    /* ---------- Lesson flow ---------- */
+    if (
+      lower.includes("teach me") ||
+      lower.includes("bhagavad gita") ||
+      lower === "teach gita" ||
+      lower.includes("gita")
+    ) {
       let nextLesson = (userState.current_lesson || 0) + 1;
       if (nextLesson > 7) {
-        await sendViaHeltar(phone, "🌸 You’ve already completed the 7-day course! Reply 'restart' to do it again.", "lesson");
+        await sendViaHeltar(
+          phone,
+          "🌸 You’ve already completed the 7-day course! Reply 'restart' to do it again.",
+          "lesson"
+        );
         return;
       }
-      await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
+      await updateUserState(phone, {
+        current_lesson: nextLesson,
+        conversation_stage: "lesson_mode",
+      });
       await sendLesson(phone, nextLesson);
       return;
     }
 
     if (userState.conversation_stage === "lesson_mode") {
-  // Lesson navigation
-  if (lower === "next" || lower.includes("hare krishna") || lower === "harekrishna") {
-    let nextLesson = (userState.current_lesson || 0) + 1;
-    if (nextLesson > 7) {
-      await sendViaHeltar(
-        phone,
-        "🌸 You’ve already completed the 7-day course! Reply 'restart' to do it again.",
-        "lesson"
-      );
+      if (
+        lower === "next" ||
+        lower.includes("hare krishna") ||
+        lower === "harekrishna"
+      ) {
+        let nextLesson = (userState.current_lesson || 0) + 1;
+        if (nextLesson > 7) {
+          await sendViaHeltar(
+            phone,
+            "🌸 You’ve already completed the 7-day course! Reply 'restart' to do it again.",
+            "lesson"
+          );
+          return;
+        }
+        await updateUserState(phone, {
+          current_lesson: nextLesson,
+          conversation_stage: "lesson_mode",
+        });
+        await sendLesson(phone, nextLesson);
+        return;
+      }
+
+      if (lower === "restart") {
+        await updateUserState(phone, { current_lesson: 0 });
+        await sendViaHeltar(
+          phone,
+          "🌸 Course progress reset. Reply 'teach me gita' to start again.",
+          "lesson"
+        );
+        return;
+      }
+
+      if (isGreeting(lower) || isSmallTalk(lower)) {
+        await sendViaHeltar(
+          phone,
+          `Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nReply 'Next' anytime to continue your Gita lessons.`,
+          "welcome"
+        );
+        return;
+      }
+
+      // 👉 Any other query in lesson mode → RAG
+      let chatHistory = userState.chat_history || [];
+      if (typeof chatHistory === "string") {
+        try {
+          chatHistory = JSON.parse(chatHistory);
+        } catch {
+          chatHistory = [];
+        }
+      }
+      chatHistory.push({ role: "user", content: text });
+      if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
+
+      const language = await detectLanguage(text);
+      const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+      chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+
+      await updateUserState(phone, {
+        chat_history: JSON.stringify(chatHistory),
+        last_topic_summary: ragResult.topic || text,
+        conversation_stage: "lesson_mode",
+      });
       return;
     }
-    await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
-    await sendLesson(phone, nextLesson);
-    return;
-  }
-
-  if (lower === "restart") {
-    await updateUserState(phone, { current_lesson: 0 });
-    await sendViaHeltar(
-      phone,
-      "🌸 Course progress reset. Reply 'teach me gita' to start again.",
-      "lesson"
-    );
-    return;
-  }
-
-  // 👉 Greeting/small talk inside lesson mode
-  if (isGreeting(lower) || isSmallTalk(lower)) {
-    console.log("💬 Lesson mode small talk detected");
-    await sendViaHeltar(
-      phone,
-      `Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nReply 'Next' anytime to continue your Gita lessons.`,
-      "welcome"
-    );
-    return;
-  }
-
-  // 👉 Any other query in lesson mode goes to RAG/chat
-  console.log("📖 Lesson mode free query → RAG");
-  let chatHistory = userState.chat_history || [];
-  if (typeof chatHistory === "string") {
-    try { chatHistory = JSON.parse(chatHistory); } catch { chatHistory = []; }
-  }
-  chatHistory.push({ role: "user", content: text });
-  if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
-
-  const language = await detectLanguage(text);
-  const ragResult = await getRAGResponse(phone, text, language, chatHistory);
-  chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-
-  await updateUserState(phone, {
-    chat_history: JSON.stringify(chatHistory),
-    last_topic_summary: ragResult.topic || text,
-    conversation_stage: "lesson_mode" // 👈 keep them in lessons
-  });
-  return;
-}
-
-  // 👉 Greeting/small talk inside lesson mode
-  if (isGreeting(lower) || isSmallTalk(lower)) {
-    console.log("💬 Lesson mode small talk detected");
-    await sendViaHeltar(
-      phone,
-      `Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nReply 'Next' anytime to continue your Gita lessons.`,
-      "welcome"
-    );
-    return;
-  }
-
-  // 👉 Any other query in lesson mode goes to RAG/chat
-  console.log("📖 Lesson mode free query → RAG");
-  let chatHistory = userState.chat_history || [];
-  if (typeof chatHistory === "string") {
-    try { chatHistory = JSON.parse(chatHistory); } catch { chatHistory = []; }
-  }
-  chatHistory.push({ role: "user", content: text });
-  if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
-
-  const language = await detectLanguage(text);
-  const ragResult = await getRAGResponse(phone, text, language, chatHistory);
-  chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-
-  await updateUserState(phone, {
-    chat_history: JSON.stringify(chatHistory),
-    last_topic_summary: ragResult.topic || text,
-    conversation_stage: "lesson_mode" // 👈 still keep them in lesson mode
-  });
-  return;
-}
-
-  // 👉 Any other query inside lesson_mode goes to normal RAG/chat
-  console.log("📖 Lesson mode but free query → route to RAG");
-  let chatHistory = userState.chat_history || [];
-  if (typeof chatHistory === "string") {
-    try { chatHistory = JSON.parse(chatHistory); } catch { chatHistory = []; }
-  }
-  chatHistory.push({ role: "user", content: text });
-  if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
-
-  const language = await detectLanguage(text);
-  const ragResult = await getRAGResponse(phone, text, language, chatHistory);
-  chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-
-  await updateUserState(phone, {
-    chat_history: JSON.stringify(chatHistory),
-    last_topic_summary: ragResult.topic || text,
-    conversation_stage: "lesson_mode" // 👈 keep them in lessons
-  });
-  return;
-}
 
     /* ---------- Greeting / small talk ---------- */
     if (isGreeting(lower) || isSmallTalk(lower)) {
-      console.log("💬 Detected greeting/small talk");
-      await sendViaHeltar(phone, `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`, "welcome");
-      await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]) });
+      await sendViaHeltar(
+        phone,
+        `Hare Krishna 🙏\n\nI am Sarathi, your companion on this journey.\nHow can I help you today?`,
+        "welcome"
+      );
+      await updateUserState(phone, {
+        conversation_stage: "new_topic",
+        chat_history: JSON.stringify([]),
+      });
       return;
     }
 
-    /* ---------- Main stateful flow (chatting / new_topic) ---------- */
+    /* ---------- Main stateful flow ---------- */
     let currentStage = userState.conversation_stage || "new_topic";
-    // prepare chat history
     let chatHistory = userState.chat_history || [];
-    // ensure chatHistory is array
     if (typeof chatHistory === "string") {
-      try { chatHistory = JSON.parse(chatHistory); } catch(e){ chatHistory = []; }
+      try {
+        chatHistory = JSON.parse(chatHistory);
+      } catch {
+        chatHistory = [];
+      }
     }
     chatHistory.push({ role: "user", content: text });
     if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
 
     if (currentStage === "chatting") {
-      console.log("🤝 Stage = chatting");
       const language = await detectLanguage(text);
-      const chatPrompt = CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "Hinglish");
-      const aiChatResponse = await openaiChat([{ role: "system", content: chatPrompt }, ...chatHistory], 300);
+      const chatPrompt = CHAT_SYSTEM_PROMPT.replace(
+        "{{LANGUAGE}}",
+        language || "Hinglish"
+      );
+      const aiChatResponse = await openaiChat(
+        [{ role: "system", content: chatPrompt }, ...chatHistory],
+        300
+      );
 
       if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]")) {
         const clean = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
         if (clean) await sendViaHeltar(phone, clean, "chat");
-        // transition to new_topic so next message triggers RAG
-        await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify(chatHistory) });
+        await updateUserState(phone, {
+          conversation_stage: "new_topic",
+          chat_history: JSON.stringify(chatHistory),
+        });
         return;
       } else if (aiChatResponse) {
         await sendViaHeltar(phone, aiChatResponse, "chat");
@@ -628,15 +611,18 @@ app.post("/webhook", async (req, res) => {
         await updateUserState(phone, { chat_history: JSON.stringify(chatHistory) });
         return;
       } else {
-        // if OpenAI failed, graceful fallback to RAG
         currentStage = "new_topic";
       }
     }
 
     if (currentStage === "new_topic") {
-      console.log("📖 Stage = new_topic → Fetching verse (RAG)");
       const language = await detectLanguage(text);
-      const ragResult = await getRAGResponse(phone, text, language || "Hinglish", chatHistory);
+      const ragResult = await getRAGResponse(
+        phone,
+        text,
+        language || "Hinglish",
+        chatHistory
+      );
       chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
       await updateUserState(phone, {
         last_topic_summary: ragResult.topic || text,
@@ -644,15 +630,13 @@ app.post("/webhook", async (req, res) => {
         chat_history: JSON.stringify(chatHistory),
       });
     }
-
   } catch (err) {
     console.error("❌ Webhook error:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Webhook Error | ${JSON.stringify(err?.message || err)}\n`);
+    fs.appendFileSync(
+      "heltar-error.log",
+      `${new Date().toISOString()} | Webhook Error | ${JSON.stringify(
+        err?.message || err
+      )}\n`
+    );
   }
-});
-
-/* ---------------- Start server ---------------- */
-app.listen(PORT, () => {
-  console.log(`\n🚀 ${BOT_NAME} is live on port ${PORT}`);
-  setupDatabase();
 });
