@@ -480,22 +480,59 @@ app.post("/webhook", async (req, res) => {
     }
 
     if (userState.conversation_stage === "lesson_mode") {
-  // Still allow lesson navigation
+  // Lesson navigation
   if (lower === "next" || lower.includes("hare krishna") || lower === "harekrishna") {
     let nextLesson = (userState.current_lesson || 0) + 1;
     if (nextLesson > 7) {
-      await sendViaHeltar(phone, "🌸 You’ve already completed the 7-day course! Reply 'restart' to do it again.", "lesson");
+      await sendViaHeltar(
+        phone,
+        "🌸 You’ve already completed the 7-day course! Reply 'restart' to do it again.",
+        "lesson"
+      );
       return;
     }
     await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
     await sendLesson(phone, nextLesson);
     return;
   }
+
   if (lower === "restart") {
     await updateUserState(phone, { current_lesson: 0 });
     await sendViaHeltar(phone, "🌸 Course progress reset. Reply 'teach me gita' to start again.", "lesson");
     return;
   }
+
+  // 👉 Greeting/small talk inside lesson mode
+  if (isGreeting(lower) || isSmallTalk(lower)) {
+    console.log("💬 Lesson mode small talk detected");
+    await sendViaHeltar(
+      phone,
+      `Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nReply 'Next' anytime to continue your Gita lessons.`,
+      "welcome"
+    );
+    return;
+  }
+
+  // 👉 Any other query in lesson mode goes to RAG/chat
+  console.log("📖 Lesson mode free query → RAG");
+  let chatHistory = userState.chat_history || [];
+  if (typeof chatHistory === "string") {
+    try { chatHistory = JSON.parse(chatHistory); } catch { chatHistory = []; }
+  }
+  chatHistory.push({ role: "user", content: text });
+  if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
+
+  const language = await detectLanguage(text);
+  const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+  chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+
+  await updateUserState(phone, {
+    chat_history: JSON.stringify(chatHistory),
+    last_topic_summary: ragResult.topic || text,
+    conversation_stage: "lesson_mode" // 👈 still keep them in lesson mode
+  });
+  return;
+}
 
   // 👉 Any other query inside lesson_mode goes to normal RAG/chat
   console.log("📖 Lesson mode but free query → route to RAG");
