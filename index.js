@@ -498,9 +498,45 @@ app.post("/webhook", async (req, res) => {
 
   if (lower === "restart") {
     await updateUserState(phone, { current_lesson: 0 });
-    await sendViaHeltar(phone, "🌸 Course progress reset. Reply 'teach me gita' to start again.", "lesson");
+    await sendViaHeltar(
+      phone,
+      "🌸 Course progress reset. Reply 'teach me gita' to start again.",
+      "lesson"
+    );
     return;
   }
+
+  // 👉 Greeting/small talk inside lesson mode
+  if (isGreeting(lower) || isSmallTalk(lower)) {
+    console.log("💬 Lesson mode small talk detected");
+    await sendViaHeltar(
+      phone,
+      `Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nReply 'Next' anytime to continue your Gita lessons.`,
+      "welcome"
+    );
+    return;
+  }
+
+  // 👉 Any other query in lesson mode goes to RAG/chat
+  console.log("📖 Lesson mode free query → RAG");
+  let chatHistory = userState.chat_history || [];
+  if (typeof chatHistory === "string") {
+    try { chatHistory = JSON.parse(chatHistory); } catch { chatHistory = []; }
+  }
+  chatHistory.push({ role: "user", content: text });
+  if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
+
+  const language = await detectLanguage(text);
+  const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+  chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+
+  await updateUserState(phone, {
+    chat_history: JSON.stringify(chatHistory),
+    last_topic_summary: ragResult.topic || text,
+    conversation_stage: "lesson_mode" // 👈 keep them in lessons
+  });
+  return;
+}
 
   // 👉 Greeting/small talk inside lesson mode
   if (isGreeting(lower) || isSmallTalk(lower)) {
