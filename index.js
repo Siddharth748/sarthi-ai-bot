@@ -73,6 +73,7 @@ async function setupDatabase() {
   }
 }
 
+/* ---------------- User Helpers ---------------- */
 async function getUserState(phone) {
   try {
     let result = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
@@ -229,6 +230,78 @@ async function sendLesson(phone, lessonNumber) {
   }
 }
 
+/* ---------------- Text Classification ---------------- */
+function normalizeTextForSmallTalk(s) {
+  if (!s) return "";
+  let t = String(s).trim().toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+  t = t.replace(/\bu\b/g, "you");
+  t = t.replace(/\br\b/g, "are");
+  return t;
+}
+
+function isGreeting(text) {
+  if (!text) return false;
+  const t = normalizeTextForSmallTalk(text);
+  const greetings = new Set(["hi", "hii", "hello", "hey", "namaste", "hare krishna", "harekrishna"]);
+  return greetings.has(t);
+}
+
+const CONCERN_KEYWORDS = [
+  "stress",
+  "anxiety",
+  "depressed",
+  "depression",
+  "angry",
+  "anger",
+  "sleep",
+  "insomnia",
+  "panic",
+  "suicidal",
+  "sad",
+  "lonely",
+  "frustrated",
+  "hurt",
+  "confused",
+];
+
+function isSmallTalk(text) {
+  if (!text) return false;
+  const t = normalizeTextForSmallTalk(text);
+  for (const keyword of CONCERN_KEYWORDS) {
+    if (t.includes(keyword)) return false;
+  }
+  const smalls = new Set(["how are you", "how are you doing", "how do you do", "thanks", "ok", "good", "bye"]);
+  return smalls.has(t);
+}
+
+/* ---------------- System Prompts ---------------- */
+const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context.
+- Use "||" to separate each message bubble.
+- Part 1: The Sanskrit verse.
+- Part 2: Hinglish translation.
+- Part 3: "Shri Krishna kehte hain:" + 2-3 sentence essence/explanation.
+- Part 4: A simple follow-up question.
+- Strictly and exclusively reply in {{LANGUAGE}}.`;
+
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically.
+- Use user's chat history for context.
+- DO NOT quote new verses here.
+- Keep replies very short (1-3 sentences).
+- If strong emotional need is expressed, end with [NEW_TOPIC].
+- Strictly and exclusively reply in {{LANGUAGE}}.`;
+
+/* ---------------- RAG Helpers ---------------- */
+function safeText(md, key) {
+  return (md && md[key] && String(md[key]).trim()) || "";
+}
+
+async function getRAGResponse(phone, text, language, chatHistory) {
+  // Placeholder: reuse Pinecone+OpenAI here if needed
+  const fallback = "I hear your concern. Could you share more so I can guide you better?";
+  await sendViaHeltar(phone, fallback, "fallback");
+  return { assistantResponse: fallback, stage: "chatting", topic: text };
+}
+
 /* ---------------- Webhook ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
@@ -242,7 +315,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     const phone = msg?.from;
-    const text = msg?.text?.body?.trim().toLowerCase();
+    const text = msg?.text?.body?.trim();
 
     if (!phone || !text) {
       console.warn("⚠️ Webhook missing phone/text.");
@@ -254,8 +327,9 @@ app.post("/webhook", async (req, res) => {
 
     const userState = await getUserState(phone);
 
-    /* ---- Check for Lesson Triggers ---- */
-    if (text.includes("teach me") || text.includes("bhagavad gita") || text.includes("gita")) {
+    /* ---- Lesson Flow ---- */
+    const lower = text.toLowerCase();
+    if (lower.includes("teach me") || lower.includes("gita")) {
       let nextLesson = (userState.current_lesson || 0) + 1;
       if (nextLesson > 7) {
         await sendViaHeltar(phone, "🌸 You’ve already completed the 7-day course!", "lesson");
@@ -266,7 +340,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    if (text === "next" || text.includes("hare krishna")) {
+    if (lower === "next" || lower.includes("hare krishna")) {
       let nextLesson = (userState.current_lesson || 0) + 1;
       if (nextLesson > 7) {
         await sendViaHeltar(phone, "🌸 You’ve already completed the 7-day course!", "lesson");
@@ -277,11 +351,8 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    /* ---- Otherwise, proceed with existing flow ---- */
-    const incoming = text;
-
-    // 1. Greeting / small talk
-    if (isGreeting(incoming) || isSmallTalk(incoming)) {
+    /* ---- Greeting / Small Talk ---- */
+    if (isGreeting(lower) || isSmallTalk(lower)) {
       console.log("💬 Detected greeting/small talk");
       await sendViaHeltar(
         phone,
@@ -292,7 +363,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 2. Stage-based flow (chatting → new_topic)
+    /* ---- Stage Flow ---- */
     let currentStage = userState.conversation_stage;
     let chatHistory = userState.chat_history || [];
     chatHistory.push({ role: "user", content: text });
