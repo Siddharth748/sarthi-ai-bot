@@ -1,10 +1,9 @@
-// index.js — SarathiAI (Heltar Integration + Lessons + Full RAG + Analytics)
+// index.js — SarathiAI (Improved Full Flow)
 import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
 import axios from "axios";
-import fs from "fs";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -24,7 +23,6 @@ const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small")
 const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
 const PINECONE_NAMESPACE = (process.env.PINECONE_NAMESPACE || "verse").trim();
-const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 
@@ -52,7 +50,8 @@ async function setupDatabase() {
         last_message TEXT,
         last_message_role VARCHAR(20),
         last_response_type VARCHAR(20),
-        current_lesson INT DEFAULT 0
+        current_lesson INT DEFAULT 0,
+        language_preference VARCHAR(10) DEFAULT 'English'
       );
     `);
     await client.query(`
@@ -65,7 +64,7 @@ async function setupDatabase() {
       );
     `);
     client.release();
-    console.log("✅ Database tables 'users' & 'lessons' are ready.");
+    console.log("✅ Database tables ready.");
   } catch (err) {
     console.error("❌ DB Setup Error:", err);
   }
@@ -85,7 +84,7 @@ async function getUserState(phone) {
     return res.rows[0];
   } catch (err) {
     console.error("getUserState failed:", err.message);
-    return { phone_number: phone, chat_history: [], conversation_stage: "new_topic", current_lesson: 0 };
+    return { phone_number: phone, chat_history: [], conversation_stage: "new_topic", current_lesson: 0, language_preference: "English" };
   }
 }
 
@@ -168,7 +167,6 @@ async function sendViaHeltar(phone, message, type = "chat") {
       { messages: [{ clientWaNumber: phone, message, messageType: "text" }] },
       { headers: { Authorization: `Bearer ${HELTAR_API_KEY}` } }
     );
-    console.log(`✅ Heltar message sent to ${phone}: ${message}`);
     await trackOutgoing(phone, message, type);
     return resp.data;
   } catch (err) {
@@ -196,14 +194,24 @@ async function sendLesson(phone, lessonNumber) {
 }
 
 /* ---------------- Text classification ---------------- */
-function normalizeText(s) {
-  return String(s).trim().toLowerCase();
-}
+function normalizeText(s) { return String(s).trim().toLowerCase(); }
+
 function isGreeting(t) {
-  return ["hi","hii","hello","hey","namaste","hare krishna","harekrishna"].includes(normalizeText(t));
+  return /(hi|hello|hey|hii|namaste|hare\s*krishna)/i.test(t);
 }
+
 function isSmallTalk(t) {
-  return ["thanks","thank you","ok","okay","good","nice","cool","bye"].includes(normalizeText(t));
+  return /(thanks|thank you|ok|okay|good|nice|cool|bye)/i.test(t);
+}
+
+function isLessonRequest(t) {
+  return /(teach|lesson|gita)/i.test(t);
+}
+
+function isLanguageSwitch(t) {
+  if (/english/i.test(t)) return "English";
+  if (/hindi|हिन्दी/i.test(t)) return "Hindi";
+  return null;
 }
 
 /* ---------------- OpenAI & Pinecone ---------------- */
@@ -227,7 +235,7 @@ async function getEmbedding(text) {
   return resp.data.data[0].embedding;
 }
 
-async function pineconeQuery(vector, topK = 5, namespace) {
+async function pineconeQuery(vector, topK = 3, namespace) {
   const resp = await axios.post(
     `${PINECONE_HOST.replace(/\/$/, "")}/query`,
     { vector, topK, includeMetadata: true, namespace },
@@ -237,20 +245,36 @@ async function pineconeQuery(vector, topK = 5, namespace) {
 }
 
 /* ---------------- RAG flow ---------------- */
-async function getRAGResponse(phone, text) {
+async function getRAGResponse(phone, text, user) {
   try {
     const vec = await getEmbedding(text);
     const results = await pineconeQuery(vec, 5, PINECONE_NAMESPACE);
-    const best = results?.matches?.[0];
-    if (!best) {
-      await sendViaHeltar(phone, "I hear you. Please share more 🙏", "fallback");
+    if (!results?.matches?.length) {
+      await sendViaHeltar(phone, "I hear you 🙏. Please share more.", "fallback");
       return { assistantResponse: "I hear you.", topic: text };
     }
-    const verse = best.metadata?.sanskrit || best.metadata?.verse || "";
-    const translation = best.metadata?.hinglish1 || best.metadata?.translation || "";
-    const context = `Sanskrit: ${verse}\nHinglish: ${translation}`;
-    const prompt = `User: ${text}\n\nContext:\n${context}`;
-    const resp = await openaiChat([{ role: "system", content: "You are SarathiAI." }, { role: "user", content: prompt }], 400);
+
+    // Combine top 3 results for context
+    const topMatches = results.matches.slice(0, 3);
+    const context = topMatches.map(m => {
+      const verse = m.metadata?.sanskrit || m.metadata?.verse || "";
+      const translation = m.metadata?.hinglish1 || m.metadata?.translation || "";
+      return `Sanskrit: ${verse}\nHinglish: ${translation}`;
+    }).join("\n\n");
+
+    const historyMessages = (user.chat_history || []).slice(-10).map(m => ({
+      role: m.role,
+      content: m.content
+    }));
+
+    const prompt = [
+      { role: "system", content: "You are SarathiAI, a friendly and wise companion." },
+      ...historyMessages,
+      { role: "user", content: text },
+      { role: "system", content: `Context from verses:\n${context}` }
+    ];
+
+    const resp = await openaiChat(prompt, 400);
     if (resp) await sendViaHeltar(phone, resp, "verse");
     return { assistantResponse: resp || "I am here to listen.", topic: text };
   } catch (err) {
@@ -268,37 +292,64 @@ app.post("/webhook", async (req, res) => {
   const text = msg?.text?.body || "";
   console.log(`📩 Incoming from ${phone}: "${text}"`);
   await trackIncoming(phone, text);
-  const user = await getUserState(phone);
-  const lower = text.toLowerCase();
 
-  // Lessons
-  if (lower.includes("teach") || lower.includes("gita")) {
-    const next = (user.current_lesson || 0) + 1;
-    await updateUserState(phone, { current_lesson: next, conversation_stage: "lesson_mode" });
-    await sendLesson(phone, next);
+  const user = await getUserState(phone);
+  const lower = normalizeText(text);
+
+  // -------- Language switch --------
+  const lang = isLanguageSwitch(text);
+  if (lang) {
+    await updateUserState(phone, { language_preference: lang });
+    await sendViaHeltar(phone, `Language switched to ${lang}.`, "language");
     return;
   }
+
+  // -------- Greetings & Small Talk --------
+  if (isGreeting(lower)) {
+    await sendViaHeltar(phone,
+      user.language_preference === "Hindi"
+        ? `Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?`
+        : `Hare Krishna 🙏\nI am Sarathi, your companion.\nHow can I help you today?`,
+      "welcome"
+    );
+    await updateUserState(phone, { conversation_stage: "new_topic" });
+    return;
+  }
+
+  if (isSmallTalk(lower)) {
+    await sendViaHeltar(phone,
+      user.language_preference === "Hindi"
+        ? "Shukriya! Aap aur kya jaanna chahte hain?"
+        : "Thanks! What else would you like to know?",
+      "small_talk"
+    );
+    return;
+  }
+
+  // -------- Lesson request --------
+  if (isLessonRequest(lower)) {
+    const nextLesson = (user.current_lesson || 0) + 1;
+    await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
+    await sendLesson(phone, nextLesson);
+    return;
+  }
+
+  // -------- Lesson continuation --------
   if (user.conversation_stage === "lesson_mode") {
     if (lower === "next" || lower.includes("hare krishna")) {
-      const next = (user.current_lesson || 0) + 1;
-      await updateUserState(phone, { current_lesson: next });
-      await sendLesson(phone, next);
+      const nextLesson = (user.current_lesson || 0) + 1;
+      await updateUserState(phone, { current_lesson: nextLesson });
+      await sendLesson(phone, nextLesson);
       return;
     }
   }
 
-  // Greetings
-  if (isGreeting(lower) || isSmallTalk(lower)) {
-    await sendViaHeltar(phone, `Hare Krishna 🙏\nI am Sarathi, your companion.\nHow can I help you today?`, "welcome");
-    await updateUserState(phone, { conversation_stage: "new_topic", chat_history: [] });
-    return;
-  }
-
-  // RAG
-  const ragResult = await getRAGResponse(phone, text);
+  // -------- Fallback to RAG --------
+  const ragResult = await getRAGResponse(phone, text, user);
+  const updatedHistory = [...(user.chat_history || []), { role: "user", content: text }, { role: "assistant", content: ragResult.assistantResponse }];
   await updateUserState(phone, {
     conversation_stage: "chatting",
-    chat_history: JSON.stringify([{ role: "user", content: text }, { role: "assistant", content: ragResult.assistantResponse }]),
+    chat_history: updatedHistory.slice(-15),
     last_topic_summary: ragResult.topic
   });
 });
