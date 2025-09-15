@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Heltar Integration + State Machine + Analytics)
+// index.js — SarathiAI (Heltar Integration + Lessons + State Machine + Analytics)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -53,13 +53,23 @@ async function setupDatabase() {
         total_outgoing INT DEFAULT 0,
         last_message TEXT,
         last_message_role VARCHAR(20),
-        last_response_type VARCHAR(20)
+        last_response_type VARCHAR(20),
+        current_lesson INT DEFAULT 0
+      );
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS lessons (
+        lesson_number INT PRIMARY KEY,
+        verse TEXT,
+        translation TEXT,
+        commentary TEXT,
+        reflection_question TEXT
       );
     `);
     client.release();
-    console.log("✅ Database table 'users' is ready with analytics columns.");
+    console.log("✅ Database tables 'users' & 'lessons' are ready.");
   } catch (err) {
-    console.error("❌ Error setting up database table:", err);
+    console.error("❌ Error setting up database tables:", err);
   }
 }
 
@@ -67,7 +77,10 @@ async function getUserState(phone) {
   try {
     let result = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (result.rows.length === 0) {
-      await dbPool.query("INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1)", [phone]);
+      await dbPool.query(
+        "INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1)",
+        [phone]
+      );
       result = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     }
     const user = result.rows[0];
@@ -195,186 +208,25 @@ async function sendViaHeltar(phone, message, type = "chat") {
   }
 }
 
-/* ---------------- OpenAI + Pinecone Helpers ---------------- */
-async function openaiChat(messages, maxTokens = 400) {
-  if (!OPENAI_KEY) return null;
-  const body = {
-    model: OPENAI_MODEL,
-    messages,
-    max_tokens: maxTokens,
-    temperature: 0.7,
-  };
-  const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-    headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
-    timeout: 25000,
-  });
-  return resp.data?.choices?.[0]?.message?.content;
-}
-
-async function getEmbedding(text) {
-  const resp = await axios.post(
-    "https://api.openai.com/v1/embeddings",
-    { model: EMBED_MODEL, input: text },
-    {
-      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
-      timeout: 30000,
+/* ---------------- Lessons Helpers ---------------- */
+async function sendLesson(phone, lessonNumber) {
+  try {
+    const res = await dbPool.query("SELECT * FROM lessons WHERE lesson_number = $1", [lessonNumber]);
+    if (res.rows.length === 0) {
+      await sendViaHeltar(phone, "🌸 You've completed all lessons in this course!", "lesson");
+      return;
     }
-  );
-  return resp.data.data[0].embedding;
-}
-
-async function pineconeQuery(vector, topK = 5, namespace, filter) {
-  const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
-  const body = { vector, topK, includeMetadata: true };
-  if (namespace) body.namespace = namespace;
-  if (filter) body.filter = filter;
-  const resp = await axios.post(url, body, {
-    headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" },
-    timeout: 20000,
-  });
-  return resp.data;
-}
-
-function getNamespacesArray() {
-  if (PINECONE_NAMESPACES) {
-    return PINECONE_NAMESPACES.split(",").map((s) => s.trim()).filter(Boolean);
+    const lesson = res.rows[0];
+    await sendViaHeltar(phone, lesson.verse, "lesson");
+    await new Promise(r => setTimeout(r, 1500));
+    await sendViaHeltar(phone, lesson.translation, "lesson");
+    await new Promise(r => setTimeout(r, 1500));
+    await sendViaHeltar(phone, `Shri Krishna kehte hain: ${lesson.commentary}`, "lesson");
+    await new Promise(r => setTimeout(r, 1500));
+    await sendViaHeltar(phone, `🤔 ${lesson.reflection_question}`, "lesson");
+  } catch (e) {
+    console.error("❌ sendLesson failed:", e.message);
   }
-  return [PINECONE_NAMESPACE || "verse"];
-}
-
-async function multiNamespaceQuery(vector, topK = 8, filter) {
-  const ns = getNamespacesArray();
-  const promises = ns.map(async (n) => {
-    try {
-      const r = await pineconeQuery(vector, topK, n, filter);
-      return (r?.matches || []).map((m) => ({ ...m, _namespace: n }));
-    } catch (e) {
-      console.warn("⚠ Pinecone query failed for namespace", n, e?.message || e);
-      return [];
-    }
-  });
-  const arr = await Promise.all(promises);
-  const allMatches = arr.flat();
-  allMatches.sort((a, b) => (b.score || 0) - (a.score || 0));
-  return allMatches;
-}
-
-/* ---------------- Text Classification ---------------- */
-function normalizeTextForSmallTalk(s) {
-  if (!s) return "";
-  let t = String(s).trim().toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
-  t = t.replace(/\bu\b/g, "you");
-  t = t.replace(/\br\b/g, "are");
-  return t;
-}
-
-function isGreeting(text) {
-  if (!text) return false;
-  const t = normalizeTextForSmallTalk(text);
-  const greetings = new Set(["hi", "hii", "hello", "hey", "namaste", "hare krishna", "harekrishna"]);
-  return greetings.has(t);
-}
-
-const CONCERN_KEYWORDS = [
-  "stress",
-  "anxiety",
-  "depressed",
-  "depression",
-  "angry",
-  "anger",
-  "sleep",
-  "insomnia",
-  "panic",
-  "suicidal",
-  "sad",
-  "lonely",
-  "frustrated",
-  "hurt",
-  "confused",
-];
-
-function isSmallTalk(text) {
-  if (!text) return false;
-  const t = normalizeTextForSmallTalk(text);
-  for (const keyword of CONCERN_KEYWORDS) {
-    if (t.includes(keyword)) return false;
-  }
-  const smalls = new Set([
-    "how are you",
-    "how are you doing",
-    "how do you do",
-    "how r you",
-    "how ru",
-    "how are u",
-    "thanks",
-    "thank you",
-    "thx",
-    "ok",
-    "okay",
-    "good",
-    "nice",
-    "cool",
-    "bye",
-    "see you",
-    "k",
-  ]);
-  return smalls.has(t);
-}
-
-/* ---------------- System Prompts ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context.
-- Use "||" to separate each message bubble.
-- Part 1: The Sanskrit verse.
-- Part 2: Hinglish translation.
-- Part 3: "Shri Krishna kehte hain:" + 2-3 sentence essence/explanation.
-- Part 4: A simple follow-up question.
-- Strictly and exclusively reply in {{LANGUAGE}}.`;
-
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically.
-- Use user's chat history for context.
-- DO NOT quote new verses here.
-- Keep replies very short (1-3 sentences).
-- If strong emotional need is expressed, end with [NEW_TOPIC].
-- Strictly and exclusively reply in {{LANGUAGE}}.`;
-
-/* ---------------- Main RAG ---------------- */
-function safeText(md, key) {
-  return (md && md[key] && String(md[key]).trim()) || "";
-}
-
-async function getRAGResponse(phone, text, language, chatHistory) {
-  const qVec = await getEmbedding(text);
-  const matches = await multiNamespaceQuery(qVec);
-  const verseMatch = matches.find((m) => m.metadata?.sanskrit);
-
-  if (!verseMatch || verseMatch.score < 0.25) {
-    const fallback = "I hear your concern. Could you share more so I can guide you better?";
-    await sendViaHeltar(phone, fallback, "fallback");
-    return { assistantResponse: fallback, stage: "chatting", topic: text };
-  }
-
-  const verseSanskrit = safeText(verseMatch.metadata, "sanskrit");
-  const verseHinglish = safeText(verseMatch.metadata, "hinglish1");
-  const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
-  const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
-
-  const aiResponse = await openaiChat([
-    { role: "system", content: ragPrompt },
-    { role: "user", content: `User's concern: "${text}"\n\nContext:\n${verseContext}` },
-  ]);
-
-  if (aiResponse) {
-    const messageParts = aiResponse.split("||").map((p) => p.trim());
-    for (const part of messageParts) {
-      if (part) {
-        await sendViaHeltar(phone, part, "verse");
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-    }
-    return { assistantResponse: aiResponse.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
-  }
-
-  return { assistantResponse: "I am here to listen.", stage: "chatting", topic: text };
 }
 
 /* ---------------- Webhook ---------------- */
@@ -390,7 +242,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     const phone = msg?.from;
-    const text = msg?.text?.body;
+    const text = msg?.text?.body?.trim().toLowerCase();
 
     if (!phone || !text) {
       console.warn("⚠️ Webhook missing phone/text.");
@@ -401,13 +253,32 @@ app.post("/webhook", async (req, res) => {
     await trackIncoming(phone, text);
 
     const userState = await getUserState(phone);
-    await updateUserState(phone, { last_activity_ts: "NOW()" });
 
-    let chatHistory = userState.chat_history || [];
-    chatHistory.push({ role: "user", content: text });
-    if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
+    /* ---- Check for Lesson Triggers ---- */
+    if (text.includes("teach me") || text.includes("bhagavad gita") || text.includes("gita")) {
+      let nextLesson = (userState.current_lesson || 0) + 1;
+      if (nextLesson > 7) {
+        await sendViaHeltar(phone, "🌸 You’ve already completed the 7-day course!", "lesson");
+        return;
+      }
+      await updateUserState(phone, { current_lesson: nextLesson });
+      await sendLesson(phone, nextLesson);
+      return;
+    }
 
-    const incoming = text.trim();
+    if (text === "next" || text.includes("hare krishna")) {
+      let nextLesson = (userState.current_lesson || 0) + 1;
+      if (nextLesson > 7) {
+        await sendViaHeltar(phone, "🌸 You’ve already completed the 7-day course!", "lesson");
+        return;
+      }
+      await updateUserState(phone, { current_lesson: nextLesson });
+      await sendLesson(phone, nextLesson);
+      return;
+    }
+
+    /* ---- Otherwise, proceed with existing flow ---- */
+    const incoming = text;
 
     // 1. Greeting / small talk
     if (isGreeting(incoming) || isSmallTalk(incoming)) {
@@ -421,8 +292,11 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // 2. Stage-based flow
+    // 2. Stage-based flow (chatting → new_topic)
     let currentStage = userState.conversation_stage;
+    let chatHistory = userState.chat_history || [];
+    chatHistory.push({ role: "user", content: text });
+    if (chatHistory.length > 8) chatHistory = chatHistory.slice(-8);
 
     if (currentStage === "chatting") {
       console.log("🤝 Stage = chatting");
