@@ -1,9 +1,10 @@
-// index.js — SarathiAI (Production Ready with RAG, Lessons, Language Awareness, and HowAreYou intent)
+// index.js — SarathiAI (Production-ready: Heltar + RAG + Lessons + Analytics + Language-aware)
 import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
 import axios from "axios";
+import fs from "fs";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -11,7 +12,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ---------------- Config ---------------- */
+/* ---------------- Config / env ---------------- */
 const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
@@ -20,18 +21,22 @@ const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
 
-const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
+const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim(); // e.g. https://your-pinecone-endpoint
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
 const PINECONE_NAMESPACE = (process.env.PINECONE_NAMESPACE || "verse").trim();
+const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
+const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-/* ---------------- Database Setup ---------------- */
+/* ---------------- Database Setup (create + ensure analytics columns) ---------------- */
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
+
+    // Create users table with analytics columns if not exists
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         phone_number VARCHAR(255) PRIMARY KEY,
@@ -40,10 +45,21 @@ async function setupDatabase() {
         chat_history JSONB DEFAULT '[]'::jsonb,
         conversation_stage VARCHAR(50) DEFAULT 'new_topic',
         last_topic_summary TEXT,
+        messages_since_verse INT DEFAULT 0,
+        first_seen_date DATE,
+        last_seen_date DATE,
+        total_sessions INT DEFAULT 0,
+        total_incoming INT DEFAULT 0,
+        total_outgoing INT DEFAULT 0,
+        last_message TEXT,
+        last_message_role VARCHAR(20),
+        last_response_type VARCHAR(20),
         current_lesson INT DEFAULT 0,
         language_preference VARCHAR(10) DEFAULT 'English'
       );
     `);
+
+    // Create lessons table
     await client.query(`
       CREATE TABLE IF NOT EXISTS lessons (
         lesson_number INT PRIMARY KEY,
@@ -53,10 +69,23 @@ async function setupDatabase() {
         reflection_question TEXT
       );
     `);
+
     client.release();
-    console.log("✅ Database tables ready.");
+    console.log("✅ Database tables 'users' & 'lessons' are ready (or existed).");
   } catch (err) {
-    console.error("❌ DB Setup Error:", err);
+    console.error("❌ Error setting up database tables:", err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | DB Setup Error | ${JSON.stringify(err?.message || err)}\n`);
+  }
+}
+
+/* ---------------- Helper: safe JSON parse for chat_history ---------------- */
+function parseChatHistory(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
   }
 }
 
@@ -65,54 +94,89 @@ async function getUserState(phone) {
   try {
     const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (res.rows.length === 0) {
+      // insert initial row
       await dbPool.query(
-        "INSERT INTO users (phone_number, last_activity_ts, language_preference) VALUES ($1, CURRENT_TIMESTAMP, 'English')",
+        "INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions, language_preference) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English')",
         [phone]
       );
-      return (await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone])).rows[0];
+      const newRes = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
+      const u = newRes.rows[0];
+      u.chat_history = parseChatHistory(u.chat_history);
+      return u;
     }
-    return res.rows[0];
+    const user = res.rows[0];
+    user.chat_history = parseChatHistory(user.chat_history);
+    return user;
   } catch (err) {
-    console.error("getUserState failed:", err.message);
+    console.error("getUserState failed:", err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getUserState Error | ${JSON.stringify(err?.message || err)}\n`);
     return { phone_number: phone, chat_history: [], conversation_stage: "new_topic", current_lesson: 0, language_preference: "English" };
   }
 }
 
 async function updateUserState(phone, updates) {
   try {
+    if (!updates || Object.keys(updates).length === 0) return;
+    // convert Date sentinel
     if (updates.last_activity_ts === "NOW()") updates.last_activity_ts = new Date().toISOString();
-    const setClauses = [];
-    const values = [];
-    let i = 1;
-    for (const key in updates) {
-      setClauses.push(`${key} = $${i}`);
-      const val = typeof updates[key] === "object" ? JSON.stringify(updates[key]) : updates[key];
-      values.push(val);
-      i++;
-    }
-    if (!setClauses.length) return;
+
+    const keys = Object.keys(updates);
+    const clauses = keys.map((k, i) => `${k} = $${i + 1}`);
+    const values = keys.map(k => (typeof updates[k] === "object" ? JSON.stringify(updates[k]) : updates[k]));
     values.push(phone);
-    await dbPool.query(`UPDATE users SET ${setClauses.join(", ")} WHERE phone_number = $${i}`, values);
+    const sql = `UPDATE users SET ${clauses.join(", ")} WHERE phone_number = $${keys.length + 1}`;
+    await dbPool.query(sql, values);
   } catch (err) {
-    console.error("updateUserState failed:", err.message);
+    console.error("updateUserState failed:", err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | updateUserState Error | ${JSON.stringify(err?.message || err)}\n`);
   }
 }
 
-/* ---------------- Analytics ---------------- */
+/* ---------------- Analytics helpers ---------------- */
 async function trackIncoming(phone, text) {
   try {
     const user = await getUserState(phone);
-    await updateUserState(phone, { last_activity_ts: "NOW()" });
+    const now = new Date();
+    let addSession = false;
+    if (user.last_activity_ts) {
+      const last = new Date(user.last_activity_ts);
+      const diffHours = (now - last) / (1000 * 60 * 60);
+      if (diffHours > 12) addSession = true;
+    } else {
+      addSession = true;
+    }
+
+    const updates = {
+      last_activity_ts: now.toISOString(),
+      last_seen_date: now.toISOString().slice(0, 10),
+      last_message: text,
+      last_message_role: "user",
+      total_incoming: (user.total_incoming || 0) + 1
+    };
+    if (!user.first_seen_date) updates.first_seen_date = now.toISOString().slice(0, 10);
+    if (addSession) updates.total_sessions = (user.total_sessions || 0) + 1;
+
+    await updateUserState(phone, updates);
+    console.log(`📊 Incoming tracked: ${phone}`);
   } catch (err) {
-    console.error("trackIncoming failed:", err.message);
+    console.error("trackIncoming failed:", err?.message || err);
   }
 }
 
 async function trackOutgoing(phone, reply, type = "chat") {
   try {
-    await updateUserState(phone, { last_message_role: "assistant", last_message: reply, last_response_type: type, last_activity_ts: "NOW()" });
+    const user = await getUserState(phone);
+    const updates = {
+      last_activity_ts: new Date().toISOString(),
+      last_message: reply,
+      last_message_role: "assistant",
+      last_response_type: type,
+      total_outgoing: (user.total_outgoing || 0) + 1
+    };
+    await updateUserState(phone, updates);
+    console.log(`📊 Outgoing tracked: ${phone} (${type})`);
   } catch (err) {
-    console.error("trackOutgoing failed:", err.message);
+    console.error("trackOutgoing failed:", err?.message || err);
   }
 }
 
@@ -121,211 +185,416 @@ async function sendViaHeltar(phone, message, type = "chat") {
   try {
     if (!HELTAR_API_KEY) {
       console.warn(`(Simulated -> ${phone}): ${message}`);
+      // still track if simulation
       await trackOutgoing(phone, message, type);
       return { simulated: true, message };
     }
-    const resp = await axios.post(
-      "https://api.heltar.com/v1/messages/send",
-      { messages: [{ clientWaNumber: phone, message, messageType: "text" }] },
-      { headers: { Authorization: `Bearer ${HELTAR_API_KEY}` } }
-    );
+
+    // build payload
+    const payload = {
+      messages: [
+        {
+          clientWaNumber: phone,
+          message: message,
+          messageType: "text"
+        }
+      ]
+    };
+
+    const resp = await axios.post("https://api.heltar.com/v1/messages/send", payload, {
+      headers: {
+        Authorization: `Bearer ${HELTAR_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 20000
+    });
+
     await trackOutgoing(phone, message, type);
+    console.log(`✅ Heltar message sent to ${phone}: ${String(message).slice(0, 120).replace(/\n/g, " ")}`);
     return resp.data;
   } catch (err) {
-    console.error("Heltar send error:", err?.response?.data || err?.message);
+    console.error("Heltar send error:", err?.response?.data || err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Heltar Send Error | ${JSON.stringify(err?.response?.data || err?.message || err)}\n`);
+    // allow caller to continue — don't throw to avoid crashing webhook
+    return null;
   }
 }
 
 /* ---------------- Lessons ---------------- */
-async function sendLesson(phone, lessonNumber, lang) {
+async function sendLesson(phone, lessonNumber) {
   try {
     const res = await dbPool.query("SELECT * FROM lessons WHERE lesson_number = $1", [lessonNumber]);
-    if (!res.rows.length) {
-      await sendViaHeltar(phone, lang === "Hindi" ? "🌸 Aapne saare lessons complete kar liye!" : "🌸 You've completed all lessons!", "lesson");
+    if (!res.rows || res.rows.length === 0) {
+      await sendViaHeltar(phone, "🌸 You've completed all lessons in this course!", "lesson");
       return;
     }
-    const l = res.rows[0];
-    await sendViaHeltar(phone, l.verse, "lesson");
-    await sendViaHeltar(phone, l.translation, "lesson");
-    await sendViaHeltar(phone, lang === "Hindi" ? `Shri Krishna kehte hain: ${l.commentary}` : `Shri Krishna says: ${l.commentary}`, "lesson");
-    await sendViaHeltar(phone, `🤔 ${l.reflection_question}`, "lesson");
-    await sendViaHeltar(phone, lang === "Hindi" ? `Reply "Hare Krishna" ya "Next" to continue.` : `Reply "Hare Krishna" or "Next" to continue.`, "lesson_prompt");
+    const lesson = res.rows[0];
+    await sendViaHeltar(phone, lesson.verse, "lesson");
+    await new Promise(r => setTimeout(r, 900));
+    if (lesson.translation) await sendViaHeltar(phone, lesson.translation, "lesson");
+    await new Promise(r => setTimeout(r, 900));
+    if (lesson.commentary) await sendViaHeltar(phone, `Shri Krishna kehte hain: ${lesson.commentary}`, "lesson");
+    await new Promise(r => setTimeout(r, 900));
+    if (lesson.reflection_question) await sendViaHeltar(phone, `🤔 ${lesson.reflection_question}`, "lesson");
+    await new Promise(r => setTimeout(r, 600));
+    await sendViaHeltar(phone, `Reply "Hare Krishna" or "Next" to receive the next lesson when you're ready. Reply "Exit" to leave lessons.`, "lesson_prompt");
   } catch (err) {
-    console.error("sendLesson failed:", err.message);
+    console.error("sendLesson failed:", err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | sendLesson Error | ${JSON.stringify(err?.message || err)}\n`);
   }
 }
 
-/* ---------------- Text Classification / Intent ---------------- */
-function normalizeText(s) { return String(s).trim().toLowerCase(); }
-function isGreeting(t) { return /(hi|hello|hey|hii|namaste|hare\s*krishna)/i.test(t); }
-function isHowAreYou(t) { return /(how\s*are\s*(you|u)|how\s*r\s*u|kaise ho)/i.test(t); }
-function isSmallTalk(t) { return /(thanks|thank you|ok|okay|good|nice|cool|bye|fine|good morning|good night)/i.test(t); }
-function isLessonRequest(t) { return /(teach|lesson|gita)/i.test(t); }
-function isEnglishRequest(t) { return /english/i.test(t); }
-function isHindiRequest(t) { return /(hindi|हिन्दी)/i.test(t); }
+/* ---------------- Text classification / intents ---------------- */
+function normalizeText(s) {
+  try { return String(s || "").trim(); } catch { return ""; }
+}
+function isGreeting(t) {
+  return /\b(hi|hello|hey|hii|namaste|hare\s*krishna)\b/i.test(t);
+}
+function isHowAreYou(t) {
+  return /\b(how\s*are\s*(you|u)|how\s*r\s*u|kaise\s+ho|kaise\s+hain)\b/i.test(t);
+}
+function isSmallTalk(t) {
+  // short replies and wellbeing responses -> do not route to RAG
+  return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well|good morning|good night)\b/i.test(t);
+}
+function isLessonRequest(t) {
+  return /\b(teach|lesson|gita|bhagavad|bhagavad gita)\b/i.test(t);
+}
+function isEnglishRequest(t) { return /\benglish\b/i.test(t); }
+function isHindiRequest(t) { return /\b(hindi|हिन्दी|हिंदी)\b/i.test(t); }
+function isExitLessons(t) { return /\b(exit|stop lessons|stop|leave)\b/i.test(t); }
+function isRestartLesson(t) { return /\b(restart|start again)\b/i.test(t); }
 
-/* ---------------- OpenAI + Pinecone ---------------- */
+/* Concern keywords (used by system prompt to instruct model) */
+const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "panic", "suicidal", "sad", "lonely", "frustrated", "hurt", "confused", "overwhelmed"];
+
+/* ---------------- System prompts ---------------- */
+const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context.
+- Use "||" to separate each message bubble. (assistant will output multiple bubbles separated by "||")
+- Part 1: The Sanskrit verse.
+- Part 2: A short Hinglish translation (or English if requested).
+- Part 3: "Shri Krishna kehte hain:" + 1-3 sentence essence/explanation tailored to the user's concern.
+- Part 4: A short, compassionate follow-up question inviting action/reflection.
+- Always be concise, warm, practical. Strictly reply in {{LANGUAGE}}.`;
+
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically.
+- Use the user's chat history for context.
+- Offer short (1-3 sentence) responses in the user's language preference.
+- If the user expresses clear emotional distress (sad, angry, suicidal, anxious etc.), append the token [NEW_TOPIC] to your reply to indicate the system should send a new teaching next.
+- Do NOT quote new verses in this mode. Strictly reply in {{LANGUAGE}}.`;
+
+/* ---------------- OpenAI & Pinecone helpers ---------------- */
 async function openaiChat(messages, maxTokens = 400) {
-  if (!OPENAI_KEY) return null;
+  if (!OPENAI_KEY) {
+    console.warn("OPENAI_API_KEY missing — openaiChat returning null");
+    return null;
+  }
   try {
-    const resp = await axios.post("https://api.openai.com/v1/chat/completions", {
-      model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7
-    }, { headers: { Authorization: `Bearer ${OPENAI_KEY}` } });
-    return resp.data?.choices?.[0]?.message?.content;
+    const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7 };
+    const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 25000
+    });
+    return resp.data?.choices?.[0]?.message?.content || null;
   } catch (err) {
-    console.error("openaiChat error:", err?.message);
+    console.error("openaiChat error:", err?.response?.data || err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | openaiChat Error | ${JSON.stringify(err?.response?.data || err?.message)}\n`);
     return null;
   }
 }
 
 async function getEmbedding(text) {
-  const resp = await axios.post("https://api.openai.com/v1/embeddings", {
-    model: EMBED_MODEL, input: text
-  }, { headers: { Authorization: `Bearer ${OPENAI_KEY}` } });
-  return resp.data.data[0].embedding;
+  if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY missing");
+  try {
+    const resp = await axios.post("https://api.openai.com/v1/embeddings", { model: EMBED_MODEL, input: text }, {
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 30000
+    });
+    return resp.data?.data?.[0]?.embedding;
+  } catch (err) {
+    console.error("getEmbedding error:", err?.response?.data || err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getEmbedding Error | ${JSON.stringify(err?.response?.data || err?.message)}\n`);
+    throw err;
+  }
 }
 
-async function pineconeQuery(vector, topK = 3, namespace) {
-  const resp = await axios.post(
-    `${PINECONE_HOST.replace(/\/$/, "")}/query`,
-    { vector, topK, includeMetadata: true, namespace },
-    { headers: { "Api-Key": PINECONE_API_KEY } }
-  );
+async function pineconeQuery(vector, topK = 5, namespace) {
+  if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
+  const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
+  const body = { vector, topK, includeMetadata: true };
+  if (namespace) body.namespace = namespace;
+  const resp = await axios.post(url, body, {
+    headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000
+  });
   return resp.data;
 }
 
-/* ---------------- RAG Response ---------------- */
-async function getRAGResponse(phone, text, user) {
-  try {
-    const vec = await getEmbedding(text);
-    const results = await pineconeQuery(vec, 5, PINECONE_NAMESPACE);
+function getNamespacesArray() {
+  if (PINECONE_NAMESPACES) return PINECONE_NAMESPACES.split(",").map(s => s.trim()).filter(Boolean);
+  return [PINECONE_NAMESPACE || "verse"];
+}
 
-    const validMatches = results.matches.filter(m => m.metadata?.sanskrit || m.metadata?.verse);
-    const historyMessages = (user.chat_history || []).slice(-10).map(m => ({ role: m.role, content: m.content }));
-
-    if (!validMatches.length) {
-      const prompt = [
-        { role: "system", content: `You are SarathiAI, a friendly and wise companion. Answer in ${user.language_preference}.` },
-        ...historyMessages,
-        { role: "user", content: text }
-      ];
-      const resp = await openaiChat(prompt, 400);
-      if (resp) await sendViaHeltar(phone, resp, "chat");
-      return { assistantResponse: resp || "I am here to listen.", topic: text };
+async function multiNamespaceQuery(vector, topK = 8) {
+  const namespaces = getNamespacesArray();
+  const promises = namespaces.map(async ns => {
+    try {
+      const r = await pineconeQuery(vector, topK, ns);
+      return (r?.matches || []).map(m => ({ ...m, _namespace: ns }));
+    } catch (err) {
+      console.warn("Pinecone namespace query failed:", ns, err?.message || err);
+      return [];
     }
+  });
+  const arr = await Promise.all(promises);
+  const merged = arr.flat();
+  merged.sort((a, b) => (b.score || 0) - (a.score || 0));
+  return merged;
+}
 
-    const context = validMatches.slice(0, 3).map(m => {
-      const verse = m.metadata?.sanskrit || m.metadata?.verse || "";
-      const translation = m.metadata?.hinglish1 || m.metadata?.translation || "";
-      return `Sanskrit: ${verse}\nHinglish: ${translation}`;
-    }).join("\n\n");
+/* ---------------- Utility for RAG ---------------- */
+function safeText(md, key) {
+  return md && md[key] ? String(md[key]).trim() : "";
+}
 
-    const prompt = [
-      { role: "system", content: `You are SarathiAI, a friendly and wise companion. Answer in ${user.language_preference}.` },
-      ...historyMessages,
-      { role: "user", content: text },
-      { role: "system", content: `Context from verses:\n${context}` }
-    ];
-
-    const resp = await openaiChat(prompt, 400);
-    if (resp) await sendViaHeltar(phone, resp, "verse");
-    return { assistantResponse: resp || "I am here to listen.", topic: text };
+async function transformQueryForRetrieval(userQuery) {
+  try {
+    const prompt = `You are an expert in the Bhagavad Gita. Transform the user's query into a concise search phrase for retrieval of related verses.\nUser: "${userQuery}"\nReturn just a short search phrase.`;
+    const resp = await openaiChat([{ role: "user", content: prompt }], 40);
+    if (!resp) return userQuery;
+    const t = resp.replace(/["']/g, "").trim();
+    console.log(`ℹ️ Transformed query: "${userQuery}" -> "${t}"`);
+    return t;
   } catch (err) {
-    console.error("getRAGResponse failed:", err.message);
-    return { assistantResponse: "I am here to listen.", topic: text };
+    console.warn("transformQueryForRetrieval failed, fallback to original text");
+    return userQuery;
   }
 }
 
-/* ---------------- Webhook ---------------- */
+/* ---------------- Main RAG + send logic ---------------- */
+async function getRAGResponse(phone, text, language, chatHistory) {
+  try {
+    const transformed = await transformQueryForRetrieval(text);
+    const qVec = await getEmbedding(transformed);
+    const matches = await multiNamespaceQuery(qVec, 8);
+
+    const verseMatch = matches.find(m => (m.metadata && (m.metadata.sanskrit || m.metadata.verse || m.metadata.sanskrit_text)));
+    console.log(`[Pinecone] matches: ${matches.length}; best score: ${verseMatch?.score}`);
+
+    if (!verseMatch || (verseMatch.score || 0) < 0.25) {
+      // Fallback — ask for more info (short)
+      const fallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
+      await sendViaHeltar(phone, fallback, "fallback");
+      return { assistantResponse: fallback, stage: "chatting", topic: text };
+    }
+
+    const verseSanskrit = safeText(verseMatch.metadata, "sanskrit") || safeText(verseMatch.metadata, "verse") || "";
+    const verseHinglish = safeText(verseMatch.metadata, "hinglish1") || safeText(verseMatch.metadata, "translation") || "";
+    const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
+
+    // Prepare RAG system prompt in user's language
+    const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
+    const modelUser = `User's problem: "${text}"\n\nContext from Gita:\n${verseContext}`;
+
+    const aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
+    if (!aiResp) {
+      const fallback2 = "I am here to listen.";
+      await sendViaHeltar(phone, fallback2, "fallback");
+      return { assistantResponse: fallback2, stage: "chatting", topic: text };
+    }
+
+    // The assistant is expected to separate bubbles with "||"
+    const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
+    for (const part of parts) {
+      await sendViaHeltar(phone, part, "verse");
+      await new Promise(r => setTimeout(r, 900));
+    }
+
+    return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
+  } catch (err) {
+    console.error("getRAGResponse failed:", err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getRAGResponse Error | ${JSON.stringify(err?.message || err)}\n`);
+    const fallback = "I am here to listen.";
+    try { await sendViaHeltar(phone, fallback, "fallback"); } catch (e) {}
+    return { assistantResponse: fallback, stage: "chatting", topic: text };
+  }
+}
+
+/* ---------------- Webhook handler ---------------- */
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200);
-  const msg = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-  if (!msg) return console.log("⚠️ Ignoring non-message event");
+  try {
+    // Acknowledge quickly
+    res.status(200).send("OK");
 
-  const phone = msg?.from;
-  const text = msg?.text?.body || "";
-  console.log(`📩 Incoming from ${phone}: "${text}"`);
-  await trackIncoming(phone, text);
-
-  const user = await getUserState(phone);
-  const lower = normalizeText(text);
-
-  // ----- Language switch -----
-  if (isEnglishRequest(text)) {
-    await updateUserState(phone, { language_preference: "English" });
-    await sendViaHeltar(phone, "Language switched to English.", "language");
-    return;
-  }
-  if (isHindiRequest(text)) {
-    await updateUserState(phone, { language_preference: "Hindi" });
-    await sendViaHeltar(phone, "भाषा बदल दी गई है, अब उत्तर हिन्दी में मिलेंगे।", "language");
-    return;
-  }
-
-  // ----- Greetings -----
-  if (isGreeting(lower)) {
-    await sendViaHeltar(phone,
-      user.language_preference === "Hindi"
-        ? "Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?"
-        : "Hare Krishna 🙏\nI am Sarathi, your companion.\nHow can I help you today?",
-      "welcome"
-    );
-    await updateUserState(phone, { conversation_stage: "new_topic" });
-    return;
-  }
-
-  // ----- How are you -----
-  if (isHowAreYou(lower)) {
-    await sendViaHeltar(phone,
-      user.language_preference === "Hindi"
-        ? "Main bilkul theek hoon! 🙏 Aap kaise hain?"
-        : "I'm doing well, thank you! 🙏 How are you?",
-      "small_talk"
-    );
-    return;
-  }
-
-  // ----- Small talk -----
-  if (isSmallTalk(lower)) {
-    await sendViaHeltar(phone,
-      user.language_preference === "Hindi"
-        ? "Shukriya! Aap aur kya jaanna chahte hain?"
-        : "Thanks! What else would you like to know?",
-      "small_talk"
-    );
-    return;
-  }
-
-  // ----- Lesson request -----
-  if (isLessonRequest(lower)) {
-    const nextLesson = (user.current_lesson || 0) + 1;
-    await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
-    await sendLesson(phone, nextLesson, user.language_preference);
-    return;
-  }
-
-  // ----- Lesson continuation -----
-  if (user.conversation_stage === "lesson_mode") {
-    if (lower === "next" || lower.includes("hare krishna")) {
-      const nextLesson = (user.current_lesson || 0) + 1;
-      await updateUserState(phone, { current_lesson: nextLesson });
-      await sendLesson(phone, nextLesson, user.language_preference);
+    // Parse message (Heltar / WhatsApp Business / Meta incoming format)
+    const body = req.body || {};
+    const msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
+    if (!msg) {
+      console.log("⚠️ Ignoring non-message webhook event.");
       return;
     }
-  }
 
-  // ----- RAG / fallback -----
-  const ragResult = await getRAGResponse(phone, text, user);
-  const updatedHistory = [...(user.chat_history || []), { role: "user", content: text }, { role: "assistant", content: ragResult.assistantResponse }];
-  await updateUserState(phone, {
-    conversation_stage: "chatting",
-    chat_history: updatedHistory.slice(-15),
-    last_topic_summary: ragResult.topic
-  });
+    const phone = msg?.from;
+    const rawText = msg?.text?.body || msg?.button?.payload || msg?.interactive?.button_reply?.id || msg?.interactive?.list_reply?.id || "";
+    const text = String(rawText || "").trim();
+    if (!phone || text.length === 0) {
+      console.warn("⚠️ Webhook missing phone/text.");
+      return;
+    }
+
+    console.log(`📩 Incoming from ${phone}: "${text}"`);
+    await trackIncoming(phone, text);
+
+    // load user
+    const user = await getUserState(phone);
+    const lower = text.toLowerCase();
+
+    // Language switch requests
+    if (isEnglishRequest(lower)) {
+      await updateUserState(phone, { language_preference: "English" });
+      await sendViaHeltar(phone, "Language switched to English.", "language");
+      return;
+    }
+    if (isHindiRequest(lower)) {
+      await updateUserState(phone, { language_preference: "Hindi" });
+      await sendViaHeltar(phone, "भाषा बदल दी गई है — अब उत्तर हिन्दी में मिलेंगे।", "language");
+      return;
+    }
+
+    // Greetings
+    if (isGreeting(lower)) {
+      const welcome = user.language_preference === "Hindi"
+        ? "Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?"
+        : "Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nHow can I help you today?";
+      await sendViaHeltar(phone, welcome, "welcome");
+      // reset conversation stage & chat history
+      await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]) });
+      return;
+    }
+
+    // How are you (explicit)
+    if (isHowAreYou(lower)) {
+      const reply = user.language_preference === "Hindi"
+        ? "Main bilkul theek hoon! 🙏 Aap kaise hain?"
+        : "I'm doing well, thank you! 🙏 How are you?";
+      await sendViaHeltar(phone, reply, "small_talk");
+      return;
+    }
+
+    // Small talk / short replies (thanks, im fine, im happy etc)
+    if (isSmallTalk(lower)) {
+      const reply = user.language_preference === "Hindi"
+        ? "Shukriya! Aap aur kya jaanna chahte hain?"
+        : "Thanks! What else would you like to know?";
+      await sendViaHeltar(phone, reply, "small_talk");
+      return;
+    }
+
+    // Lesson explicit request: start/continue
+    if (isLessonRequest(lower) || lower === "teach me" || lower === "teach me gita") {
+      let nextLesson = (user.current_lesson || 0) + 1;
+      await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
+      await sendLesson(phone, nextLesson);
+      return;
+    }
+
+    // If in lesson_mode, handle lesson commands (next, restart, exit) or allow free queries to RAG but keep them in lesson_mode
+    if (user.conversation_stage === "lesson_mode") {
+      // navigation commands
+      if (lower === "next" || lower.includes("hare krishna") || lower === "harekrishna") {
+        const nextLesson = (user.current_lesson || 0) + 1;
+        await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
+        await sendLesson(phone, nextLesson);
+        return;
+      }
+      if (isRestartLesson(lower) || lower === "restart") {
+        await updateUserState(phone, { current_lesson: 0 });
+        await sendViaHeltar(phone, "🌸 Course progress reset. Reply 'teach me gita' to start again.", "lesson");
+        return;
+      }
+      if (isExitLessons(lower)) {
+        await updateUserState(phone, { conversation_stage: "new_topic" });
+        await sendViaHeltar(phone, "Exited lessons. How can I help you now?", "lesson_exit");
+        return;
+      }
+
+      // Greeting inside lesson -> short reply and keep lesson
+      if (isGreeting(lower) || isSmallTalk(lower)) {
+        await sendViaHeltar(phone, `Reply "Next" when you'd like the next lesson.`, "lesson_prompt");
+        return;
+      }
+
+      // Free query inside lesson: route to RAG/chat but keep them in lesson_mode
+      console.log("📖 Lesson mode but free query → route to RAG");
+      let chatHistory = parseChatHistory(user.chat_history);
+      chatHistory.push({ role: "user", content: text });
+      if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+
+      const language = user.language_preference || "English";
+      const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+      chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+
+      await updateUserState(phone, {
+        chat_history: JSON.stringify(chatHistory),
+        last_topic_summary: ragResult.topic || text,
+        conversation_stage: "lesson_mode"
+      });
+      return;
+    }
+
+    // Normal flow: prepare chat history
+    let chatHistory = parseChatHistory(user.chat_history);
+    chatHistory.push({ role: "user", content: text });
+    if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+
+    // Chatting stage: use short assistant replies (OpenAI) and detect [NEW_TOPIC] token
+    if (user.conversation_stage === "chatting") {
+      console.log("🤝 Stage = chatting");
+      const language = user.language_preference || "English";
+      const chatPrompt = CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
+      const aiChatResponse = await openaiChat([{ role: "system", content: chatPrompt }, ...chatHistory], 300);
+
+      if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]")) {
+        const cleanResp = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
+        if (cleanResp) await sendViaHeltar(phone, cleanResp, "chat");
+        // Move to new_topic — next user message should trigger RAG-based teaching
+        await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify(chatHistory) });
+        return;
+      } else if (aiChatResponse) {
+        await sendViaHeltar(phone, aiChatResponse, "chat");
+        chatHistory.push({ role: "assistant", content: aiChatResponse });
+        await updateUserState(phone, { chat_history: JSON.stringify(chatHistory) });
+        return;
+      } else {
+        // If OpenAI failed, fallback to new_topic
+        console.warn("openaiChat returned null -> falling back to RAG");
+      }
+    }
+
+    // New topic (RAG) stage: fetch verse + commentary and switch to 'chatting'
+    console.log("📖 Stage = new_topic → RAG");
+    const language = user.language_preference || "English";
+    const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+    chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+    await updateUserState(phone, {
+      last_topic_summary: ragResult.topic || text,
+      conversation_stage: "chatting",
+      chat_history: JSON.stringify(chatHistory)
+    });
+    return;
+
+  } catch (err) {
+    console.error("❌ Webhook error:", err?.message || err);
+    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Webhook Error | ${JSON.stringify(err?.message || err)}\n`);
+    // do not crash — just return 200 already sent
+  }
 });
 
-/* ---------------- Start ---------------- */
+/* ---------------- Health check endpoint ---------------- */
+app.get("/health", (req, res) => {
+  res.json({ status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString() });
+});
+
+/* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
-  console.log(`🚀 ${BOT_NAME} running on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} listening on port ${PORT}`);
   setupDatabase();
 });
