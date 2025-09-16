@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Final Production-Ready, Language-Aware + RAG Fix)
+// index.js — SarathiAI (Production Ready with RAG, Lessons, Language Awareness, and HowAreYou intent)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ---------------- Config / env ---------------- */
+/* ---------------- Config ---------------- */
 const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
 
@@ -101,7 +101,7 @@ async function updateUserState(phone, updates) {
 /* ---------------- Analytics ---------------- */
 async function trackIncoming(phone, text) {
   try {
-    await getUserState(phone);
+    const user = await getUserState(phone);
     await updateUserState(phone, { last_activity_ts: "NOW()" });
   } catch (err) {
     console.error("trackIncoming failed:", err.message);
@@ -158,9 +158,8 @@ async function sendLesson(phone, lessonNumber, lang) {
 /* ---------------- Text Classification / Intent ---------------- */
 function normalizeText(s) { return String(s).trim().toLowerCase(); }
 function isGreeting(t) { return /(hi|hello|hey|hii|namaste|hare\s*krishna)/i.test(t); }
-function isSmallTalk(t) {
-  return /(thanks|thank you|ok|okay|good|nice|cool|bye|how\s*are\s*(you|u)|how\s*r\s*u|kaise ho|fine|good morning|good night)/i.test(t);
-}
+function isHowAreYou(t) { return /(how\s*are\s*(you|u)|how\s*r\s*u|kaise ho)/i.test(t); }
+function isSmallTalk(t) { return /(thanks|thank you|ok|okay|good|nice|cool|bye|fine|good morning|good night)/i.test(t); }
 function isLessonRequest(t) { return /(teach|lesson|gita)/i.test(t); }
 function isEnglishRequest(t) { return /english/i.test(t); }
 function isHindiRequest(t) { return /(hindi|हिन्दी)/i.test(t); }
@@ -251,6 +250,7 @@ app.post("/webhook", async (req, res) => {
   const user = await getUserState(phone);
   const lower = normalizeText(text);
 
+  // ----- Language switch -----
   if (isEnglishRequest(text)) {
     await updateUserState(phone, { language_preference: "English" });
     await sendViaHeltar(phone, "Language switched to English.", "language");
@@ -262,6 +262,7 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
+  // ----- Greetings -----
   if (isGreeting(lower)) {
     await sendViaHeltar(phone,
       user.language_preference === "Hindi"
@@ -273,6 +274,18 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
+  // ----- How are you -----
+  if (isHowAreYou(lower)) {
+    await sendViaHeltar(phone,
+      user.language_preference === "Hindi"
+        ? "Main bilkul theek hoon! 🙏 Aap kaise hain?"
+        : "I'm doing well, thank you! 🙏 How are you?",
+      "small_talk"
+    );
+    return;
+  }
+
+  // ----- Small talk -----
   if (isSmallTalk(lower)) {
     await sendViaHeltar(phone,
       user.language_preference === "Hindi"
@@ -283,6 +296,7 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
+  // ----- Lesson request -----
   if (isLessonRequest(lower)) {
     const nextLesson = (user.current_lesson || 0) + 1;
     await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
@@ -290,6 +304,7 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
+  // ----- Lesson continuation -----
   if (user.conversation_stage === "lesson_mode") {
     if (lower === "next" || lower.includes("hare krishna")) {
       const nextLesson = (user.current_lesson || 0) + 1;
@@ -299,6 +314,7 @@ app.post("/webhook", async (req, res) => {
     }
   }
 
+  // ----- RAG / fallback -----
   const ragResult = await getRAGResponse(phone, text, user);
   const updatedHistory = [...(user.chat_history || []), { role: "user", content: text }, { role: "assistant", content: ragResult.assistantResponse }];
   await updateUserState(phone, {
