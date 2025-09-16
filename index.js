@@ -159,7 +159,7 @@ async function sendLesson(phone, lessonNumber, lang) {
 function normalizeText(s) { return String(s).trim().toLowerCase(); }
 function isGreeting(t) { return /(hi|hello|hey|hii|namaste|hare\s*krishna)/i.test(t); }
 function isSmallTalk(t) {
-  return /(thanks|thank you|ok|okay|good|nice|cool|bye|how are you|how r u|how ru|kaise ho|fine|good morning|good night)/i.test(t);
+  return /(thanks|thank you|ok|okay|good|nice|cool|bye|how\s*are\s*(you|u)|how\s*r\s*u|kaise ho|fine|good morning|good night)/i.test(t);
 }
 function isLessonRequest(t) { return /(teach|lesson|gita)/i.test(t); }
 function isEnglishRequest(t) { return /english/i.test(t); }
