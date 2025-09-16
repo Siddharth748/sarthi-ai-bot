@@ -1,4 +1,6 @@
 // index.js — SarathiAI (Production-ready: Heltar + RAG + Lessons + Analytics + Language-aware)
+// Paste/replace this entire file in your project.
+
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -21,7 +23,7 @@ const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
 const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const EMBED_MODEL = (process.env.OPENAI_EMBED_MODEL || "text-embedding-3-small").trim();
 
-const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim(); // e.g. https://your-pinecone-endpoint
+const PINECONE_HOST = (process.env.PINECONE_HOST || "").trim();
 const PINECONE_API_KEY = (process.env.PINECONE_API_KEY || "").trim();
 const PINECONE_NAMESPACE = (process.env.PINECONE_NAMESPACE || "verse").trim();
 const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
@@ -29,14 +31,17 @@ const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
+/* Controls how many separate outgoing messages we allow from a single RAG result.
+   You asked for 2 — so default is 2 but you can override via env var. */
+const MAX_OUTGOING_MESSAGES = parseInt(process.env.MAX_OUTGOING_MESSAGES || "2", 10) || 2;
+
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-/* ---------------- Database Setup (create + ensure analytics columns) ---------------- */
+/* ---------------- Database Setup ---------------- */
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
-
-    // Create users table with analytics columns if not exists
+    // users table (analytics + lesson columns)
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         phone_number VARCHAR(255) PRIMARY KEY,
@@ -59,7 +64,7 @@ async function setupDatabase() {
       );
     `);
 
-    // Create lessons table
+    // lessons table
     await client.query(`
       CREATE TABLE IF NOT EXISTS lessons (
         lesson_number INT PRIMARY KEY,
@@ -71,30 +76,24 @@ async function setupDatabase() {
     `);
 
     client.release();
-    console.log("✅ Database tables 'users' & 'lessons' are ready (or existed).");
+    console.log("✅ Database tables 'users' & 'lessons' are ready.");
   } catch (err) {
     console.error("❌ Error setting up database tables:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | DB Setup Error | ${JSON.stringify(err?.message || err)}\n`);
   }
 }
 
-/* ---------------- Helper: safe JSON parse for chat_history ---------------- */
+/* ---------------- Helpers ---------------- */
 function parseChatHistory(raw) {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(raw); } catch { return []; }
 }
 
-/* ---------------- User helpers ---------------- */
 async function getUserState(phone) {
   try {
     const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (res.rows.length === 0) {
-      // insert initial row
       await dbPool.query(
         "INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions, language_preference) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English')",
         [phone]
@@ -117,22 +116,27 @@ async function getUserState(phone) {
 async function updateUserState(phone, updates) {
   try {
     if (!updates || Object.keys(updates).length === 0) return;
-    // convert Date sentinel
+    // convert sentinel
     if (updates.last_activity_ts === "NOW()") updates.last_activity_ts = new Date().toISOString();
 
+    // stringify arrays/objects for JSONB columns expected by DB
     const keys = Object.keys(updates);
+    const vals = keys.map(k => {
+      const v = updates[k];
+      if (Array.isArray(v) || typeof v === "object") return JSON.stringify(v);
+      return v;
+    });
+    vals.push(phone);
     const clauses = keys.map((k, i) => `${k} = $${i + 1}`);
-    const values = keys.map(k => (typeof updates[k] === "object" ? JSON.stringify(updates[k]) : updates[k]));
-    values.push(phone);
     const sql = `UPDATE users SET ${clauses.join(", ")} WHERE phone_number = $${keys.length + 1}`;
-    await dbPool.query(sql, values);
+    await dbPool.query(sql, vals);
   } catch (err) {
     console.error("updateUserState failed:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | updateUserState Error | ${JSON.stringify(err?.message || err)}\n`);
   }
 }
 
-/* ---------------- Analytics helpers ---------------- */
+/* ---------------- Analytics ---------------- */
 async function trackIncoming(phone, text) {
   try {
     const user = await getUserState(phone);
@@ -180,27 +184,16 @@ async function trackOutgoing(phone, reply, type = "chat") {
   }
 }
 
-/* ---------------- Heltar send ---------------- */
+/* ---------------- Heltar sending ---------------- */
 async function sendViaHeltar(phone, message, type = "chat") {
   try {
     if (!HELTAR_API_KEY) {
       console.warn(`(Simulated -> ${phone}): ${message}`);
-      // still track if simulation
       await trackOutgoing(phone, message, type);
       return { simulated: true, message };
     }
 
-    // build payload
-    const payload = {
-      messages: [
-        {
-          clientWaNumber: phone,
-          message: message,
-          messageType: "text"
-        }
-      ]
-    };
-
+    const payload = { messages: [{ clientWaNumber: phone, message: message, messageType: "text" }] };
     const resp = await axios.post("https://api.heltar.com/v1/messages/send", payload, {
       headers: {
         Authorization: `Bearer ${HELTAR_API_KEY}`,
@@ -210,12 +203,12 @@ async function sendViaHeltar(phone, message, type = "chat") {
     });
 
     await trackOutgoing(phone, message, type);
-    console.log(`✅ Heltar message sent to ${phone}: ${String(message).slice(0, 120).replace(/\n/g, " ")}`);
+    console.log(`✅ Heltar message sent to ${phone}: ${String(message).slice(0, 140).replace(/\n/g, " ")}`);
     return resp.data;
   } catch (err) {
     console.error("Heltar send error:", err?.response?.data || err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Heltar Send Error | ${JSON.stringify(err?.response?.data || err?.message || err)}\n`);
-    // allow caller to continue — don't throw to avoid crashing webhook
+    // swallow so webhook remains responsive
     return null;
   }
 }
@@ -229,7 +222,8 @@ async function sendLesson(phone, lessonNumber) {
       return;
     }
     const lesson = res.rows[0];
-    await sendViaHeltar(phone, lesson.verse, "lesson");
+    // send in multiple messages but keep them short
+    if (lesson.verse) await sendViaHeltar(phone, lesson.verse, "lesson");
     await new Promise(r => setTimeout(r, 900));
     if (lesson.translation) await sendViaHeltar(phone, lesson.translation, "lesson");
     await new Promise(r => setTimeout(r, 900));
@@ -245,29 +239,15 @@ async function sendLesson(phone, lessonNumber) {
 }
 
 /* ---------------- Text classification / intents ---------------- */
-function normalizeText(s) {
-  try { return String(s || "").trim(); } catch { return ""; }
-}
-function isGreeting(t) {
-  return /\b(hi|hello|hey|hii|namaste|hare\s*krishna)\b/i.test(t);
-}
-function isHowAreYou(t) {
-  return /\b(how\s*are\s*(you|u)|how\s*r\s*u|kaise\s+ho|kaise\s+hain)\b/i.test(t);
-}
-function isSmallTalk(t) {
-  // short replies and wellbeing responses -> do not route to RAG
-  return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well|good morning|good night)\b/i.test(t);
-}
-function isLessonRequest(t) {
-  return /\b(teach|lesson|gita|bhagavad|bhagavad gita)\b/i.test(t);
-}
+function normalizeText(s) { try { return String(s || "").trim(); } catch { return ""; } }
+function isGreeting(t) { return /\b(hi|hello|hey|hii|namaste|hare\s*krishna)\b/i.test(t); }
+function isHowAreYou(t) { return /\b(how\s*are\s*(you|u)|how\s*r\s*u|kaise\s+ho|kaise\s+hain)\b/i.test(t); }
+function isSmallTalk(t) { return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well|good morning|good night)\b/i.test(t); }
+function isLessonRequest(t) { return /\b(teach|lesson|gita|bhagavad|bhagavad gita)\b/i.test(t); }
 function isEnglishRequest(t) { return /\benglish\b/i.test(t); }
 function isHindiRequest(t) { return /\b(hindi|हिन्दी|हिंदी)\b/i.test(t); }
 function isExitLessons(t) { return /\b(exit|stop lessons|stop|leave)\b/i.test(t); }
 function isRestartLesson(t) { return /\b(restart|start again)\b/i.test(t); }
-
-/* Concern keywords (used by system prompt to instruct model) */
-const CONCERN_KEYWORDS = ["stress", "anxiety", "depressed", "depression", "angry", "anger", "panic", "suicidal", "sad", "lonely", "frustrated", "hurt", "confused", "overwhelmed"];
 
 /* ---------------- System prompts ---------------- */
 const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context.
@@ -351,9 +331,7 @@ async function multiNamespaceQuery(vector, topK = 8) {
 }
 
 /* ---------------- Utility for RAG ---------------- */
-function safeText(md, key) {
-  return md && md[key] ? String(md[key]).trim() : "";
-}
+function safeText(md, key) { return md && md[key] ? String(md[key]).trim() : ""; }
 
 async function transformQueryForRetrieval(userQuery) {
   try {
@@ -364,12 +342,12 @@ async function transformQueryForRetrieval(userQuery) {
     console.log(`ℹ️ Transformed query: "${userQuery}" -> "${t}"`);
     return t;
   } catch (err) {
-    console.warn("transformQueryForRetrieval failed, fallback to original text");
+    console.warn("transformQueryForRetrieval failed — using original query");
     return userQuery;
   }
 }
 
-/* ---------------- Main RAG + send logic ---------------- */
+/* ---------------- Main RAG + sending logic ---------------- */
 async function getRAGResponse(phone, text, language, chatHistory) {
   try {
     const transformed = await transformQueryForRetrieval(text);
@@ -380,7 +358,6 @@ async function getRAGResponse(phone, text, language, chatHistory) {
     console.log(`[Pinecone] matches: ${matches.length}; best score: ${verseMatch?.score}`);
 
     if (!verseMatch || (verseMatch.score || 0) < 0.25) {
-      // Fallback — ask for more info (short)
       const fallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
       await sendViaHeltar(phone, fallback, "fallback");
       return { assistantResponse: fallback, stage: "chatting", topic: text };
@@ -390,7 +367,6 @@ async function getRAGResponse(phone, text, language, chatHistory) {
     const verseHinglish = safeText(verseMatch.metadata, "hinglish1") || safeText(verseMatch.metadata, "translation") || "";
     const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
 
-    // Prepare RAG system prompt in user's language
     const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
     const modelUser = `User's problem: "${text}"\n\nContext from Gita:\n${verseContext}`;
 
@@ -401,11 +377,25 @@ async function getRAGResponse(phone, text, language, chatHistory) {
       return { assistantResponse: fallback2, stage: "chatting", topic: text };
     }
 
-    // The assistant is expected to separate bubbles with "||"
+    // split into parts by "||" but limit total outgoing messages
     const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
-    for (const part of parts) {
-      await sendViaHeltar(phone, part, "verse");
-      await new Promise(r => setTimeout(r, 900));
+
+    // If parts <= MAX_OUTGOING_MESSAGES, send them each. If more, send first (MAX-1) individually, and combine the rest into last message.
+    if (parts.length <= MAX_OUTGOING_MESSAGES) {
+      for (const part of parts) {
+        await sendViaHeltar(phone, part, "verse");
+        await new Promise(r => setTimeout(r, 900));
+      }
+    } else {
+      // send first (MAX-1) individually
+      const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
+      for (let i = 0; i < toSendIndividually; i++) {
+        await sendViaHeltar(phone, parts[i], "verse");
+        await new Promise(r => setTimeout(r, 900));
+      }
+      // combine the remaining parts into final message
+      const remaining = parts.slice(toSendIndividually).join("\n\n");
+      await sendViaHeltar(phone, remaining, "verse");
     }
 
     return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
@@ -424,15 +414,17 @@ app.post("/webhook", async (req, res) => {
     // Acknowledge quickly
     res.status(200).send("OK");
 
-    // Parse message (Heltar / WhatsApp Business / Meta incoming format)
+    // Support multiple incoming body shapes (Heltar / Meta / Twilio-like)
     const body = req.body || {};
-    const msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
-    if (!msg) {
+    // primary candidate
+    let msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
+    if (!msg || typeof msg !== "object") {
       console.log("⚠️ Ignoring non-message webhook event.");
       return;
     }
 
     const phone = msg?.from;
+    // support text in several places
     const rawText = msg?.text?.body || msg?.button?.payload || msg?.interactive?.button_reply?.id || msg?.interactive?.list_reply?.id || "";
     const text = String(rawText || "").trim();
     if (!phone || text.length === 0) {
@@ -443,7 +435,7 @@ app.post("/webhook", async (req, res) => {
     console.log(`📩 Incoming from ${phone}: "${text}"`);
     await trackIncoming(phone, text);
 
-    // load user
+    // fetch user state
     const user = await getUserState(phone);
     const lower = text.toLowerCase();
 
@@ -465,12 +457,11 @@ app.post("/webhook", async (req, res) => {
         ? "Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?"
         : "Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nHow can I help you today?";
       await sendViaHeltar(phone, welcome, "welcome");
-      // reset conversation stage & chat history
       await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]) });
       return;
     }
 
-    // How are you (explicit)
+    // How are you
     if (isHowAreYou(lower)) {
       const reply = user.language_preference === "Hindi"
         ? "Main bilkul theek hoon! 🙏 Aap kaise hain?"
@@ -479,7 +470,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Small talk / short replies (thanks, im fine, im happy etc)
+    // Short small-talk
     if (isSmallTalk(lower)) {
       const reply = user.language_preference === "Hindi"
         ? "Shukriya! Aap aur kya jaanna chahte hain?"
@@ -488,7 +479,7 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Lesson explicit request: start/continue
+    // Lesson explicit request (start/continue)
     if (isLessonRequest(lower) || lower === "teach me" || lower === "teach me gita") {
       let nextLesson = (user.current_lesson || 0) + 1;
       await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
@@ -496,9 +487,8 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // If in lesson_mode, handle lesson commands (next, restart, exit) or allow free queries to RAG but keep them in lesson_mode
+    // If in lesson_mode: support navigation commands, exit, restart, or free queries (RAG) but keep them in lessons
     if (user.conversation_stage === "lesson_mode") {
-      // navigation commands
       if (lower === "next" || lower.includes("hare krishna") || lower === "harekrishna") {
         const nextLesson = (user.current_lesson || 0) + 1;
         await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
@@ -516,13 +506,13 @@ app.post("/webhook", async (req, res) => {
         return;
       }
 
-      // Greeting inside lesson -> short reply and keep lesson
+      // Greeting inside lessons: short prompt
       if (isGreeting(lower) || isSmallTalk(lower)) {
         await sendViaHeltar(phone, `Reply "Next" when you'd like the next lesson.`, "lesson_prompt");
         return;
       }
 
-      // Free query inside lesson: route to RAG/chat but keep them in lesson_mode
+      // Free query inside lesson_mode => route to RAG but keep them in lesson_mode
       console.log("📖 Lesson mode but free query → route to RAG");
       let chatHistory = parseChatHistory(user.chat_history);
       chatHistory.push({ role: "user", content: text });
@@ -540,12 +530,12 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Normal flow: prepare chat history
-    let chatHistory = parseChatHistory(user.chat_history);
+    // Normal flow — prepare chat history
+    let chatHistory = parseChatHistory(user.chat_history || []);
     chatHistory.push({ role: "user", content: text });
     if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
 
-    // Chatting stage: use short assistant replies (OpenAI) and detect [NEW_TOPIC] token
+    // Chatting stage: call OpenAI short replies and detect [NEW_TOPIC]
     if (user.conversation_stage === "chatting") {
       console.log("🤝 Stage = chatting");
       const language = user.language_preference || "English";
@@ -564,12 +554,11 @@ app.post("/webhook", async (req, res) => {
         await updateUserState(phone, { chat_history: JSON.stringify(chatHistory) });
         return;
       } else {
-        // If OpenAI failed, fallback to new_topic
-        console.warn("openaiChat returned null -> falling back to RAG");
+        console.warn("openaiChat returned null — falling back to RAG");
       }
     }
 
-    // New topic (RAG) stage: fetch verse + commentary and switch to 'chatting'
+    // New-topic (or fallback) stage: use RAG to fetch verse & commentary, then switch to 'chatting'
     console.log("📖 Stage = new_topic → RAG");
     const language = user.language_preference || "English";
     const ragResult = await getRAGResponse(phone, text, language, chatHistory);
@@ -584,7 +573,7 @@ app.post("/webhook", async (req, res) => {
   } catch (err) {
     console.error("❌ Webhook error:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Webhook Error | ${JSON.stringify(err?.message || err)}\n`);
-    // do not crash — just return 200 already sent
+    // Don't propagate error (we already responded 200)
   }
 });
 
