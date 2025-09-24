@@ -31,9 +31,8 @@ const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
-/* Controls how many separate outgoing messages we allow from a single RAG result.
-   You asked for 2 — so default is 2 but you can override via env var. */
 const MAX_OUTGOING_MESSAGES = parseInt(process.env.MAX_OUTGOING_MESSAGES || "2", 10) || 2;
+const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "420", 10) || 420; // safety cap
 
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
@@ -41,7 +40,6 @@ const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthori
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
-    // users table (analytics + lesson columns)
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         phone_number VARCHAR(255) PRIMARY KEY,
@@ -64,7 +62,6 @@ async function setupDatabase() {
       );
     `);
 
-    // lessons table
     await client.query(`
       CREATE TABLE IF NOT EXISTS lessons (
         lesson_number INT PRIMARY KEY,
@@ -116,14 +113,11 @@ async function getUserState(phone) {
 async function updateUserState(phone, updates) {
   try {
     if (!updates || Object.keys(updates).length === 0) return;
-    // convert sentinel
     if (updates.last_activity_ts === "NOW()") updates.last_activity_ts = new Date().toISOString();
-
-    // stringify arrays/objects for JSONB columns expected by DB
     const keys = Object.keys(updates);
     const vals = keys.map(k => {
       const v = updates[k];
-      if (Array.isArray(v) || typeof v === "object") return JSON.stringify(v);
+      if (Array.isArray(v) || (typeof v === "object" && v !== null)) return JSON.stringify(v);
       return v;
     });
     vals.push(phone);
@@ -187,13 +181,14 @@ async function trackOutgoing(phone, reply, type = "chat") {
 /* ---------------- Heltar sending ---------------- */
 async function sendViaHeltar(phone, message, type = "chat") {
   try {
+    const safeMessage = String(message || "").trim().slice(0, 4096); // avoid insane sizes
     if (!HELTAR_API_KEY) {
-      console.warn(`(Simulated -> ${phone}): ${message}`);
-      await trackOutgoing(phone, message, type);
-      return { simulated: true, message };
+      console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
+      await trackOutgoing(phone, safeMessage, type);
+      return { simulated: true, message: safeMessage };
     }
 
-    const payload = { messages: [{ clientWaNumber: phone, message: message, messageType: "text" }] };
+    const payload = { messages: [{ clientWaNumber: phone, message: safeMessage, messageType: "text" }] };
     const resp = await axios.post("https://api.heltar.com/v1/messages/send", payload, {
       headers: {
         Authorization: `Bearer ${HELTAR_API_KEY}`,
@@ -202,13 +197,12 @@ async function sendViaHeltar(phone, message, type = "chat") {
       timeout: 20000
     });
 
-    await trackOutgoing(phone, message, type);
-    console.log(`✅ Heltar message sent to ${phone}: ${String(message).slice(0, 140).replace(/\n/g, " ")}`);
+    await trackOutgoing(phone, safeMessage, type);
+    console.log(`✅ Heltar message sent to ${phone}: ${String(safeMessage).slice(0, 140).replace(/\n/g, " ")}`);
     return resp.data;
   } catch (err) {
     console.error("Heltar send error:", err?.response?.data || err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Heltar Send Error | ${JSON.stringify(err?.response?.data || err?.message || err)}\n`);
-    // swallow so webhook remains responsive
     return null;
   }
 }
@@ -222,13 +216,13 @@ async function sendLesson(phone, lessonNumber) {
       return;
     }
     const lesson = res.rows[0];
-    // send in multiple messages but keep them short
+    // Keep short, send in little bites
     if (lesson.verse) await sendViaHeltar(phone, lesson.verse, "lesson");
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 800));
     if (lesson.translation) await sendViaHeltar(phone, lesson.translation, "lesson");
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 800));
     if (lesson.commentary) await sendViaHeltar(phone, `Shri Krishna kehte hain: ${lesson.commentary}`, "lesson");
-    await new Promise(r => setTimeout(r, 900));
+    await new Promise(r => setTimeout(r, 800));
     if (lesson.reflection_question) await sendViaHeltar(phone, `🤔 ${lesson.reflection_question}`, "lesson");
     await new Promise(r => setTimeout(r, 600));
     await sendViaHeltar(phone, `Reply "Hare Krishna" or "Next" to receive the next lesson when you're ready. Reply "Exit" to leave lessons.`, "lesson_prompt");
@@ -249,20 +243,41 @@ function isHindiRequest(t) { return /\b(hindi|हिन्दी|हिंदी
 function isExitLessons(t) { return /\b(exit|stop lessons|stop|leave)\b/i.test(t); }
 function isRestartLesson(t) { return /\b(restart|start again)\b/i.test(t); }
 
-/* ---------------- System prompts ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI. A user is starting a new conversation. You have a relevant Gita verse as context.
-- Use "||" to separate each message bubble. (assistant will output multiple bubbles separated by "||")
-- Part 1: The Sanskrit verse.
-- Part 2: A short Hinglish translation (or English if requested).
-- Part 3: "Shri Krishna kehte hain:" + 1-3 sentence essence/explanation tailored to the user's concern.
-- Part 4: A short, compassionate follow-up question inviting action/reflection.
-- Always be concise, warm, practical. Strictly reply in {{LANGUAGE}}.`;
+/* ---------------- Language detection ----------------
+   Lightweight: Detect Devanagari characters OR Hindi function words.
+   If Devanagari present or heavy Hindi tokens -> Hindi. Else English.
+*/
+function detectLanguageFromText(text) {
+  if (!text || typeof text !== "string") return "English";
+  const trimmed = text.trim();
+  // Devanagari Unicode range detection
+  if (/[ऀ-ॿ]/.test(trimmed)) return "Hindi";
+  // common Hindi words tokens detection
+  const hindiKeywords = ["है", "मैं", "और", "क्या", "कर", "किया", "हूँ", "हैं", "नहीं", "आप", "क्यों", "कितना", "किस", "कहाँ"];
+  const lowered = trimmed.toLowerCase();
+  let hindiCount = 0;
+  for (const k of hindiKeywords) if (lowered.includes(k)) hindiCount++;
+  if (hindiCount >= 1) return "Hindi";
+  return "English";
+}
 
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically.
+/* ---------------- System prompts (tightened) ---------------- */
+const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad Gita guide. Respond concisely and practically.
+- OUTPUT FORMAT: Use "||" to separate message bubbles; the assistant will output multiple bubbles separated by "||".
+- Part 1: Sanskrit verse (one short line or reference).
+- Part 2: One short Hinglish translation (or English if user language is English). Max 1 sentence.
+- Part 3: "Shri Krishna kehte hain:" + 1-2 sentence essence/explanation tailored to the user's concern. Maximum 2 sentences.
+- Part 4: A single short, compassionate follow-up question inviting action/reflection (exactly one question sentence).
+- STRICT RULES: Each bubble must be ≤ 60 words. Do NOT write more than 3 sentences total across all bubbles. Always end the entire response with a clear question (the last bubble must be a question). Strictly reply in {{LANGUAGE}}.
+`;
+
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically and briefly.
 - Use the user's chat history for context.
-- Offer short (1-3 sentence) responses in the user's language preference.
-- If the user expresses clear emotional distress (sad, angry, suicidal, anxious etc.), append the token [NEW_TOPIC] to your reply to indicate the system should send a new teaching next.
-- Do NOT quote new verses in this mode. Strictly reply in {{LANGUAGE}}.`;
+- Keep replies to 1-3 sentences and under 60 words total.
+- If the user expresses strong negative emotions (anger, suicidal ideation, intense anxiety), append the token [NEW_TOPIC] to your reply (so the system will send a new teaching).
+- Do NOT include any new Sanskrit verses here. Provide short, practical guidance and end with a question to invite a reply.
+- Strictly reply in {{LANGUAGE}}.
+`;
 
 /* ---------------- OpenAI & Pinecone helpers ---------------- */
 async function openaiChat(messages, maxTokens = 400) {
@@ -271,7 +286,7 @@ async function openaiChat(messages, maxTokens = 400) {
     return null;
   }
   try {
-    const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7 };
+    const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.6 };
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
       headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 25000
     });
@@ -330,6 +345,28 @@ async function multiNamespaceQuery(vector, topK = 8) {
   return merged;
 }
 
+/* ---------------- Post-processing of model output ---------------- */
+function ensureResponseBrevity(text, language = "English") {
+  if (!text) return text;
+  let t = String(text).trim();
+  // truncate to safety cap
+  if (t.length > MAX_REPLY_LENGTH) t = t.slice(0, MAX_REPLY_LENGTH).trim();
+  // reduce multiple spaces/newlines
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
+function ensureEndsWithQuestion(text, language = "English") {
+  if (!text) return text;
+  let t = String(text).trim();
+  // If already ends with question mark, keep.
+  if (/[?؟]$/.test(t)) return t;
+  // If ends with exclamation or period, replace with question phrasing
+  const questionPrompt = language === "Hindi" ? "क्या आप इसे आज आज़माना चाहेंगे?" : "Would you like to try this now?";
+  // If last sentence is long, append short question separated by space
+  return (t + " " + questionPrompt).trim();
+}
+
 /* ---------------- Utility for RAG ---------------- */
 function safeText(md, key) { return md && md[key] ? String(md[key]).trim() : ""; }
 
@@ -358,42 +395,44 @@ async function getRAGResponse(phone, text, language, chatHistory) {
     console.log(`[Pinecone] matches: ${matches.length}; best score: ${verseMatch?.score}`);
 
     if (!verseMatch || (verseMatch.score || 0) < 0.25) {
-      const fallback = "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
+      const fallback = language === "Hindi" ? "Main aapki baat sun raha hoon. Thoda aur bataayiye taki main behtar madad kar sakun?" : "I hear your concern. Could you please share a little more about what is on your mind so I can offer the best guidance?";
       await sendViaHeltar(phone, fallback, "fallback");
       return { assistantResponse: fallback, stage: "chatting", topic: text };
     }
 
     const verseSanskrit = safeText(verseMatch.metadata, "sanskrit") || safeText(verseMatch.metadata, "verse") || "";
     const verseHinglish = safeText(verseMatch.metadata, "hinglish1") || safeText(verseMatch.metadata, "translation") || "";
-    const verseContext = `Sanskrit: ${verseSanskrit}\nHinglish: ${verseHinglish}`;
+    const verseContext = `Sanskrit: ${verseSanskrit}\nTranslation: ${verseHinglish}`;
 
     const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
     const modelUser = `User's problem: "${text}"\n\nContext from Gita:\n${verseContext}`;
 
-    const aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
+    let aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
     if (!aiResp) {
-      const fallback2 = "I am here to listen.";
+      const fallback2 = language === "Hindi" ? "Main yahan hoon, agar aap share karen toh main madad kar sakta hoon." : "I am here to listen.";
       await sendViaHeltar(phone, fallback2, "fallback");
       return { assistantResponse: fallback2, stage: "chatting", topic: text };
     }
 
-    // split into parts by "||" but limit total outgoing messages
-    const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
+    // Post-process aiResp: ensure brevity & question ending
+    aiResp = ensureResponseBrevity(aiResp, language);
+    aiResp = ensureEndsWithQuestion(aiResp, language);
 
-    // If parts <= MAX_OUTGOING_MESSAGES, send them each. If more, send first (MAX-1) individually, and combine the rest into last message.
+    // split into parts by "||"
+    const partsRaw = aiResp.split("||").map(p => p.trim()).filter(Boolean);
+    // limit outgoing messages: if >MAX, send first MAX-1 then combine rest
+    const parts = partsRaw;
     if (parts.length <= MAX_OUTGOING_MESSAGES) {
       for (const part of parts) {
         await sendViaHeltar(phone, part, "verse");
         await new Promise(r => setTimeout(r, 900));
       }
     } else {
-      // send first (MAX-1) individually
       const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
       for (let i = 0; i < toSendIndividually; i++) {
         await sendViaHeltar(phone, parts[i], "verse");
         await new Promise(r => setTimeout(r, 900));
       }
-      // combine the remaining parts into final message
       const remaining = parts.slice(toSendIndividually).join("\n\n");
       await sendViaHeltar(phone, remaining, "verse");
     }
@@ -402,7 +441,7 @@ async function getRAGResponse(phone, text, language, chatHistory) {
   } catch (err) {
     console.error("getRAGResponse failed:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getRAGResponse Error | ${JSON.stringify(err?.message || err)}\n`);
-    const fallback = "I am here to listen.";
+    const fallback = language === "Hindi" ? "Main sun raha hoon." : "I am here to listen.";
     try { await sendViaHeltar(phone, fallback, "fallback"); } catch (e) {}
     return { assistantResponse: fallback, stage: "chatting", topic: text };
   }
@@ -414,9 +453,7 @@ app.post("/webhook", async (req, res) => {
     // Acknowledge quickly
     res.status(200).send("OK");
 
-    // Support multiple incoming body shapes (Heltar / Meta / Twilio-like)
     const body = req.body || {};
-    // primary candidate
     let msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
     if (!msg || typeof msg !== "object") {
       console.log("⚠️ Ignoring non-message webhook event.");
@@ -424,7 +461,6 @@ app.post("/webhook", async (req, res) => {
     }
 
     const phone = msg?.from;
-    // support text in several places
     const rawText = msg?.text?.body || msg?.button?.payload || msg?.interactive?.button_reply?.id || msg?.interactive?.list_reply?.id || "";
     const text = String(rawText || "").trim();
     if (!phone || text.length === 0) {
@@ -437,12 +473,29 @@ app.post("/webhook", async (req, res) => {
 
     // fetch user state
     const user = await getUserState(phone);
+
+    // detect language automatically based on incoming text, but prefer stored preference if user explicitly set
+    const autoLang = detectLanguageFromText(text);
+    let language = user.language_preference || "English";
+    // If stored preference is default "English" but text indicates Hindi, switch automatically
+    if (!user.language_preference || user.language_preference === "English") {
+      if (autoLang === "Hindi") {
+        language = "Hindi";
+        await updateUserState(phone, { language_preference: "Hindi" });
+      } else {
+        language = "English";
+        // we don't force setting English flag here to avoid overriding deliberate user choice
+      }
+    } else {
+      language = user.language_preference;
+    }
+
     const lower = text.toLowerCase();
 
-    // Language switch requests
+    // Manual Language switch commands still accepted
     if (isEnglishRequest(lower)) {
       await updateUserState(phone, { language_preference: "English" });
-      await sendViaHeltar(phone, "Language switched to English.", "language");
+      await sendViaHeltar(phone, "Language switched to English. How can I help you today?", "language");
       return;
     }
     if (isHindiRequest(lower)) {
@@ -453,28 +506,28 @@ app.post("/webhook", async (req, res) => {
 
     // Greetings
     if (isGreeting(lower)) {
-      const welcome = user.language_preference === "Hindi"
-        ? "Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi.\nKaise madad kar sakta hoon?"
-        : "Hare Krishna 🙏\nI am Sarathi, your companion on this journey.\nHow can I help you today?";
+      const welcome = language === "Hindi"
+        ? "Hare Krishna 🙏\nMain Sarathi hoon — aapka saathi. Kya main ek chhota sandesh ya ek chhota abhyas bhejun?"
+        : "Hare Krishna 🙏\nI am Sarathi, your companion. Would you like a short teaching from Krishna for today, or want to talk about something on your mind?";
       await sendViaHeltar(phone, welcome, "welcome");
-      await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]) });
+      await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]), language_preference: language });
       return;
     }
 
     // How are you
     if (isHowAreYou(lower)) {
-      const reply = user.language_preference === "Hindi"
-        ? "Main bilkul theek hoon! 🙏 Aap kaise hain?"
-        : "I'm doing well, thank you! 🙏 How are you?";
+      const reply = language === "Hindi"
+        ? "Main theek hoon, dhanyavaad! Aap kaise mehsoos kar rahe hain aaj?"
+        : "I'm well, thank you! How are you feeling today?";
       await sendViaHeltar(phone, reply, "small_talk");
       return;
     }
 
-    // Short small-talk
+    // Small-talk
     if (isSmallTalk(lower)) {
-      const reply = user.language_preference === "Hindi"
-        ? "Shukriya! Aap aur kya jaanna chahte hain?"
-        : "Thanks! What else would you like to know?";
+      const reply = language === "Hindi"
+        ? "Dhanyavaad 🙏 Kya aapko aaj kisi vishesh baat par sahayata chahiye?"
+        : "Thanks! Would you like a short thought for the day or would you like to share what's on your mind?";
       await sendViaHeltar(phone, reply, "small_talk");
       return;
     }
@@ -482,12 +535,12 @@ app.post("/webhook", async (req, res) => {
     // Lesson explicit request (start/continue)
     if (isLessonRequest(lower) || lower === "teach me" || lower === "teach me gita") {
       let nextLesson = (user.current_lesson || 0) + 1;
-      await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
+      await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode", language_preference: language });
       await sendLesson(phone, nextLesson);
       return;
     }
 
-    // If in lesson_mode: support navigation commands, exit, restart, or free queries (RAG) but keep them in lessons
+    // If in lesson_mode: navigation commands, exit, restart, or free queries (RAG) but keep them in lessons
     if (user.conversation_stage === "lesson_mode") {
       if (lower === "next" || lower.includes("hare krishna") || lower === "harekrishna") {
         const nextLesson = (user.current_lesson || 0) + 1;
@@ -497,18 +550,18 @@ app.post("/webhook", async (req, res) => {
       }
       if (isRestartLesson(lower) || lower === "restart") {
         await updateUserState(phone, { current_lesson: 0 });
-        await sendViaHeltar(phone, "🌸 Course progress reset. Reply 'teach me gita' to start again.", "lesson");
+        await sendViaHeltar(phone, language === "Hindi" ? "🌸 Course progress reset. 'teach me gita' likh kar dubara shuru karein." : "🌸 Course progress reset. Reply 'teach me gita' to start again.", "lesson");
         return;
       }
       if (isExitLessons(lower)) {
         await updateUserState(phone, { conversation_stage: "new_topic" });
-        await sendViaHeltar(phone, "Exited lessons. How can I help you now?", "lesson_exit");
+        await sendViaHeltar(phone, language === "Hindi" ? "Lessons se baahar aa gaye. Ab kaise madad karun?" : "Exited lessons. How can I help you now?", "lesson_exit");
         return;
       }
 
       // Greeting inside lessons: short prompt
       if (isGreeting(lower) || isSmallTalk(lower)) {
-        await sendViaHeltar(phone, `Reply "Next" when you'd like the next lesson.`, "lesson_prompt");
+        await sendViaHeltar(phone, language === "Hindi" ? `Reply "Next" jab aap agla lesson chahen.` : `Reply "Next" when you'd like the next lesson.`, "lesson_prompt");
         return;
       }
 
@@ -518,14 +571,14 @@ app.post("/webhook", async (req, res) => {
       chatHistory.push({ role: "user", content: text });
       if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
 
-      const language = user.language_preference || "English";
       const ragResult = await getRAGResponse(phone, text, language, chatHistory);
       chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
 
       await updateUserState(phone, {
         chat_history: JSON.stringify(chatHistory),
         last_topic_summary: ragResult.topic || text,
-        conversation_stage: "lesson_mode"
+        conversation_stage: "lesson_mode",
+        language_preference: language
       });
       return;
     }
@@ -538,42 +591,46 @@ app.post("/webhook", async (req, res) => {
     // Chatting stage: call OpenAI short replies and detect [NEW_TOPIC]
     if (user.conversation_stage === "chatting") {
       console.log("🤝 Stage = chatting");
-      const language = user.language_preference || "English";
       const chatPrompt = CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
-      const aiChatResponse = await openaiChat([{ role: "system", content: chatPrompt }, ...chatHistory], 300);
+      let aiChatResponse = await openaiChat([{ role: "system", content: chatPrompt }, ...chatHistory], 300);
 
-      if (aiChatResponse && aiChatResponse.includes("[NEW_TOPIC]")) {
-        const cleanResp = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
-        if (cleanResp) await sendViaHeltar(phone, cleanResp, "chat");
-        // Move to new_topic — next user message should trigger RAG-based teaching
-        await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify(chatHistory) });
-        return;
-      } else if (aiChatResponse) {
-        await sendViaHeltar(phone, aiChatResponse, "chat");
-        chatHistory.push({ role: "assistant", content: aiChatResponse });
-        await updateUserState(phone, { chat_history: JSON.stringify(chatHistory) });
-        return;
-      } else {
+      if (!aiChatResponse) {
         console.warn("openaiChat returned null — falling back to RAG");
+      } else {
+        // post-process: brevity and ensure it ends with a question
+        aiChatResponse = ensureResponseBrevity(aiChatResponse, language);
+        aiChatResponse = ensureEndsWithQuestion(aiChatResponse, language);
+
+        // If model signalled new topic token, branch
+        if (aiChatResponse.includes("[NEW_TOPIC]")) {
+          const cleanResp = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
+          if (cleanResp) await sendViaHeltar(phone, cleanResp, "chat");
+          await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify(chatHistory), language_preference: language });
+          return;
+        } else {
+          await sendViaHeltar(phone, aiChatResponse, "chat");
+          chatHistory.push({ role: "assistant", content: aiChatResponse });
+          await updateUserState(phone, { chat_history: JSON.stringify(chatHistory), language_preference: language });
+          return;
+        }
       }
     }
 
     // New-topic (or fallback) stage: use RAG to fetch verse & commentary, then switch to 'chatting'
     console.log("📖 Stage = new_topic → RAG");
-    const language = user.language_preference || "English";
     const ragResult = await getRAGResponse(phone, text, language, chatHistory);
     chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
     await updateUserState(phone, {
       last_topic_summary: ragResult.topic || text,
       conversation_stage: "chatting",
-      chat_history: JSON.stringify(chatHistory)
+      chat_history: JSON.stringify(chatHistory),
+      language_preference: language
     });
     return;
 
   } catch (err) {
     console.error("❌ Webhook error:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Webhook Error | ${JSON.stringify(err?.message || err)}\n`);
-    // Don't propagate error (we already responded 200)
   }
 });
 
