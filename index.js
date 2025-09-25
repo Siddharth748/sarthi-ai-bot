@@ -1,5 +1,5 @@
-// index.js — SarathiAI (Production-ready: Heltar + RAG + Speaker-check + Emotion mapping + Enhanced Intents)
-// Paste/replace this entire file in your project. Built as a safe replacement for your live bot.
+// index.js — SarathiAI (Production-ready: Heltar + RAG + Speaker-check + Emotion mapping + Patched Intents)
+// Paste/replace this entire file in your project. This is a full and complete replacement.
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -208,42 +208,28 @@ async function sendViaHeltar(phone, message, type = "chat") {
   }
 }
 
-/* ---------------- Text classification / intents ---------------- */
-function normalizeText(s) { try { return String(s || "").trim(); } catch { return ""; } }
-
-// --- START: MODIFIED SECTION ---
+/* ---------------- Text classification / intents (Patched) ---------------- */
 function isGreetingQuery(text) {
-    const greetings = [
-        "hi", "hello", "hey", "hii", "hiya", "yo",
-        "good morning", "good afternoon", "good evening",
-        "how are you", "what's up", "how's it going",
-        "kaise ho", "kaise hain aap",
-        "namaste", "hare krishna"
-    ];
     const lowerText = text.toLowerCase();
-    return greetings.some(g => lowerText.includes(g));
+    // More specific regex to avoid partial matches like 'are you'
+    const greetingRegex = /\b(hi|hello|hey|hii|hiya|yo|good morning|good afternoon|good evening|how are you|what's up|how's it going|kaise ho|kaise hain aap|namaste|hare krishna)\b/;
+    return greetingRegex.test(lowerText);
 }
 
 function isCapabilitiesQuery(text) {
-    const queries = [
-        "what can you do", "what are your capabilities",
-        "tell me about yourself", "who are you",
-        "can i get more info", "give me info", "what do you do"
-    ];
     const lowerText = text.toLowerCase();
-    return queries.some(q => lowerText.includes(q));
+    const capabilitiesRegex = /\b(what can you do|what are your capabilities|tell me about yourself|who are you|can i get more info|give me info|what do you do)\b/;
+    return capabilitiesRegex.test(lowerText);
 }
-// --- END: MODIFIED SECTION ---
 
-function isSmallTalk(t) { return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well|good morning|good night)\b/i.test(t); }
+function isSmallTalk(t) { return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well)\b/i.test(t); }
 function isEnglishRequest(t) { return /\benglish\b/i.test(t); }
 function isHindiRequest(t) { return /\b(hindi|हिन्दी|हिंदी)\b/i.test(t); }
-
 
 /* ---------------- Emotion detection (keyword-based) ---------------- */
 const EMOTION_KEYWORDS = {
   stressed: ["stress", "stressed", "stressing", "anxious", "anxiety", "tension", "overwhelmed", "panic"],
-  sadness: ["sad", "depressed", "depression", "lonely", "sorrow", "low", "down"],
+  sadness: ["sad", "depressed", "depression", "lonely", "sorrow", "low", "down", "tired"], // Added "tired" here
   anger: ["angry", "rage", "annoyed", "irritated", "frustrated"],
   confusion: ["confused", "don't know", "dont know", "lost", "uncertain", "uncertainty", "doubt"],
   fear: ["afraid", "scared", "fear", "fearful", "terror"]
@@ -360,11 +346,15 @@ function ensureResponseBrevity(text) {
 }
 
 function ensureEndsWithQuestion(text, language = "English") {
-  if (!text) return text;
-  let t = String(text).trim();
-  if (/[?？]$/.test(t)) return t;
-  const questionPrompt = language === "Hindi" ? "क्या आप इसे आज़माना चाहेंगे?" : "Would you like to try this now?";
-  return (t + " " + questionPrompt).trim();
+    if (!text) return text;
+    let t = String(text).trim();
+    // If the text already ends with a question mark (and possibly some whitespace), it's fine.
+    if (/[?？]\s*$/.test(t)) return t;
+    // Avoid adding a question if the text is clearly a multipart response.
+    if (t.includes("||")) return t;
+    
+    const questionPrompt = language === "Hindi" ? "क्या आप इस पर और जानना चाहेंगे?" : "Would you like to explore this further?";
+    return `${t} ${questionPrompt}`.trim();
 }
 
 /* ---------------- Verse speaker detection & reframing ---------------- */
@@ -424,15 +414,11 @@ async function getRAGResponse(phone, text, language, chatHistory, emotionLabel =
       const fallback = await fetchKrishnaVerseByEmotion(emotionLabel);
       if (fallback) {
         const parts = fallback.parts;
-        for (const part of parts.slice(0, MAX_OUTGOING_MESSAGES)) {
+        for (const part of parts) { // Send all parts for emotion-based response
           await sendViaHeltar(phone, part, "verse");
-          await new Promise(r => setTimeout(r, 800));
+          await new Promise(r => setTimeout(r, 900));
         }
-        if (parts.length > MAX_OUTGOING_MESSAGES) {
-          const remaining = parts.slice(MAX_OUTGOING_MESSAGES).join("\n\n");
-          await sendViaHeltar(phone, remaining, "verse");
-        }
-        return { assistantResponse: fallback.combined, stage: "chatting", topic: text };
+        return { assistantResponse: fallback.combined.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
       }
     }
 
@@ -450,105 +436,57 @@ async function getRAGResponse(phone, text, language, chatHistory, emotionLabel =
     }
 
     const md = verseMatch.metadata || {};
-    const sanskritText = safeText(md, "sanskrit") || safeText(md, "verse") || safeText(md, "sanskrit_text");
-    const translation = safeText(md, "translation") || safeText(md, "hinglish1") || safeText(md, "english") || "";
-    const verseRef = safeText(md, "reference") || safeText(md, "verse_ref") || safeText(md, "id") || "";
     const speaker = identifySpeakerFromMetadata(md);
+    
+    let aiResp;
 
     if (speaker === "krishna") {
+      const sanskritText = safeText(md, "sanskrit") || safeText(md, "verse") || safeText(md, "sanskrit_text");
+      const translation = safeText(md, "translation") || safeText(md, "hinglish1") || safeText(md, "english") || "";
+      const verseRef = safeText(md, "reference") || safeText(md, "verse_ref") || safeText(md, "id") || "";
       const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
       const modelUser = `User's problem: "${text}"\n\nVerse Context:\nSanskrit: ${sanskritText}\nTranslation: ${translation}\nReference: ${verseRef}`;
-      let aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
-      if (!aiResp) {
-        const fallback2 = language === "Hindi" ? "Main yahan hoon, agar aap share karen toh main madad kar sakta hoon." : "I am here to listen.";
-        await sendViaHeltar(phone, fallback2, "fallback");
-        return { assistantResponse: fallback2, stage: "chatting", topic: text };
-      }
-      aiResp = ensureResponseBrevity(aiResp);
-      aiResp = ensureEndsWithQuestion(aiResp, language);
-      const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
-      if (parts.length <= MAX_OUTGOING_MESSAGES) {
-        for (const part of parts) {
-          await sendViaHeltar(phone, part, "verse");
-          await new Promise(r => setTimeout(r, 800));
-        }
-      } else {
-        const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
-        for (let i = 0; i < toSendIndividually; i++) {
-          await sendViaHeltar(phone, parts[i], "verse");
-          await new Promise(r => setTimeout(r, 800));
-        }
-        const remaining = parts.slice(toSendIndividually).join("\n\n");
-        await sendViaHeltar(phone, remaining, "verse");
-      }
-      return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
-    }
-
-    const validationPart = language === "Hindi"
-      ? `यह भाव: ${sanskritText ? sanskritText : (translation || "अभिव्यक्ति")}`
-      : `This passage: ${sanskritText ? sanskritText : (translation || "expression")}`;
-
-    let krishnaCandidate = null;
-    try {
-      const extraVec = await getEmbedding(`Krishna teaching about ${transformed}`);
-      const extraMatches = await multiNamespaceQuery(extraVec, 6);
-      krishnaCandidate = extraMatches.find(m => identifySpeakerFromMetadata(m.metadata) === "krishna");
-    } catch (e) {
-      console.warn("secondary Krishna query failed; will use fallback mapping if available.");
-    }
-
-    if (!krishnaCandidate) {
-      const label = emotionLabel || detectEmotion(text) || "confusion";
-      const fallbackKrishna = KRISHNA_FALLBACK_BY_EMOTION[label] || KRISHNA_FALLBACK_BY_EMOTION["confusion"];
-      const part1 = `${fallbackKrishna.sanskrit} (${fallbackKrishna.verseRef})`;
-      const part2 = `${fallbackKrishna.translation}`;
-      const part3 = `Shri Krishna kehte hain: ${fallbackKrishna.translation}`;
-      const part4 = language === "Hindi" ? `क्या आप इसे आज़माना चाहेंगे?` : `Would you like to try this now?`;
-      await sendViaHeltar(phone, validationPart, "verse");
-      await new Promise(r => setTimeout(r, 700));
-      const parts = [part1, part2, part3, part4];
-      for (const part of parts.slice(0, MAX_OUTGOING_MESSAGES)) {
-        await sendViaHeltar(phone, part, "verse");
-        await new Promise(r => setTimeout(r, 800));
-      }
-      if (parts.length > MAX_OUTGOING_MESSAGES) {
-        const remaining = parts.slice(MAX_OUTGOING_MESSAGES).join("\n\n");
-        await sendViaHeltar(phone, remaining, "verse");
-      }
-      return { assistantResponse: `${validationPart} || ${parts.join(" || ")}`, stage: "chatting", topic: text };
+      aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
     } else {
-      const km = krishnaCandidate.metadata || {};
-      const kSanskrit = safeText(km, "sanskrit") || safeText(km, "verse") || "";
-      const kTranslation = safeText(km, "translation") || safeText(km, "hinglish1") || "";
-      const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
-      const modelUser = `User problem: "${text}"\n\nContext validation passage (for empathy): ${sanskritText || translation}\nKrishna candidate:\nSanskrit: ${kSanskrit}\nTranslation: ${kTranslation}`;
-      let aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
-      if (!aiResp) {
+      // If not Krishna, reframe and find a Krishna verse
+      const validationText = safeText(md, "translation") || safeText(md, "sanskrit");
+      const reframePrompt = `A user feels "${text}". A related but non-Krishna Gita passage says: "${validationText}". Reframe this by acknowledging the feeling (e.g., "Even Arjuna felt this way..."), then provide a relevant teaching directly from Krishna to offer guidance. Formulate a response based on Krishna's words.`;
+      const messages = [{ role: "system", content: CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language) }, { role: "user", content: reframePrompt }];
+      aiResp = await openaiChat(messages, 600);
+    }
+
+    if (!aiResp) {
         const fallback2 = language === "Hindi" ? "Main yahan hoon, agar aap share karen toh main madad kar sakta hoon." : "I am here to listen.";
         await sendViaHeltar(phone, fallback2, "fallback");
         return { assistantResponse: fallback2, stage: "chatting", topic: text };
-      }
-      aiResp = ensureResponseBrevity(aiResp);
-      aiResp = ensureEndsWithQuestion(aiResp, language);
-      const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
-      await sendViaHeltar(phone, validationPart, "verse");
-      await new Promise(r => setTimeout(r, 700));
-      if (parts.length <= MAX_OUTGOING_MESSAGES) {
-        for (const part of parts) {
-          await sendViaHeltar(phone, part, "verse");
-          await new Promise(r => setTimeout(r, 800));
-        }
-      } else {
-        const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
-        for (let i = 0; i < toSendIndividually; i++) {
-          await sendViaHeltar(phone, parts[i], "verse");
-          await new Promise(r => setTimeout(r, 800));
-        }
-        const remaining = parts.slice(toSendIndividually).join("\n\n");
-        await sendViaHeltar(phone, remaining, "verse");
-      }
-      return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
     }
+    
+    const cleanResp = ensureResponseBrevity(aiResp);
+    const finalResp = ensureEndsWithQuestion(cleanResp, language);
+
+    const parts = finalResp.split("||").map(p => p.trim()).filter(Boolean);
+
+    if (parts.length > 1) { // It's a structured RAG response
+        if (parts.length <= MAX_OUTGOING_MESSAGES) {
+            for (const part of parts) {
+                await sendViaHeltar(phone, part, "verse");
+                await new Promise(r => setTimeout(r, 900));
+            }
+        } else {
+            const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
+            for (let i = 0; i < toSendIndividually; i++) {
+                await sendViaHeltar(phone, parts[i], "verse");
+                await new Promise(r => setTimeout(r, 900));
+            }
+            const remaining = parts.slice(toSendIndividually).join("\n\n");
+            await sendViaHeltar(phone, remaining, "verse");
+        }
+        return { assistantResponse: finalResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
+    } else { // It's a single bubble (likely a reframed response)
+        await sendViaHeltar(phone, finalResp, "chat");
+        return { assistantResponse: finalResp, stage: "chatting", topic: text };
+    }
+
   } catch (err) {
     console.error("getRAGResponse failed:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getRAGResponse Error | ${JSON.stringify(err?.message || err)}\n`);
@@ -561,10 +499,8 @@ async function getRAGResponse(phone, text, language, chatHistory, emotionLabel =
 /* ---------------- Webhook handler ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
-    // Acknowledge quickly
     res.status(200).send("OK");
 
-    // Support multiple incoming body shapes (Heltar / Meta / Twilio-like)
     const body = req.body || {};
     let msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
     if (!msg || typeof msg !== "object") {
@@ -583,10 +519,8 @@ app.post("/webhook", async (req, res) => {
     console.log(`📩 Incoming from ${phone}: "${text}"`);
     await trackIncoming(phone, text);
 
-    // fetch user state
     const user = await getUserState(phone);
 
-    // language detection + preference (auto-detect but do not overwrite explicit choice)
     const autoLang = detectLanguageFromText(text);
     let language = user.language_preference || "English";
     if ((!user.language_preference || user.language_preference === "English") && autoLang === "Hindi") {
@@ -597,10 +531,8 @@ app.post("/webhook", async (req, res) => {
     }
 
     const lower = text.toLowerCase();
-
-    // --- START: MODIFIED SECTION ---
-
-    // 1. Handle Capabilities Queries FIRST
+    
+    // --- Patched Intent Handling ---
     if (isCapabilitiesQuery(lower)) {
         console.log(`✅ Intent detected: Capabilities Query`);
         const reply = language === "Hindi"
@@ -610,7 +542,6 @@ app.post("/webhook", async (req, res) => {
         return;
     }
     
-    // 2. Handle Expanded Greetings
     if (isGreetingQuery(lower)) {
         console.log(`✅ Intent detected: Greeting`);
         const welcome = language === "Hindi"
@@ -620,10 +551,8 @@ app.post("/webhook", async (req, res) => {
         await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]) });
         return;
     }
+    // --- End Patched Intent Handling ---
 
-    // --- END: MODIFIED SECTION ---
-
-    // manual language switches still allowed
     if (isEnglishRequest(lower)) {
       await updateUserState(phone, { language_preference: "English" });
       await sendViaHeltar(phone, "Language switched to English. How can I help you today?", "language");
@@ -635,24 +564,19 @@ app.post("/webhook", async (req, res) => {
       return;
     }
     
-    // If user responded to the choice prompt with 1 or 2
     if (["1", "2", "one", "two"].includes(lower.trim())) {
       if (["1", "one"].includes(lower.trim())) {
-        const fallback = await fetchKrishnaVerseByEmotion("stressed"); // neutral starter
+        const fallback = await fetchKrishnaVerseByEmotion("stressed");
         if (fallback) {
           const parts = fallback.parts;
-          for (const part of parts.slice(0, MAX_OUTGOING_MESSAGES)) {
+          for (const part of parts) {
             await sendViaHeltar(phone, part, "verse");
-            await new Promise(r => setTimeout(r, 700));
-          }
-          if (parts.length > MAX_OUTGOING_MESSAGES) {
-            const remaining = parts.slice(MAX_OUTGOING_MESSAGES).join("\n\n");
-            await sendViaHeltar(phone, remaining, "verse");
+            await new Promise(r => setTimeout(r, 900));
           }
           await updateUserState(phone, { conversation_stage: "chatting" });
           return;
         }
-      } else { // choice 2 => user wants to share; prompt them
+      } else {
         const prompt = language === "Hindi" ? "Kripya batayiye — kya aap abhi kis cheez se pareshan hain?" : "Please share — what is on your mind right now?";
         await sendViaHeltar(phone, prompt, "prompt");
         await updateUserState(phone, { conversation_stage: "chatting" });
@@ -660,7 +584,6 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // small talk fallback
     if (isSmallTalk(lower)) {
       const reply = language === "Hindi"
         ? "Dhanyavaad 🙏 Kya aap aaj kisi vishesh cheez par baat karna chahte hain?"
@@ -669,7 +592,6 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Main conversational path: detect emotion, route to RAG
     const emotionLabel = detectEmotion(text);
     console.log(`Detected emotion: ${emotionLabel}`);
 
@@ -678,14 +600,15 @@ app.post("/webhook", async (req, res) => {
     if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
 
     const ragResult = await getRAGResponse(phone, text, language, chatHistory, emotionLabel);
-    chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-
-    await updateUserState(phone, {
-      last_topic_summary: ragResult.topic || text,
-      conversation_stage: "chatting",
-      chat_history: JSON.stringify(chatHistory),
-      language_preference: language
-    });
+    if (ragResult && ragResult.assistantResponse) {
+        chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+        await updateUserState(phone, {
+          last_topic_summary: ragResult.topic || text,
+          conversation_stage: "chatting",
+          chat_history: JSON.stringify(chatHistory),
+          language_preference: language
+        });
+    }
     return;
 
   } catch (err) {
