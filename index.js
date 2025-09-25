@@ -1,5 +1,5 @@
-// index.js — SarathiAI (Production-ready: Heltar + RAG + Lessons + Analytics + Language-aware)
-// Paste/replace this entire file in your project.
+// index.js — SarathiAI (Production-ready: Heltar + RAG + Speaker-check + Emotion mapping)
+// Paste/replace this entire file in your project. Built as a safe replacement for your live bot.
 
 import dotenv from "dotenv";
 dotenv.config();
@@ -32,7 +32,7 @@ const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
 const MAX_OUTGOING_MESSAGES = parseInt(process.env.MAX_OUTGOING_MESSAGES || "2", 10) || 2;
-const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "420", 10) || 420; // safety cap
+const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "420", 10) || 420;
 
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
@@ -40,6 +40,7 @@ const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthori
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
+    // users table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         phone_number VARCHAR(255) PRIMARY KEY,
@@ -62,6 +63,7 @@ async function setupDatabase() {
       );
     `);
 
+    // keep lessons table definition in DB in case you re-enable later
     await client.query(`
       CREATE TABLE IF NOT EXISTS lessons (
         lesson_number INT PRIMARY KEY,
@@ -91,6 +93,7 @@ async function getUserState(phone) {
   try {
     const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (res.rows.length === 0) {
+      // create a new user row with sensible defaults
       await dbPool.query(
         "INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions, language_preference) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English')",
         [phone]
@@ -181,7 +184,7 @@ async function trackOutgoing(phone, reply, type = "chat") {
 /* ---------------- Heltar sending ---------------- */
 async function sendViaHeltar(phone, message, type = "chat") {
   try {
-    const safeMessage = String(message || "").trim().slice(0, 4096); // avoid insane sizes
+    const safeMessage = String(message || "").trim().slice(0, 4096);
     if (!HELTAR_API_KEY) {
       console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
       await trackOutgoing(phone, safeMessage, type);
@@ -207,76 +210,58 @@ async function sendViaHeltar(phone, message, type = "chat") {
   }
 }
 
-/* ---------------- Lessons ---------------- */
-async function sendLesson(phone, lessonNumber) {
-  try {
-    const res = await dbPool.query("SELECT * FROM lessons WHERE lesson_number = $1", [lessonNumber]);
-    if (!res.rows || res.rows.length === 0) {
-      await sendViaHeltar(phone, "🌸 You've completed all lessons in this course!", "lesson");
-      return;
-    }
-    const lesson = res.rows[0];
-    // Keep short, send in little bites
-    if (lesson.verse) await sendViaHeltar(phone, lesson.verse, "lesson");
-    await new Promise(r => setTimeout(r, 800));
-    if (lesson.translation) await sendViaHeltar(phone, lesson.translation, "lesson");
-    await new Promise(r => setTimeout(r, 800));
-    if (lesson.commentary) await sendViaHeltar(phone, `Shri Krishna kehte hain: ${lesson.commentary}`, "lesson");
-    await new Promise(r => setTimeout(r, 800));
-    if (lesson.reflection_question) await sendViaHeltar(phone, `🤔 ${lesson.reflection_question}`, "lesson");
-    await new Promise(r => setTimeout(r, 600));
-    await sendViaHeltar(phone, `Reply "Hare Krishna" or "Next" to receive the next lesson when you're ready. Reply "Exit" to leave lessons.`, "lesson_prompt");
-  } catch (err) {
-    console.error("sendLesson failed:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | sendLesson Error | ${JSON.stringify(err?.message || err)}\n`);
-  }
-}
-
 /* ---------------- Text classification / intents ---------------- */
 function normalizeText(s) { try { return String(s || "").trim(); } catch { return ""; } }
 function isGreeting(t) { return /\b(hi|hello|hey|hii|namaste|hare\s*krishna)\b/i.test(t); }
 function isHowAreYou(t) { return /\b(how\s*are\s*(you|u)|how\s*r\s*u|kaise\s+ho|kaise\s+hain)\b/i.test(t); }
 function isSmallTalk(t) { return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well|good morning|good night)\b/i.test(t); }
-function isLessonRequest(t) { return /\b(teach|lesson|gita|bhagavad|bhagavad gita)\b/i.test(t); }
 function isEnglishRequest(t) { return /\benglish\b/i.test(t); }
 function isHindiRequest(t) { return /\b(hindi|हिन्दी|हिंदी)\b/i.test(t); }
-function isExitLessons(t) { return /\b(exit|stop lessons|stop|leave)\b/i.test(t); }
-function isRestartLesson(t) { return /\b(restart|start again)\b/i.test(t); }
 
-/* ---------------- Language detection ----------------
-   Lightweight: Detect Devanagari characters OR Hindi function words.
-   If Devanagari present or heavy Hindi tokens -> Hindi. Else English.
+/* ---------------- Emotion detection (keyword-based) ----------------
+   Map common user keywords to emotion topics. This is lightweight and deterministic.
 */
+const EMOTION_KEYWORDS = {
+  stressed: ["stress", "stressed", "stressing", "anxious", "anxiety", "tension", "overwhelmed", "panic"],
+  sadness: ["sad", "depressed", "depression", "lonely", "sorrow", "low", "down"],
+  anger: ["angry", "rage", "annoyed", "irritated", "frustrated"],
+  confusion: ["confused", "don't know", "dont know", "lost", "uncertain", "uncertainty", "doubt"],
+  fear: ["afraid", "scared", "fear", "fearful", "terror"]
+};
+
+function detectEmotion(text) {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  for (const [label, keywords] of Object.entries(EMOTION_KEYWORDS)) {
+    for (const k of keywords) {
+      if (t.includes(k)) return label;
+    }
+  }
+  return null;
+}
+
+/* ---------------- Language detection (lightweight) ---------------- */
 function detectLanguageFromText(text) {
   if (!text || typeof text !== "string") return "English";
-  const trimmed = text.trim();
-  // Devanagari Unicode range detection
-  if (/[ऀ-ॿ]/.test(trimmed)) return "Hindi";
-  // common Hindi words tokens detection
-  const hindiKeywords = ["है", "मैं", "और", "क्या", "कर", "किया", "हूँ", "हैं", "नहीं", "आप", "क्यों", "कितना", "किस", "कहाँ"];
-  const lowered = trimmed.toLowerCase();
-  let hindiCount = 0;
-  for (const k of hindiKeywords) if (lowered.includes(k)) hindiCount++;
-  if (hindiCount >= 1) return "Hindi";
+  if (/[ऀ-ॿ]/.test(text)) return "Hindi";
+  const hindiKeywords = ["है", "मैं", "और", "क्या", "कर", "किया", "हूँ", "हैं", "नहीं", "आप", "क्यों"];
+  const lowered = text.toLowerCase();
+  for (const k of hindiKeywords) if (lowered.includes(k)) return "Hindi";
   return "English";
 }
 
 /* ---------------- System prompts (tightened) ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad Gita guide. Respond concisely and practically.
-- OUTPUT FORMAT: Use "||" to separate message bubbles; the assistant will output multiple bubbles separated by "||".
-- Part 1: Sanskrit verse (one short line or reference).
-- Part 2: One short Hinglish translation (or English if user language is English). Max 1 sentence.
-- Part 3: "Shri Krishna kehte hain:" + 1-2 sentence essence/explanation tailored to the user's concern. Maximum 2 sentences.
-- Part 4: A single short, compassionate follow-up question inviting action/reflection (exactly one question sentence).
-- STRICT RULES: Each bubble must be ≤ 60 words. Do NOT write more than 3 sentences total across all bubbles. Always end the entire response with a clear question (the last bubble must be a question). Strictly reply in {{LANGUAGE}}.
+const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad-Gita guide. Produce a short, structured reply using the following parts separated by "||".
+Parts:
+1) Sanskrit verse (one short line or verse reference). 
+2) A one-sentence translation (Hinglish if user language is Hindi, otherwise English). 
+3) "Shri Krishna kehte hain:" + a 1-2 sentence essence/explanation tailored to the user's concern (only Krishna's teaching content here).
+4) A single short reflection question (exactly one question sentence) inviting action.
+
+STRICT: Entire reply <= 3 sentences, each bubble <= 60 words. Last bubble MUST be a question. Reply in {{LANGUAGE}}.
 `;
 
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Continue the conversation empathetically and briefly.
-- Use the user's chat history for context.
-- Keep replies to 1-3 sentences and under 60 words total.
-- If the user expresses strong negative emotions (anger, suicidal ideation, intense anxiety), append the token [NEW_TOPIC] to your reply (so the system will send a new teaching).
-- Do NOT include any new Sanskrit verses here. Provide short, practical guidance and end with a question to invite a reply.
-- Strictly reply in {{LANGUAGE}}.
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Reply briefly (1-3 sentences, under 60 words), empathetically, and end with a question to invite a reply. Use user's chat history for context. If the user expresses severe distress, signal [NEW_TOPIC]. Do not quote new Sanskrit verses here. Reply in {{LANGUAGE}}.
 `;
 
 /* ---------------- OpenAI & Pinecone helpers ---------------- */
@@ -345,13 +330,11 @@ async function multiNamespaceQuery(vector, topK = 8) {
   return merged;
 }
 
-/* ---------------- Post-processing of model output ---------------- */
-function ensureResponseBrevity(text, language = "English") {
+/* ---------------- Utilities for response processing ---------------- */
+function ensureResponseBrevity(text) {
   if (!text) return text;
   let t = String(text).trim();
-  // truncate to safety cap
   if (t.length > MAX_REPLY_LENGTH) t = t.slice(0, MAX_REPLY_LENGTH).trim();
-  // reduce multiple spaces/newlines
   t = t.replace(/\s+/g, " ").trim();
   return t;
 }
@@ -359,38 +342,92 @@ function ensureResponseBrevity(text, language = "English") {
 function ensureEndsWithQuestion(text, language = "English") {
   if (!text) return text;
   let t = String(text).trim();
-  // If already ends with question mark, keep.
-  if (/[?؟]$/.test(t)) return t;
-  // If ends with exclamation or period, replace with question phrasing
-  const questionPrompt = language === "Hindi" ? "क्या आप इसे आज आज़माना चाहेंगे?" : "Would you like to try this now?";
-  // If last sentence is long, append short question separated by space
+  if (/[?？]$/.test(t)) return t;
+  const questionPrompt = language === "Hindi" ? "क्या आप इसे आज़माना चाहेंगे?" : "Would you like to try this now?";
   return (t + " " + questionPrompt).trim();
 }
 
-/* ---------------- Utility for RAG ---------------- */
-function safeText(md, key) { return md && md[key] ? String(md[key]).trim() : ""; }
+/* ---------------- Verse speaker detection & reframing ---------------- */
+function identifySpeakerFromMetadata(metadata = {}) {
+  // metadata may include speaker or source fields; try common keys then fall back to heuristics
+  const possible = (metadata.speaker || metadata.author || metadata.role || metadata.source || "").toString().toLowerCase();
+  if (possible.includes("krishna") || possible.includes("śrī bhagavān") || possible.includes("shri krishna") || possible.includes("bhagavan")) return "krishna";
+  if (possible.includes("arjuna")) return "arjuna";
+  if (possible.includes("sanjaya")) return "sanjaya";
+  if (possible.includes("dhritarashtra") || possible.includes("dhritarashtra")) return "dhritarashtra";
+  // fallback: check verse text for common markers
+  const text = (metadata.sanskrit || metadata.verse || metadata.sanskrit_text || "").toString();
+  if (/श्रीभगवानुवाच|श्रीभगवान् उवाच|śrī bhagavān uvāca/i.test(text)) return "krishna";
+  if (/अर्जुन उवाच|arjuna uvacha|arjuna said/i.test(text)) return "arjuna";
+  if (/सञ्जय उवाच|sanjaya uvacha|sanjaya said/i.test(text)) return "sanjaya";
+  return "unknown";
+}
 
+/* Helper: fetch a strong Krishna verse for a mapped emotion (fallback list) */
+const KRISHNA_FALLBACK_BY_EMOTION = {
+  stressed: { verseRef: "2.47", sanskrit: "कर्मण्येवाधिकारस्ते मा फलेषु कदाचन", translation: "You have a right to perform your actions, but not to the fruits of those actions." },
+  sadness: { verseRef: "2.13", sanskrit: "देहिनोऽस्मिन्यथा देहे", translation: "As the embodied soul passes through childhood, youth and old age, so does it similarly pass into another body at death." },
+  anger: { verseRef: "2.48", sanskrit: "योगः कर्मसु कौशलम्", translation: "Yoga is skill in action." },
+  confusion: { verseRef: "18.66", sanskrit: "सर्वधर्मान्परित्यज्य", translation: "Abandon all varieties of dharma and surrender unto Me alone." },
+  fear: { verseRef: "6.5", sanskrit: "उद्धरेदात्मनाऽत्मानं", translation: "One must elevate oneself by one's own mind, and not degrade oneself." }
+};
+
+/* ---------------- RAG & response assembly ---------------- */
 async function transformQueryForRetrieval(userQuery) {
   try {
     const prompt = `You are an expert in the Bhagavad Gita. Transform the user's query into a concise search phrase for retrieval of related verses.\nUser: "${userQuery}"\nReturn just a short search phrase.`;
     const resp = await openaiChat([{ role: "user", content: prompt }], 40);
     if (!resp) return userQuery;
-    const t = resp.replace(/["']/g, "").trim();
-    console.log(`ℹ️ Transformed query: "${userQuery}" -> "${t}"`);
-    return t;
+    return resp.replace(/["']/g, "").trim();
   } catch (err) {
     console.warn("transformQueryForRetrieval failed — using original query");
     return userQuery;
   }
 }
 
-/* ---------------- Main RAG + sending logic ---------------- */
-async function getRAGResponse(phone, text, language, chatHistory) {
+function safeText(md, key) { return md && md[key] ? String(md[key]).trim() : ""; }
+
+async function fetchKrishnaVerseByEmotion(emotionLabel) {
+  // fallback: use the small mapping above; if needed, could perform a targeted Pinecone query for "Krishna" + emotion
+  const fallback = KRISHNA_FALLBACK_BY_EMOTION[emotionLabel];
+  if (!fallback) return null;
+  // assemble a short formatted response as parts (simulate what RAG would produce)
+  const sanskrit = fallback.sanskrit || "";
+  const translation = fallback.translation || "";
+  const verseRef = fallback.verseRef || "";
+  const part1 = `${sanskrit} (${verseRef})`;
+  const part2 = translation;
+  const part3 = `Shri Krishna kehte hain: ${translation}`;
+  const part4 = `What one small action will you take today?`;
+  return { combined: `${part1} || ${part2} || ${part3} || ${part4}`, parts: [part1, part2, part3, part4] };
+}
+
+async function getRAGResponse(phone, text, language, chatHistory, emotionLabel = null) {
   try {
+    // If emotion mapping is strong and we have a fallback Krishna verse, prefer it
+    if (emotionLabel) {
+      const fallback = await fetchKrishnaVerseByEmotion(emotionLabel);
+      if (fallback) {
+        // send fallback parts directly (ensures Krishna teaching)
+        const parts = fallback.parts;
+        for (const part of parts.slice(0, MAX_OUTGOING_MESSAGES)) {
+          await sendViaHeltar(phone, part, "verse");
+          await new Promise(r => setTimeout(r, 800));
+        }
+        // if more parts than allowed, combine rest
+        if (parts.length > MAX_OUTGOING_MESSAGES) {
+          const remaining = parts.slice(MAX_OUTGOING_MESSAGES).join("\n\n");
+          await sendViaHeltar(phone, remaining, "verse");
+        }
+        return { assistantResponse: fallback.combined, stage: "chatting", topic: text };
+      }
+    }
+
     const transformed = await transformQueryForRetrieval(text);
     const qVec = await getEmbedding(transformed);
     const matches = await multiNamespaceQuery(qVec, 8);
 
+    // find a verse-like match
     const verseMatch = matches.find(m => (m.metadata && (m.metadata.sanskrit || m.metadata.verse || m.metadata.sanskrit_text)));
     console.log(`[Pinecone] matches: ${matches.length}; best score: ${verseMatch?.score}`);
 
@@ -400,44 +437,123 @@ async function getRAGResponse(phone, text, language, chatHistory) {
       return { assistantResponse: fallback, stage: "chatting", topic: text };
     }
 
-    const verseSanskrit = safeText(verseMatch.metadata, "sanskrit") || safeText(verseMatch.metadata, "verse") || "";
-    const verseHinglish = safeText(verseMatch.metadata, "hinglish1") || safeText(verseMatch.metadata, "translation") || "";
-    const verseContext = `Sanskrit: ${verseSanskrit}\nTranslation: ${verseHinglish}`;
+    // Extract metadata and speaker
+    const md = verseMatch.metadata || {};
+    const sanskritText = safeText(md, "sanskrit") || safeText(md, "verse") || safeText(md, "sanskrit_text");
+    const translation = safeText(md, "translation") || safeText(md, "hinglish1") || safeText(md, "english") || "";
+    const verseRef = safeText(md, "reference") || safeText(md, "verse_ref") || safeText(md, "id") || "";
 
-    const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
-    const modelUser = `User's problem: "${text}"\n\nContext from Gita:\n${verseContext}`;
+    const speaker = identifySpeakerFromMetadata(md);
 
-    let aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
-    if (!aiResp) {
-      const fallback2 = language === "Hindi" ? "Main yahan hoon, agar aap share karen toh main madad kar sakta hoon." : "I am here to listen.";
-      await sendViaHeltar(phone, fallback2, "fallback");
-      return { assistantResponse: fallback2, stage: "chatting", topic: text };
+    // If the speaker is Krishna -> use as Krishna teaching
+    if (speaker === "krishna") {
+      // Build system prompt for RAG to craft concise phrasing around this verse
+      const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
+      const modelUser = `User's problem: "${text}"\n\nVerse Context:\nSanskrit: ${sanskritText}\nTranslation: ${translation}\nReference: ${verseRef}`;
+      let aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
+      if (!aiResp) {
+        const fallback2 = language === "Hindi" ? "Main yahan hoon, agar aap share karen toh main madad kar sakta hoon." : "I am here to listen.";
+        await sendViaHeltar(phone, fallback2, "fallback");
+        return { assistantResponse: fallback2, stage: "chatting", topic: text };
+      }
+      aiResp = ensureResponseBrevity(aiResp);
+      aiResp = ensureEndsWithQuestion(aiResp, language);
+      const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
+      if (parts.length <= MAX_OUTGOING_MESSAGES) {
+        for (const part of parts) {
+          await sendViaHeltar(phone, part, "verse");
+          await new Promise(r => setTimeout(r, 800));
+        }
+      } else {
+        const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
+        for (let i = 0; i < toSendIndividually; i++) {
+          await sendViaHeltar(phone, parts[i], "verse");
+          await new Promise(r => setTimeout(r, 800));
+        }
+        const remaining = parts.slice(toSendIndividually).join("\n\n");
+        await sendViaHeltar(phone, remaining, "verse");
+      }
+      return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
     }
 
-    // Post-process aiResp: ensure brevity & question ending
-    aiResp = ensureResponseBrevity(aiResp, language);
-    aiResp = ensureEndsWithQuestion(aiResp, language);
+    // If speaker is Arjuna / Sanjaya / Dhritarashtra / unknown, we will reframe:
+    // 1) present the "Arjuna" (or speaker) passage if it's useful as validation of feeling
+    // 2) then fetch or pick a Krishna verse to provide guidance and send Krishna's verse as the main teaching
 
-    // split into parts by "||"
-    const partsRaw = aiResp.split("||").map(p => p.trim()).filter(Boolean);
-    // limit outgoing messages: if >MAX, send first MAX-1 then combine rest
-    const parts = partsRaw;
-    if (parts.length <= MAX_OUTGOING_MESSAGES) {
-      for (const part of parts) {
+    // Part A: brief validation using the retrieved verse (but *not* present it as Krishna's teaching)
+    const validationPart = language === "Hindi"
+      ? `यह भाव: ${sanskritText ? sanskritText : (translation || "अभिव्यक्ति")}`
+      : `This passage: ${sanskritText ? sanskritText : (translation || "expression")}`;
+
+    // Part B: find a Krishna teaching related to stress/attachment/equanimity
+    // We'll attempt another query focusing on "Krishna says" + emotion keywords; fall back to a mapped Krishna verse.
+    let krishnaCandidate = null;
+    try {
+      // Try to find a Krishna-specific verse by querying Pinecone for "Krishna" + transformed query
+      const extraVec = await getEmbedding(`Krishna teaching about ${transformed}`);
+      const extraMatches = await multiNamespaceQuery(extraVec, 6);
+      krishnaCandidate = extraMatches.find(m => identifySpeakerFromMetadata(m.metadata) === "krishna");
+    } catch (e) {
+      console.warn("secondary Krishna query failed; will use fallback mapping if available.");
+    }
+
+    if (!krishnaCandidate) {
+      // fallback to emotionLabel mapping if provided or to a default Krishna verse
+      const label = emotionLabel || detectEmotion(text) || "confusion";
+      const fallbackKrishna = KRISHNA_FALLBACK_BY_EMOTION[label] || KRISHNA_FALLBACK_BY_EMOTION["confusion"];
+      // assemble simple parts
+      const part1 = `${fallbackKrishna.sanskrit} (${fallbackKrishna.verseRef})`;
+      const part2 = `${fallbackKrishna.translation}`;
+      const part3 = `Shri Krishna kehte hain: ${fallbackKrishna.translation}`;
+      const part4 = language === "Hindi" ? `क्या आप इसे आज़माना चाहेंगे?` : `Would you like to try this now?`;
+      // Send validation + Krishna teaching
+      await sendViaHeltar(phone, validationPart, "verse");
+      await new Promise(r => setTimeout(r, 700));
+      const parts = [part1, part2, part3, part4];
+      for (const part of parts.slice(0, MAX_OUTGOING_MESSAGES)) {
         await sendViaHeltar(phone, part, "verse");
-        await new Promise(r => setTimeout(r, 900));
+        await new Promise(r => setTimeout(r, 800));
       }
+      if (parts.length > MAX_OUTGOING_MESSAGES) {
+        const remaining = parts.slice(MAX_OUTGOING_MESSAGES).join("\n\n");
+        await sendViaHeltar(phone, remaining, "verse");
+      }
+      return { assistantResponse: `${validationPart} || ${parts.join(" || ")}`, stage: "chatting", topic: text };
     } else {
-      const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
-      for (let i = 0; i < toSendIndividually; i++) {
-        await sendViaHeltar(phone, parts[i], "verse");
-        await new Promise(r => setTimeout(r, 900));
+      // We found a Krishna candidate; build a more rigorous RAG response using that metadata
+      const km = krishnaCandidate.metadata || {};
+      const kSanskrit = safeText(km, "sanskrit") || safeText(km, "verse") || "";
+      const kTranslation = safeText(km, "translation") || safeText(km, "hinglish1") || "";
+      const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
+      const modelUser = `User problem: "${text}"\n\nContext validation passage (for empathy): ${sanskritText || translation}\nKrishna candidate:\nSanskrit: ${kSanskrit}\nTranslation: ${kTranslation}`;
+      let aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
+      if (!aiResp) {
+        const fallback2 = language === "Hindi" ? "Main yahan hoon, agar aap share karen toh main madad kar sakta hoon." : "I am here to listen.";
+        await sendViaHeltar(phone, fallback2, "fallback");
+        return { assistantResponse: fallback2, stage: "chatting", topic: text };
       }
-      const remaining = parts.slice(toSendIndividually).join("\n\n");
-      await sendViaHeltar(phone, remaining, "verse");
+      aiResp = ensureResponseBrevity(aiResp);
+      aiResp = ensureEndsWithQuestion(aiResp, language);
+      const parts = aiResp.split("||").map(p => p.trim()).filter(Boolean);
+      // first send validation part
+      await sendViaHeltar(phone, validationPart, "verse");
+      await new Promise(r => setTimeout(r, 700));
+      if (parts.length <= MAX_OUTGOING_MESSAGES) {
+        for (const part of parts) {
+          await sendViaHeltar(phone, part, "verse");
+          await new Promise(r => setTimeout(r, 800));
+        }
+      } else {
+        const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
+        for (let i = 0; i < toSendIndividually; i++) {
+          await sendViaHeltar(phone, parts[i], "verse");
+          await new Promise(r => setTimeout(r, 800));
+        }
+        const remaining = parts.slice(toSendIndividually).join("\n\n");
+        await sendViaHeltar(phone, remaining, "verse");
+      }
+      return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
     }
-
-    return { assistantResponse: aiResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
   } catch (err) {
     console.error("getRAGResponse failed:", err?.message || err);
     fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getRAGResponse Error | ${JSON.stringify(err?.message || err)}\n`);
@@ -453,6 +569,7 @@ app.post("/webhook", async (req, res) => {
     // Acknowledge quickly
     res.status(200).send("OK");
 
+    // Support multiple incoming body shapes (Heltar / Meta / Twilio-like)
     const body = req.body || {};
     let msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
     if (!msg || typeof msg !== "object") {
@@ -474,25 +591,19 @@ app.post("/webhook", async (req, res) => {
     // fetch user state
     const user = await getUserState(phone);
 
-    // detect language automatically based on incoming text, but prefer stored preference if user explicitly set
+    // language detection + preference (auto-detect but do not overwrite explicit choice)
     const autoLang = detectLanguageFromText(text);
     let language = user.language_preference || "English";
-    // If stored preference is default "English" but text indicates Hindi, switch automatically
-    if (!user.language_preference || user.language_preference === "English") {
-      if (autoLang === "Hindi") {
-        language = "Hindi";
-        await updateUserState(phone, { language_preference: "Hindi" });
-      } else {
-        language = "English";
-        // we don't force setting English flag here to avoid overriding deliberate user choice
-      }
+    if ((!user.language_preference || user.language_preference === "English") && autoLang === "Hindi") {
+      language = "Hindi";
+      await updateUserState(phone, { language_preference: "Hindi" });
     } else {
-      language = user.language_preference;
+      language = user.language_preference || autoLang;
     }
 
     const lower = text.toLowerCase();
 
-    // Manual Language switch commands still accepted
+    // manual language switches still allowed
     if (isEnglishRequest(lower)) {
       await updateUserState(phone, { language_preference: "English" });
       await sendViaHeltar(phone, "Language switched to English. How can I help you today?", "language");
@@ -504,122 +615,74 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Greetings
+    // Greetings: offer choice (teaching vs talk)
     if (isGreeting(lower)) {
       const welcome = language === "Hindi"
-        ? "Hare Krishna 🙏\nMain Sarathi hoon — aapka saathi. Kya main ek chhota sandesh ya ek chhota abhyas bhejun?"
-        : "Hare Krishna 🙏\nI am Sarathi, your companion. Would you like a short teaching from Krishna for today, or want to talk about something on your mind?";
+        ? "Hare Krishna 🙏\nMain Sarathi hoon, aapka saathi. Kya aap chahenge: (1) ek chhota sandesh (2) apni baat share karein? Please reply 1 or 2."
+        : "Hare Krishna 🙏\nI am Sarathi, your companion. Would you like: (1) a short teaching from Krishna or (2) to share what's on your mind? Please reply 1 or 2.";
       await sendViaHeltar(phone, welcome, "welcome");
       await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]), language_preference: language });
       return;
     }
 
-    // How are you
+    // If user responded to the choice prompt with 1 or 2
+    if (["1","2","one","two"].includes(lower.trim())) {
+      if (["1","one"].includes(lower.trim())) {
+        // short teaching: pick a gentle Krishna verse (fallback)
+        const fallback = await fetchKrishnaVerseByEmotion("stressed"); // neutral starter
+        if (fallback) {
+          // send fallback teaching
+          const parts = fallback.parts;
+          for (const part of parts.slice(0, MAX_OUTGOING_MESSAGES)) {
+            await sendViaHeltar(phone, part, "verse");
+            await new Promise(r => setTimeout(r, 700));
+          }
+          if (parts.length > MAX_OUTGOING_MESSAGES) {
+            const remaining = parts.slice(MAX_OUTGOING_MESSAGES).join("\n\n");
+            await sendViaHeltar(phone, remaining, "verse");
+          }
+          await updateUserState(phone, { conversation_stage: "chatting" });
+          return;
+        }
+      } else { // choice 2 => user wants to share; prompt them
+        const prompt = language === "Hindi" ? "Kripya batayiye — kya aap abhi kis cheez se pareshan hain?" : "Please share — what is on your mind right now?";
+        await sendViaHeltar(phone, prompt, "prompt");
+        await updateUserState(phone, { conversation_stage: "chatting" });
+        return;
+      }
+    }
+
+    // "how are you"
     if (isHowAreYou(lower)) {
       const reply = language === "Hindi"
-        ? "Main theek hoon, dhanyavaad! Aap kaise mehsoos kar rahe hain aaj?"
-        : "I'm well, thank you! How are you feeling today?";
+        ? "Main theek hoon — aap kaise mehsoos kar rahe hain aaj?"
+        : "I'm well — how are you feeling today?";
       await sendViaHeltar(phone, reply, "small_talk");
       return;
     }
 
-    // Small-talk
+    // small talk fallback
     if (isSmallTalk(lower)) {
       const reply = language === "Hindi"
-        ? "Dhanyavaad 🙏 Kya aapko aaj kisi vishesh baat par sahayata chahiye?"
-        : "Thanks! Would you like a short thought for the day or would you like to share what's on your mind?";
+        ? "Dhanyavaad 🙏 Kya aap aaj kisi vishesh cheez par baat karna chahte hain?"
+        : "Thanks! Would you like a short thought for the day or to share what you're feeling?";
       await sendViaHeltar(phone, reply, "small_talk");
       return;
     }
 
-    // Lesson explicit request (start/continue)
-    if (isLessonRequest(lower) || lower === "teach me" || lower === "teach me gita") {
-      let nextLesson = (user.current_lesson || 0) + 1;
-      await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode", language_preference: language });
-      await sendLesson(phone, nextLesson);
-      return;
-    }
+    // Main conversational path: detect emotion, route to RAG
+    const emotionLabel = detectEmotion(text); // may be null
+    console.log(`Detected emotion: ${emotionLabel}`);
 
-    // If in lesson_mode: navigation commands, exit, restart, or free queries (RAG) but keep them in lessons
-    if (user.conversation_stage === "lesson_mode") {
-      if (lower === "next" || lower.includes("hare krishna") || lower === "harekrishna") {
-        const nextLesson = (user.current_lesson || 0) + 1;
-        await updateUserState(phone, { current_lesson: nextLesson, conversation_stage: "lesson_mode" });
-        await sendLesson(phone, nextLesson);
-        return;
-      }
-      if (isRestartLesson(lower) || lower === "restart") {
-        await updateUserState(phone, { current_lesson: 0 });
-        await sendViaHeltar(phone, language === "Hindi" ? "🌸 Course progress reset. 'teach me gita' likh kar dubara shuru karein." : "🌸 Course progress reset. Reply 'teach me gita' to start again.", "lesson");
-        return;
-      }
-      if (isExitLessons(lower)) {
-        await updateUserState(phone, { conversation_stage: "new_topic" });
-        await sendViaHeltar(phone, language === "Hindi" ? "Lessons se baahar aa gaye. Ab kaise madad karun?" : "Exited lessons. How can I help you now?", "lesson_exit");
-        return;
-      }
-
-      // Greeting inside lessons: short prompt
-      if (isGreeting(lower) || isSmallTalk(lower)) {
-        await sendViaHeltar(phone, language === "Hindi" ? `Reply "Next" jab aap agla lesson chahen.` : `Reply "Next" when you'd like the next lesson.`, "lesson_prompt");
-        return;
-      }
-
-      // Free query inside lesson_mode => route to RAG but keep them in lesson_mode
-      console.log("📖 Lesson mode but free query → route to RAG");
-      let chatHistory = parseChatHistory(user.chat_history);
-      chatHistory.push({ role: "user", content: text });
-      if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
-
-      const ragResult = await getRAGResponse(phone, text, language, chatHistory);
-      chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-
-      await updateUserState(phone, {
-        chat_history: JSON.stringify(chatHistory),
-        last_topic_summary: ragResult.topic || text,
-        conversation_stage: "lesson_mode",
-        language_preference: language
-      });
-      return;
-    }
-
-    // Normal flow — prepare chat history
+    // prepare chat history for context
     let chatHistory = parseChatHistory(user.chat_history || []);
     chatHistory.push({ role: "user", content: text });
     if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
 
-    // Chatting stage: call OpenAI short replies and detect [NEW_TOPIC]
-    if (user.conversation_stage === "chatting") {
-      console.log("🤝 Stage = chatting");
-      const chatPrompt = CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language);
-      let aiChatResponse = await openaiChat([{ role: "system", content: chatPrompt }, ...chatHistory], 300);
-
-      if (!aiChatResponse) {
-        console.warn("openaiChat returned null — falling back to RAG");
-      } else {
-        // post-process: brevity and ensure it ends with a question
-        aiChatResponse = ensureResponseBrevity(aiChatResponse, language);
-        aiChatResponse = ensureEndsWithQuestion(aiChatResponse, language);
-
-        // If model signalled new topic token, branch
-        if (aiChatResponse.includes("[NEW_TOPIC]")) {
-          const cleanResp = aiChatResponse.replace("[NEW_TOPIC]", "").trim();
-          if (cleanResp) await sendViaHeltar(phone, cleanResp, "chat");
-          await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify(chatHistory), language_preference: language });
-          return;
-        } else {
-          await sendViaHeltar(phone, aiChatResponse, "chat");
-          chatHistory.push({ role: "assistant", content: aiChatResponse });
-          await updateUserState(phone, { chat_history: JSON.stringify(chatHistory), language_preference: language });
-          return;
-        }
-      }
-    }
-
-    // New-topic (or fallback) stage: use RAG to fetch verse & commentary, then switch to 'chatting'
-    console.log("📖 Stage = new_topic → RAG");
-    const ragResult = await getRAGResponse(phone, text, language, chatHistory);
+    // Use RAG flow (with speaker-checking and reframing)
+    const ragResult = await getRAGResponse(phone, text, language, chatHistory, emotionLabel);
     chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+
     await updateUserState(phone, {
       last_topic_summary: ragResult.topic || text,
       conversation_stage: "chatting",
