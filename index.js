@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Fixed Language Switching & RAG Issues)
+// index.js — SarathiAI (Complete Fixed Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -285,7 +285,7 @@ async function determineUserLanguage(phone, text, user) {
       currentLanguage = 'English';
       await updateUserState(phone, { 
         language_preference: 'English',
-        conversation_stage: 'new_topic' // Reset conversation after language switch
+        conversation_stage: 'new_topic'
       });
       console.log(`🔄 Language switched to English`);
       return { language: currentLanguage, isSwitch: true, switchTo: 'English' };
@@ -294,7 +294,7 @@ async function determineUserLanguage(phone, text, user) {
       currentLanguage = 'Hindi';
       await updateUserState(phone, { 
         language_preference: 'Hindi',
-        conversation_stage: 'new_topic' // Reset conversation after language switch
+        conversation_stage: 'new_topic'
       });
       console.log(`🔄 Language switched to Hindi`);
       return { language: currentLanguage, isSwitch: true, switchTo: 'Hindi' };
@@ -328,17 +328,111 @@ function isCapabilitiesQuery(text) {
 function isEmotionalExpression(text) {
     const lowerText = text.toLowerCase();
     const emotionalPatterns = [
+        // Stress/Anxiety - EXPANDED PATTERNS
         /\b(stress|stressed|stressing|anxious|anxiety|tension|overwhelmed|pressure|worried|worrying)\b/i,
+        /\b(i am in stress|i feel stressed|i'm stressed|i have stress|feeling stressed|under stress)\b/i,
         /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन)\b/,
+        
+        // Sadness/Depression
         /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow)\b/i,
+        /\b(i am sad|i feel sad|i'm sad|feeling down|feeling low)\b/i,
         /\b(दुखी|उदास|निराश|हताश|दुख|उदासी)\b/,
+        
+        // Life problems (nuanced detection)
         /\b(my life|married life|relationship|husband|wife|family|job|work|career).*(problem|issue|difficult|hard|trouble|disturb|bad)\b/i,
         /\b(जीवन|शादी|रिश्ता|पति|पत्नी|परिवार|नौकरी|काम).*(समस्या|परेशानी|मुश्किल|बुरा|खराब)\b/,
-        /\b(not good|not well|feeling bad|going through|facing problem|having issue)\b/i,
-        /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो)\b/,
-        /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं)\b/i
+        
+        // General distress - IMPROVED PATTERNS
+        /\b(not good|not well|feeling bad|going through|facing problem|having issue|i am struggling)\b/i,
+        /\b(i can't handle|i can't cope|it's too much|too much pressure)\b/i,
+        /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो|संघर्ष कर)\b/,
+        
+        // Confusion/Uncertainty
+        /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं)\b/i,
+        
+        // Physical symptoms of stress
+        /\b(can't sleep|sleep problems|headache|tired|exhausted|fatigue|can't focus)\b/i
     ];
+    
     return emotionalPatterns.some(pattern => pattern.test(lowerText));
+}
+
+function detectEmotionAdvanced(text) {
+    const lowerText = text.toLowerCase();
+    let emotion = null;
+    let confidence = 0;
+
+    const emotionKeywords = {
+        stressed: { 
+            keywords: [
+                'stress', 'stressed', 'stressing', 'tension', 'pressure', 'overwhelmed', 
+                'worried', 'worrying', 'anxious', 'anxiety', 'pressure', 'can\'t handle',
+                'too much', 'overwhelming', 'परेशान', 'तनाव', 'चिंता', 'घबराहट', 'दबाव'
+            ], 
+            weight: 1.0 
+        },
+        sadness: { 
+            keywords: [
+                'sad', 'depressed', 'unhappy', 'hopeless', 'sorrow', 'crying', 'tears',
+                'empty', 'down', 'low', 'दुखी', 'उदास', 'निराश', 'हताश', 'दुख'
+            ], 
+            weight: 1.0 
+        },
+        anger: { 
+            keywords: [
+                'angry', 'frustrated', 'irritated', 'annoyed', 'mad', 'hate', 'furious',
+                'गुस्सा', 'नाराज', 'क्रोध', 'चिढ़'
+            ], 
+            weight: 0.9 
+        },
+        confusion: { 
+            keywords: [
+                'confused', 'lost', 'uncertain', 'doubt', 'unsure', 'what to do', 
+                'don\'t know', 'कंफ्यूज', 'उलझन', 'असमंजस', 'पता नहीं'
+            ], 
+            weight: 0.8 
+        },
+        fear: { 
+            keywords: [
+                'scared', 'afraid', 'fear', 'nervous', 'anxious', 'worry', 'panic',
+                'डर', 'भय', 'घबराहट', 'आशंका'
+            ], 
+            weight: 0.9 
+        }
+    };
+
+    // Check for "I am in [emotion]" patterns
+    const iAmPatterns = [
+        { pattern: /\b(i am|i'm|feeling) (stressed|stress|anxious|overwhelmed)\b/i, emotion: 'stressed', weight: 1.5 },
+        { pattern: /\b(i am|i'm|feeling) (sad|depressed|unhappy|hopeless)\b/i, emotion: 'sadness', weight: 1.5 },
+        { pattern: /\b(i am|i'm|feeling) (angry|mad|frustrated)\b/i, emotion: 'anger', weight: 1.3 },
+        { pattern: /\b(i am|i'm|feeling) (confused|lost|uncertain)\b/i, emotion: 'confusion', weight: 1.2 },
+        { pattern: /\b(i am|i'm|feeling) (scared|afraid|nervous)\b/i, emotion: 'fear', weight: 1.3 }
+    ];
+
+    for (const situation of iAmPatterns) {
+        if (situation.pattern.test(lowerText)) {
+            emotion = situation.emotion;
+            confidence = situation.weight;
+            break;
+        }
+    }
+
+    if (!emotion) {
+        for (const [emotionType, data] of Object.entries(emotionKeywords)) {
+            for (const keyword of data.keywords) {
+                if (lowerText.includes(keyword)) {
+                    if (data.weight > confidence) {
+                        emotion = emotionType;
+                        confidence = data.weight;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return confidence > 0.3 ? { emotion, confidence } : null;
 }
 
 function isFactualQuery(text) {
@@ -358,6 +452,128 @@ function isSmallTalk(text) {
         /\b(haha|hehe|lol|hihi|😂|😊|🙏|❤️|✨)\b/i
     ];
     return smallTalkPatterns.some(pattern => pattern.test(lowerText));
+}
+
+/* ========== MEMORY SYSTEM FOR FOLLOW-UPS ========== */
+async function storeUserMemory(phone, memoryKey, memoryValue, ttlHours = 8) {
+    try {
+        const user = await getUserState(phone);
+        const currentMemory = user.memory_data || {};
+        currentMemory[memoryKey] = {
+            value: memoryValue,
+            expires_at: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString()
+        };
+        await updateUserState(phone, { memory_data: currentMemory });
+    } catch (err) {
+        console.error("Memory storage error:", err);
+    }
+}
+
+async function getUserMemory(phone, memoryKey) {
+    try {
+        const user = await getUserState(phone);
+        const memory = user.memory_data || {};
+        const memoryItem = memory[memoryKey];
+        if (memoryItem && new Date(memoryItem.expires_at) > new Date()) {
+            return memoryItem.value;
+        }
+        return null;
+    } catch (err) {
+        return null;
+    }
+}
+
+async function checkAndSendFollowup(phone, user) {
+    try {
+        const lastEmotion = await getUserMemory(phone, 'last_emotion');
+        const emotionTime = await getUserMemory(phone, 'emotion_detected_time');
+        
+        if (lastEmotion && emotionTime) {
+            const hoursSinceEmotion = (new Date() - new Date(emotionTime)) / (1000 * 60 * 60);
+            if (hoursSinceEmotion >= 7 && hoursSinceEmotion <= 8) {
+                await sendEmotionalFollowup(phone, lastEmotion, user.language_preference);
+                await storeUserMemory(phone, 'last_emotion', '', 1);
+            }
+        }
+    } catch (err) {
+        console.error("Follow-up check error:", err);
+    }
+}
+
+async function sendEmotionalFollowup(phone, previousEmotion, language) {
+    const followupMessages = {
+        stressed: {
+            hindi: "🌅 7-8 घंटे पहले आपने तनाव की बात की थी। क्या अब आपको थोड़ा बेहतर महसूस हो रहा है? 🙏",
+            english: "🌅 You mentioned feeling stressed 7-8 hours ago. Are you feeling a bit better now? 🙏"
+        },
+        sadness: {
+            hindi: "💫 कुछ घंटे पहले आप उदास महसूस कर रहे थे। क्या अब आपके मन को थोड़ी शांति मिली है?",
+            english: "💫 You were feeling sad a few hours ago. Has your mind found some peace now?"
+        },
+        anger: {
+            hindi: "☁️ पहले की बातचीत में आप नाराज़गी महसूस कर रहे थे। क्या अब स्थिति बेहतर है?",
+            english: "☁️ You mentioned feeling angry earlier. Has the situation improved?"
+        }
+    };
+
+    const message = followupMessages[previousEmotion] || {
+        hindi: "🌼 कुछ घंटे पहले की हमारी बातचीत के बाद, क्या आप अब बेहतर महसूस कर रहे हैं?",
+        english: "🌼 Since our conversation a few hours ago, are you feeling better now?"
+    };
+
+    const text = language === "Hindi" ? message.hindi : message.english;
+    await sendViaHeltar(phone, text, "emotional_followup");
+}
+
+/* ========== EMOTIONAL RESPONSE HANDLER ========== */
+async function handleEmotionalExpression(phone, text, language, user, detectedEmotion) {
+    console.log(`💔 Handling emotional expression: ${detectedEmotion}`);
+    
+    const empatheticResponses = {
+        stressed: {
+            hindi: [
+                "मैं समझ रहा हूँ कि आप तनाव महसूस कर रहे हैं। तनाव की स्थिति में गीता हमें सिखाती है कि शांत रहें और अपने भीतर की शक्ति को पहचानें। क्या आप इस बारे में थोड़ा और बता सकते हैं?",
+                "तनाव होना स्वाभाविक है। कृष्ण अर्जुन से कहते हैं: 'योगस्थः कुरु कर्माणि' - मन को स्थिर रखकर कर्म करो। आप किस बात से सबसे ज्यादा तनाव महसूस कर रहे हैं?"
+            ],
+            english: [
+                "I understand you're feeling stressed. In stressful times, the Gita teaches us to remain calm and recognize our inner strength. Could you share a bit more about what's causing this stress?",
+                "It's natural to feel stressed. Krishna tells Arjuna: 'Perform your duty equipoised' - act with a balanced mind. What's causing you the most stress right now?"
+            ]
+        },
+        sadness: {
+            hindi: [
+                "मैं देख रहा हूँ कि आप दुखी महसूस कर रहे हैं। गीता हमें सिखाती है कि दुख और सुख जीवन के अंग हैं, पर हम उनसे परे हैं। क्या आप अपनी भावनाओं के बारे में बात करना चाहेंगे?",
+                "दुख की घड़ी में, याद रखें कि यह समय भी बीतेगा। कृष्ण कहते हैं: 'दुःखेष्वनुद्विग्नमनाः' - दुख में जिसका मन विचलित नहीं होता। आप कैसा महसूस कर रहे हैं?"
+            ],
+            english: [
+                "I see you're feeling sad. The Gita teaches us that sorrow and happiness are part of life, but we are beyond them. Would you like to talk about your feelings?",
+                "In moments of sadness, remember this too shall pass. Krishna says: 'Be undisturbed in sorrow.' How are you feeling right now?"
+            ]
+        }
+    };
+
+    const responses = empatheticResponses[detectedEmotion] || {
+        hindi: [
+            "मैं समझ रहा हूँ कि आप कुछ परेशान हैं। कृपया मुझे बताएं, मैं गीता की शिक्षाओं के through आपकी मदद करना चाहता हूँ।",
+            "यह सुनकर दुख हुआ कि आप मुश्किल दौर से गुजर रहे हैं। क्या आप अपनी भावनाओं के बारे में और साझा करेंगे?"
+        ],
+        english: [
+            "I understand you're going through something difficult. Please share with me, I'd like to help you through Gita's teachings.",
+            "I'm sorry to hear you're facing challenges. Would you like to talk more about what's on your mind?"
+        ]
+    };
+
+    const languageResponses = language === "Hindi" ? responses.hindi : responses.english;
+    const randomResponse = languageResponses[Math.floor(Math.random() * languageResponses.length)];
+    
+    await sendViaHeltar(phone, randomResponse, "emotional_response");
+    await updateUserState(phone, { conversation_stage: "emotional_support" });
+    
+    // Store emotion for follow-up
+    await storeUserMemory(phone, 'last_emotion', detectedEmotion, 8);
+    await storeUserMemory(phone, 'emotion_detected_time', new Date().toISOString(), 8);
+    
+    console.log(`✅ Emotional response sent and memory stored for ${detectedEmotion}`);
 }
 
 /* ========== ENHANCED STARTUP MENU SYSTEM ========== */
@@ -390,8 +606,6 @@ Please choose 1-4 🙏`;
         last_menu_shown: new Date().toISOString()
     });
 }
-
-// REPLACE JUST THIS ONE FUNCTION - keep everything else the same
 
 async function handleEnhancedMenuChoice(phone, choice, language, user) {
     const choices = {
@@ -440,10 +654,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
     const selected = choices[choice];
     if (selected) {
         const content = language === "Hindi" ? selected.hindi : selected.english;
-        
-        // Send the actual content instead of just a prompt
         await sendViaHeltar(phone, content.prompt, `menu_${content.action}`);
-        
         await updateUserState(phone, { 
             conversation_stage: content.action,
             last_menu_choice: choice
@@ -454,7 +665,6 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
 /* ========== IMPROVED AI RESPONSE SYSTEM ========== */
 async function getAIResponse(phone, text, language, conversationContext = {}) {
   try {
-    // If OpenAI is not configured, use simple fallback responses
     if (!OPENAI_KEY) {
       const fallbackResponses = {
         hindi: {
@@ -479,7 +689,6 @@ async function getAIResponse(phone, text, language, conversationContext = {}) {
       return;
     }
 
-    // Use OpenAI for better responses
     const systemPrompt = language === "Hindi" 
       ? `आप सारथी AI हैं, एक दयालु भगवद गीता मार्गदर्शक। 2-3 वाक्यों में संक्षिप्त, उपयोगी उत्तर दें। गीता की शिक्षाओं से practical wisdom दें। गर्मजोशी और देखभाल दिखाएं। हिंदी में उत्तर दें।`
       : `You are Sarathi AI, a compassionate Bhagavad Gita guide. Give brief, helpful responses in 2-3 sentences. Provide practical wisdom from Gita teachings. Show warmth and care. Respond in English.`;
@@ -517,7 +726,6 @@ async function getAIResponse(phone, text, language, conversationContext = {}) {
 
   } catch (err) {
     console.error("AI response error:", err.message);
-    // Fallback response
     const fallback = language === "Hindi" 
       ? "मैं यहाँ आपके लिए हूँ। क्या आप अपनी बात थोड़ा और समझा सकते हैं? 💫"
       : "I'm here for you. Could you explain a bit more about what you need? 💫";
@@ -582,26 +790,41 @@ app.post("/webhook", async (req, res) => {
         : "जरूर! मैं हिंदी में बात करूंगा। मैं आपकी कैसे मदद कर सकता हूँ? 😊";
       
       await sendViaHeltar(phone, confirmationMessage, "language_switch");
-      return; // STOP here - don't process the message further
+      return;
     }
 
     const lower = text.toLowerCase();
 
-    // Handle greetings
+    // Emotion detection and follow-up check
+    const emotionDetection = detectEmotionAdvanced(text);
+    const detectedEmotion = emotionDetection ? emotionDetection.emotion : null;
+    await checkAndSendFollowup(phone, user);
+
+    console.log(`💭 Emotion detected: ${detectedEmotion}`);
+
+    // 1. GREETINGS (Highest Priority)
     if (isGreetingQuery(lower)) {
         console.log(`✅ Intent: Greeting`);
         await handleEnhancedStartupMenu(phone, language, user);
         return;
     }
 
-    // Handle menu choices
+    // 2. MENU CHOICE HANDLING
     if (user.conversation_stage === "awaiting_menu_choice" && /^[1-4]$/.test(text.trim())) {
         console.log(`✅ Intent: Menu Choice`);
         await handleEnhancedMenuChoice(phone, text.trim(), language, user);
         return;
     }
 
-    // Handle capabilities queries
+    // 3. EMOTIONAL EXPRESSIONS (Empathy first)
+    if (isEmotionalExpression(lower) || detectedEmotion) {
+        console.log(`✅ Intent: Emotional Expression - ${detectedEmotion}`);
+        const emotionToHandle = detectedEmotion || 'stressed';
+        await handleEmotionalExpression(phone, text, language, user, emotionToHandle);
+        return;
+    }
+
+    // 4. CAPABILITIES QUERIES
     if (isCapabilitiesQuery(lower)) {
         console.log(`✅ Intent: Capabilities Query`);
         const reply = language === "Hindi"
@@ -611,7 +834,7 @@ app.post("/webhook", async (req, res) => {
         return;
     }
 
-    // Handle small talk
+    // 5. SMALL TALK
     if (isSmallTalk(lower)) {
         console.log(`✅ Intent: Small Talk`);
         let response;
@@ -636,7 +859,7 @@ app.post("/webhook", async (req, res) => {
         return;
     }
 
-    // Default: AI response
+    // 6. DEFAULT: AI RESPONSE
     console.log(`ℹ️  Intent: General -> Using AI`);
     await getAIResponse(phone, text, language, {
         stage: user.conversation_stage,
