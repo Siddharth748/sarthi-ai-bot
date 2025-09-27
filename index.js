@@ -391,36 +391,61 @@ Please choose 1-4 🙏`;
     });
 }
 
+// REPLACE JUST THIS ONE FUNCTION - keep everything else the same
+
 async function handleEnhancedMenuChoice(phone, choice, language, user) {
     const choices = {
         "1": {
-            hindi: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?",
-            english: "🌅 Right guidance for your current challenge. Please briefly describe your situation?",
-            action: "immediate_guidance"
+            hindi: {
+                prompt: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?",
+                action: "immediate_guidance"
+            },
+            english: {
+                prompt: "🌅 Right guidance for your current challenge. Please briefly describe your situation?",
+                action: "immediate_guidance"
+            }
         },
         "2": {
-            hindi: "📖 आइए आज की विशेष गीता शिक्षा से दिन की शुरुआत करें!",
-            english: "📖 Let's start the day with today's special Gita teaching!",
-            action: "daily_wisdom"
+            hindi: {
+                prompt: "📖 आज की विशेष गीता शिक्षा: 'कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।' (2.47) - तुम्हारा अधिकार सिर्फ कर्म पर है, फल पर नहीं। आज बिना परिणाम की चिंता किए, अपना कर्तव्य निभाएं। 🙏",
+                action: "daily_wisdom"
+            },
+            english: {
+                prompt: "📖 Today's special Gita teaching: 'You have the right to work, but never to the fruit of work.' (2.47) - Focus on your duty without attachment to results. Perform your actions with dedication today. 🙏",
+                action: "daily_wisdom"
+            }
         },
         "3": {
-            hindi: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं?",
-            english: "💬 I'm here to listen. Please share how you're feeling?",
-            action: "conversation"
+            hindi: {
+                prompt: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं? मैं गीता की शिक्षाओं के through आपकी मदद करूंगा।",
+                action: "conversation"
+            },
+            english: {
+                prompt: "💬 I'm here to listen. Please share how you're feeling? I'll help you through the teachings of Gita.",
+                action: "conversation"
+            }
         },
         "4": {
-            hindi: "🎓 ज्ञान की यात्रा शुरू करें! आप गीता के बारे में क्या जानना चाहते हैं?",
-            english: "🎓 Begin your knowledge journey! What would you like to know about Gita?",
-            action: "knowledge_seeker"
+            hindi: {
+                prompt: "🎓 गीता ज्ञान: भगवद गीता 18 अध्यायों में विभाजित है, जो जीवन के विभिन्न पहलुओं पर प्रकाश डालती है। आप किस विषय के बारे में जानना चाहते हैं?",
+                action: "knowledge_seeker"
+            },
+            english: {
+                prompt: "🎓 Gita Knowledge: The Bhagavad Gita is divided into 18 chapters, each illuminating different aspects of life. What specific topic would you like to know about?",
+                action: "knowledge_seeker"
+            }
         }
     };
 
     const selected = choices[choice];
     if (selected) {
-        const message = language === "Hindi" ? selected.hindi : selected.english;
-        await sendViaHeltar(phone, message, `menu_${selected.action}`);
+        const content = language === "Hindi" ? selected.hindi : selected.english;
+        
+        // Send the actual content instead of just a prompt
+        await sendViaHeltar(phone, content.prompt, `menu_${content.action}`);
+        
         await updateUserState(phone, { 
-            conversation_stage: selected.action,
+            conversation_stage: content.action,
             last_menu_choice: choice
         });
     }
