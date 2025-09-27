@@ -238,12 +238,18 @@ function detectLanguageFromText(text) {
     return "Hindi";
   }
   
-  // 3. Common English phrases that should NEVER be detected as Hindi
+  // 3. Hindi greetings in Roman script
+  const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe', 'hare krishna'];
+  if (hindiGreetings.some(greeting => cleanText === greeting)) {
+    return "Hindi";
+  }
+  
+  // 4. Common English phrases that should NEVER be detected as Hindi
   const englishPatterns = [
     /^hi+$/i, /^hello$/i, /^hey$/i, /^how are you\??$/i, /^what'?s up\??$/i,
     /^good morning$/i, /^good afternoon$/i, /^good evening$/i,
     /^thanks?$/i, /^thank you$/i, /^ok$/i, /^okay$/i, /^bye$/i,
-    /^yes$/i, /^no$/i, /^please$/i, /^sorry$/i, /^what$/i, /^when$/i, 
+    /^yes$/i, /^no$/i, /^please$/i, /^sorry$/i, /^what$/i, /^when$/, 
     /^where$/i, /^why$/i, /^how$/i, /^help$/i, /^stop$/i, /^start$/i,
     /^menu$/i, /^[1-4]$/, /^whats happening$/i, /^what's happening$/i
   ];
@@ -254,12 +260,12 @@ function detectLanguageFromText(text) {
     }
   }
   
-  // 4. If it contains only English letters and common punctuation, it's English
+  // 5. If it contains only English letters and common punctuation, it's English
   if (/^[a-zA-Z\s\?\!\.\,\']+$/.test(text)) {
     return "English";
   }
   
-  // 5. Strong Romanized Hindi indicators
+  // 6. Strong Romanized Hindi indicators
   const strongHindiIndicators = ['kyu', 'kya', 'kaise', 'karo', 'kiya', 'mera', 'tera', 'apna'];
   for (const word of strongHindiIndicators) {
     if (new RegExp(`\\b${word}\\b`).test(cleanText)) {
@@ -267,7 +273,7 @@ function detectLanguageFromText(text) {
     }
   }
   
-  // 6. Default to English
+  // 7. Default to English
   return "English";
 }
 
@@ -331,12 +337,12 @@ function isEmotionalExpression(text) {
         // Stress/Anxiety - EXPANDED PATTERNS
         /\b(stress|stressed|stressing|anxious|anxiety|tension|overwhelmed|pressure|worried|worrying)\b/i,
         /\b(i am in stress|i feel stressed|i'm stressed|i have stress|feeling stressed|under stress)\b/i,
-        /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन)\b/,
+        /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन|मन परेशान|दिल परेशान|मन भारी)\b/,
         
-        // Sadness/Depression
-        /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow)\b/i,
-        /\b(i am sad|i feel sad|i'm sad|feeling down|feeling low)\b/i,
-        /\b(दुखी|उदास|निराश|हताश|दुख|उदासी)\b/,
+        // Sadness/Depression - ADDED MORE HINDI PATTERNS
+        /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow|lonely)\b/i,
+        /\b(i am sad|i feel sad|i'm sad|feeling down|feeling low|feeling lonely)\b/i,
+        /\b(दुखी|उदास|निराश|हताश|दुख|उदासी|अकेला|अकेलापन|तन्हाई|मन उदास)\b/,
         
         // Life problems (nuanced detection)
         /\b(my life|married life|relationship|husband|wife|family|job|work|career).*(problem|issue|difficult|hard|trouble|disturb|bad)\b/i,
@@ -345,16 +351,33 @@ function isEmotionalExpression(text) {
         // General distress - IMPROVED PATTERNS
         /\b(not good|not well|feeling bad|going through|facing problem|having issue|i am struggling)\b/i,
         /\b(i can't handle|i can't cope|it's too much|too much pressure)\b/i,
-        /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो|संघर्ष कर)\b/,
+        /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो|संघर्ष कर|मुश्किल में|परेशानी में)\b/,
+        
+        // Hindi-specific emotional expressions
+        /\b(मन भारी|दिल टूट|टेंशन|फिक्र|चिंतित|घबराया|निराशाजनक)\b/,
+        /\b(मेरा मन|मेरा दिल).*(परेशान|दुखी|उदास|भारी|टूट)\b/,
         
         // Confusion/Uncertainty
         /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं)\b/i,
         
         // Physical symptoms of stress
-        /\b(can't sleep|sleep problems|headache|tired|exhausted|fatigue|can't focus)\b/i
+        /\b(can't sleep|sleep problems|headache|tired|exhausted|fatigue|can't focus)\b/i,
+        /\b(नींद नहीं|सिर दर्द|थकान|कमजोरी|बेचैनी)\b/
     ];
     
     return emotionalPatterns.some(pattern => pattern.test(lowerText));
+}
+
+function isOutOfScopeQuery(text) {
+    const lowerText = text.toLowerCase();
+    const outOfScopePatterns = [
+        /\b(restaurant|hotel|food|eat|drink|coffee|tea|menu|price|cost|location|address|phone|number)\b/i,
+        /\b(रेस्तरां|होटल|खाना|पीना|कॉफी|चाय|मेनू|दाम|लोकेशन|पता|फोन|नंबर)\b/,
+        /\b(weather|movie|music|game|sports|news|politics|stock|market|shopping|buy|sell)\b/i,
+        /\b(मौसम|फिल्म|संगीत|खेल|खबर|राजनीति|शेयर|बाजार|खरीद|बेच)\b/
+    ];
+    
+    return outOfScopePatterns.some(pattern => pattern.test(lowerText));
 }
 
 function detectEmotionAdvanced(text) {
@@ -859,7 +882,17 @@ app.post("/webhook", async (req, res) => {
         return;
     }
 
-    // 6. DEFAULT: AI RESPONSE
+    // 6. OUT OF SCOPE QUERIES
+    if (isOutOfScopeQuery(lower)) {
+        console.log(`🚫 Intent: Out of Scope`);
+        const response = language === "Hindi" 
+            ? "मैं विशेष रूप से भगवद गीता और आध्यात्मिक मार्गदर्शन के लिए बना हूँ। कृपया गीता, जीवन की चुनौतियों, या आध्यात्मिक विषयों के बारे में पूछें। 🙏"
+            : "I'm specifically designed for Bhagavad Gita and spiritual guidance. Please ask about Gita, life challenges, or spiritual topics. 🙏";
+        await sendViaHeltar(phone, response, "out_of_scope");
+        return;
+    }
+
+    // 7. DEFAULT: AI RESPONSE
     console.log(`ℹ️  Intent: General -> Using AI`);
     await getAIResponse(phone, text, language, {
         stage: user.conversation_stage,
