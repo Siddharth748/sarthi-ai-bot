@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Fixed Version - Database + Language + RAG)
+// index.js — SarathiAI (Complete Fixed Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -33,12 +33,12 @@ const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "420", 10) || 
 
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-/* ---------------- FIXED Database Setup ---------------- */
+/* ---------------- Database Setup ---------------- */
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
     
-    // FIXED: Always ensure all columns exist (remove conditional check)
+    // Ensure all columns exist
     await client.query(`
       ALTER TABLE users 
       ADD COLUMN IF NOT EXISTS subscribed_daily BOOLEAN DEFAULT FALSE,
@@ -52,21 +52,19 @@ async function setupDatabase() {
       ADD COLUMN IF NOT EXISTS total_incoming INT DEFAULT 0,
       ADD COLUMN IF NOT EXISTS total_outgoing INT DEFAULT 0,
       ADD COLUMN IF NOT EXISTS last_message TEXT,
-      ADD COLUMN IF NOT EXISTS last_message_role VARCHAR(20),
-      ADD COLUMN IF NOT EXISTS last_response_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS last_message_role VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS last_response_type VARCHAR(50),
       ADD COLUMN IF NOT EXISTS current_lesson INT DEFAULT 0,
       ADD COLUMN IF NOT EXISTS language_preference VARCHAR(10) DEFAULT 'English',
       ADD COLUMN IF NOT EXISTS memory_data JSONB DEFAULT '{}'::jsonb,
       ADD COLUMN IF NOT EXISTS last_menu_choice VARCHAR(5),
       ADD COLUMN IF NOT EXISTS last_menu_date DATE,
       ADD COLUMN IF NOT EXISTS last_menu_shown TIMESTAMP WITH TIME ZONE,
-      ADD COLUMN IF NOT EXISTS primary_use_case VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS primary_use_case VARCHAR(50),
       ADD COLUMN IF NOT EXISTS user_segment VARCHAR(20) DEFAULT 'new',
       ADD COLUMN IF NOT EXISTS last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     `);
-    console.log("✅ Ensured all columns exist in users table");
 
-    // Ensure lessons table exists
     await client.query(`
       CREATE TABLE IF NOT EXISTS lessons (
         lesson_number INT PRIMARY KEY,
@@ -95,7 +93,6 @@ async function getUserState(phone) {
   try {
     const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (res.rows.length === 0) {
-      // Create a new user with all required fields
       await dbPool.query(`
         INSERT INTO users (
           phone_number, first_seen_date, last_seen_date, total_sessions, 
@@ -134,29 +131,9 @@ async function getUserState(phone) {
 async function updateUserState(phone, updates) {
   try {
     if (!updates || Object.keys(updates).length === 0) return;
-    
-    // FIXED: Safe column updates - only update existing columns
-    const safeUpdates = {};
-    const validColumns = [
-      'subscribed_daily', 'chat_history', 'conversation_stage', 'last_topic_summary',
-      'messages_since_verse', 'first_seen_date', 'last_seen_date', 'total_sessions',
-      'total_incoming', 'total_outgoing', 'last_message', 'last_message_role',
-      'last_response_type', 'current_lesson', 'language_preference', 'memory_data',
-      'last_menu_choice', 'last_menu_date', 'last_menu_shown', 'primary_use_case',
-      'user_segment', 'last_activity_ts'
-    ];
-    
-    Object.keys(updates).forEach(key => {
-      if (validColumns.includes(key)) {
-        safeUpdates[key] = updates[key];
-      }
-    });
-    
-    if (Object.keys(safeUpdates).length === 0) return;
-    
-    const keys = Object.keys(safeUpdates);
+    const keys = Object.keys(updates);
     const vals = keys.map(k => {
-      const v = safeUpdates[k];
+      const v = updates[k];
       if (Array.isArray(v) || (typeof v === "object" && v !== null)) return JSON.stringify(v);
       return v;
     });
@@ -253,20 +230,30 @@ function isGreetingQuery(text) {
 function isCapabilitiesQuery(text) {
     const lowerText = text.toLowerCase();
     const capabilitiesRegex = /\b(what can you do|what are your capabilities|tell me about yourself|who are you|can i get more info|give me info|what do you do|more info|info about|introduce yourself|what is this|how does this work)\b/i;
-    return capabilitiesRegex.test(lowerText);
+    
+    return capabilitiesRegex.test(lowerText) || 
+           lowerText.includes("more info") || 
+           lowerText.includes("what is this") ||
+           lowerText.includes("introduce yourself") ||
+           lowerText.includes("can i get more info");
 }
 
 function isEmotionalExpression(text) {
     const lowerText = text.toLowerCase();
     const emotionalPatterns = [
+        // Stress/Anxiety
         /\b(stress|stressed|stressing|anxious|anxiety|tension|overwhelmed|pressure|worried|worrying)\b/i,
         /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन)\b/,
+        // Sadness/Depression
         /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow)\b/i,
         /\b(दुखी|उदास|निराश|हताश|दुख|उदासी)\b/,
+        // Life problems (nuanced detection)
         /\b(my life|married life|relationship|husband|wife|family|job|work|career).*(problem|issue|difficult|hard|trouble|disturb|bad)\b/i,
         /\b(जीवन|शादी|रिश्ता|पति|पत्नी|परिवार|नौकरी|काम).*(समस्या|परेशानी|मुश्किल|बुरा|खराब)\b/,
+        // General distress
         /\b(not good|not well|feeling bad|going through|facing problem|having issue)\b/i,
         /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो)\b/,
+        // Confusion/Uncertainty
         /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं)\b/i
     ];
     return emotionalPatterns.some(pattern => pattern.test(lowerText));
@@ -291,7 +278,7 @@ function isSmallTalk(text) {
     return smallTalkPatterns.some(pattern => pattern.test(lowerText));
 }
 
-function detectEmotionAdvanced(text) {
+function detectEmotionAdvanced(text, chatHistory = []) {
     const lowerText = text.toLowerCase();
     let emotion = null;
     let confidence = 0;
@@ -304,14 +291,32 @@ function detectEmotionAdvanced(text) {
         fear: { keywords: ['scared', 'afraid', 'fear', 'nervous', 'anxious', 'worry', 'डर', 'भय', 'घबराहट'], weight: 0.9 }
     };
 
-    for (const [emotionType, data] of Object.entries(emotionKeywords)) {
-        for (const keyword of data.keywords) {
-            if (lowerText.includes(keyword)) {
-                if (data.weight > confidence) {
-                    emotion = emotionType;
-                    confidence = data.weight;
+    const lifeSituationPatterns = [
+        { pattern: /\b(married life|relationship|husband|wife).*(problem|issue|difficult|disturb|bad)\b/i, emotion: 'stressed', weight: 1.5 },
+        { pattern: /\b(job|work|career|office).*(problem|issue|stress|pressure|difficult)\b/i, emotion: 'stressed', weight: 1.3 },
+        { pattern: /\b(family|parents|children|kids).*(problem|issue|tension|worry)\b/i, emotion: 'stressed', weight: 1.3 },
+        { pattern: /\b(शादी|रिश्ता|पति|पत्नी).*(समस्या|परेशानी|मुश्किल|खराब)\b/, emotion: 'stressed', weight: 1.5 },
+        { pattern: /\b(नौकरी|काम|ऑफिस).*(समस्या|तनाव|दबाव|मुश्किल)\b/, emotion: 'stressed', weight: 1.3 }
+    ];
+
+    for (const situation of lifeSituationPatterns) {
+        if (situation.pattern.test(lowerText)) {
+            emotion = situation.emotion;
+            confidence = situation.weight;
+            break;
+        }
+    }
+
+    if (!emotion) {
+        for (const [emotionType, data] of Object.entries(emotionKeywords)) {
+            for (const keyword of data.keywords) {
+                if (lowerText.includes(keyword)) {
+                    if (data.weight > confidence) {
+                        emotion = emotionType;
+                        confidence = data.weight;
+                    }
+                    break;
                 }
-                break;
             }
         }
     }
@@ -323,55 +328,108 @@ function detectEmotionAdvanced(text) {
 function detectLanguageFromText(text) {
   if (!text || typeof text !== "string") return "English";
   
-  // First check for actual Hindi characters (Unicode range)
+  // 1. Check for actual Hindi characters (definitive)
   if (/[\u0900-\u097F]/.test(text)) {
     return "Hindi";
   }
   
-  const lowered = text.toLowerCase().trim();
+  const cleanText = text.trim().toLowerCase();
   
-  // Common English greetings and patterns that should NEVER be detected as Hindi
+  // 2. EXPLICIT language commands (highest priority after actual Hindi chars)
+  if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('in english')) {
+    return "English";
+  }
+  if (cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('in hindi')) {
+    return "Hindi";
+  }
+  
+  // 3. Common English phrases that should NEVER be detected as Hindi
   const englishPatterns = [
-    /^hi+$/i, /^hello$/i, /^hey$/i, /^how are u\??$/i, /^what's up\??$/i,
+    /^hi+$/i, /^hello$/i, /^hey$/i, /^how are you\??$/i, /^what'?s up\??$/i,
     /^good morning$/i, /^good afternoon$/i, /^good evening$/i,
-    /^thanks?$/i, /^thank you$/i, /^ok$/i, /^okay$/i, /^bye$/i
+    /^thanks?$/i, /^thank you$/i, /^ok$/i, /^okay$/i, /^bye$/i,
+    /^yes$/i, /^no$/i, /^please$/i, /^sorry$/i, /^excuse me$/i,
+    /^what$/i, /^when$/i, /^where$/i, /^why$/i, /^how$/i,
+    /^help$/i, /^stop$/i, /^start$/i, /^menu$/i, /^[1-4]$/
   ];
   
   for (const pattern of englishPatterns) {
-    if (pattern.test(lowered)) {
+    if (pattern.test(cleanText)) {
       return "English";
     }
   }
   
-  // If it contains only English letters and common English words, it's English
-  if (/^[a-z\s\?\!\.\,]+$/.test(lowered)) {
-    const commonEnglishWords = ['the', 'and', 'for', 'are', 'you', 'how', 'what', 'when', 'where', 'why', 'this', 'that', 'with', 'have', 'has', 'had', 'was', 'were', 'been', 'being'];
-    const words = lowered.split(/\s+/);
-    let englishWordCount = 0;
-    
-    for (const word of words) {
-      if (commonEnglishWords.includes(word) || word.length > 10) { // Long words are likely English
-        englishWordCount++;
-      }
-    }
-    
-    if (englishWordCount >= 1 || words.some(w => w.length > 8)) {
-      return "English";
+  // 4. If it contains only English letters and common punctuation, it's English
+  if (/^[a-zA-Z\s\?\!\.\,\']+$/.test(text)) {
+    return "English";
+  }
+  
+  // 5. Check for strong Romanized Hindi indicators
+  const strongHindiIndicators = ['kyu', 'kya', 'kaise', 'karo', 'kiya', 'mera', 'tera', 'apna', 'sahi', 'galat', 'karo', 'hoga', 'hai', 'hain'];
+  for (const word of strongHindiIndicators) {
+    if (new RegExp(`\\b${word}\\b`).test(cleanText)) {
+      return "Hindi";
     }
   }
   
-  // Check for Romanized Hindi words (only if no clear English indicators)
-  const hindiRomanWords = ['hai', 'hain', 'ho', 'main', 'aap', 'kyu', 'kya', 'kaise', 'karo', 'kiya', 'nahi', 'par', 'aur', 'lekin', 'agar', 'toh', 'tha', 'thi', 'the', 'mera', 'tera', 'apna'];
-  let hindiScore = 0;
+  // 6. Default to English (safer assumption)
+  return "English";
+}
+
+/* ========== SMART LANGUAGE MANAGEMENT ========== */
+async function determineUserLanguage(phone, text, user) {
+  // Start with user's saved preference
+  let currentLanguage = user.language_preference || 'English';
   
-  for (const word of hindiRomanWords) {
-    if (new RegExp(`\\b${word}\\b`).test(lowered)) {
-      hindiScore++;
+  // Detect language from current message
+  const detectedLanguage = detectLanguageFromText(text);
+  
+  console.log(`🔤 Language detection: user_pref=${currentLanguage}, detected=${detectedLanguage}, text="${text}"`);
+  
+  // Handle explicit language commands immediately
+  if (text.toLowerCase().includes('english') || text.toLowerCase().includes('speak english')) {
+    if (currentLanguage !== 'English') {
+      currentLanguage = 'English';
+      await updateUserState(phone, { language_preference: 'English' });
+      console.log(`🔄 User explicitly switched to English`);
+      
+      // Send confirmation in English
+      await sendViaHeltar(phone, "Sure! I'll speak in English. How can I help you? 😊", "language_switch");
+    }
+    return currentLanguage;
+  }
+  
+  if (text.toLowerCase().includes('hindi') || text.toLowerCase().includes('speak hindi')) {
+    if (currentLanguage !== 'Hindi') {
+      currentLanguage = 'Hindi';
+      await updateUserState(phone, { language_preference: 'Hindi' });
+      console.log(`🔄 User explicitly switched to Hindi`);
+      
+      // Send confirmation in Hindi
+      await sendViaHeltar(phone, "जरूर! मैं हिंदी में बात करूंगा। मैं आपकी कैसे मदद कर सकता हूँ? 😊", "language_switch");
+    }
+    return currentLanguage;
+  }
+  
+  // For new users (first 3 messages), be more responsive to language detection
+  const isNewUser = (user.total_incoming || 0) <= 3;
+  
+  if (isNewUser && detectedLanguage === 'Hindi' && currentLanguage === 'English') {
+    currentLanguage = 'Hindi';
+    await updateUserState(phone, { language_preference: 'Hindi' });
+    console.log(`🔄 New user language switched to Hindi`);
+  }
+  // For existing users, only switch if detection is very confident
+  else if (!isNewUser && detectedLanguage === 'Hindi' && currentLanguage === 'English') {
+    // Only switch if there are clear Hindi indicators
+    if (/[\u0900-\u097F]/.test(text) || text.toLowerCase().includes(' kyu ') || text.toLowerCase().includes(' kya ')) {
+      currentLanguage = 'Hindi';
+      await updateUserState(phone, { language_preference: 'Hindi' });
+      console.log(`🔄 Existing user language switched to Hindi (strong indicators)`);
     }
   }
   
-  // Only return Hindi if there's strong evidence (multiple Hindi words)
-  return hindiScore >= 2 ? "Hindi" : "English";
+  return currentLanguage;
 }
 
 /* ========== ENHANCED STARTUP MENU SYSTEM ========== */
@@ -400,7 +458,8 @@ Please choose 1-4 🙏`;
 
     await sendViaHeltar(phone, menuMessage, "enhanced_welcome");
     await updateUserState(phone, { 
-        conversation_stage: "awaiting_menu_choice"
+        conversation_stage: "awaiting_menu_choice",
+        last_menu_shown: new Date().toISOString()
     });
 }
 
@@ -409,22 +468,26 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
         "1": {
             hindi: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?",
             english: "🌅 Right guidance for your current challenge. Please briefly describe your situation?",
-            action: "immediate_guidance"
+            action: "immediate_guidance",
+            tracking: "guidance_seeker"
         },
         "2": {
             hindi: "📖 आइए आज की विशेष गीता शिक्षा से दिन की शुरुआत करें!",
             english: "📖 Let's start the day with today's special Gita teaching!",
-            action: "daily_wisdom"
+            action: "daily_wisdom",
+            tracking: "daily_learner"
         },
         "3": {
             hindi: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं?",
             english: "💬 I'm here to listen. Please share how you're feeling?",
-            action: "conversation"
+            action: "conversation",
+            tracking: "emotional_support"
         },
         "4": {
             hindi: "🎓 ज्ञान की यात्रा शुरू करें! आप गीता के बारे में क्या जानना चाहते हैं?",
             english: "🎓 Begin your knowledge journey! What would you like to know about Gita?",
-            action: "knowledge_seeker"
+            action: "knowledge_seeker",
+            tracking: "factual_learner"
         }
     };
 
@@ -435,19 +498,21 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
         
         await updateUserState(phone, { 
             conversation_stage: selected.action,
-            last_menu_choice: choice
+            last_menu_choice: choice,
+            primary_use_case: selected.tracking,
+            last_menu_date: new Date().toISOString().slice(0, 10)
         });
     }
 }
 
-/* ========== SIMPLE MEMORY SYSTEM ========== */
-async function storeUserMemory(phone, memoryKey, memoryValue) {
+/* ========== SIMPLE MEMORY SYSTEM FOR FOLLOW-UPS ========== */
+async function storeUserMemory(phone, memoryKey, memoryValue, ttlHours = 8) {
     try {
         const user = await getUserState(phone);
         const currentMemory = user.memory_data || {};
         currentMemory[memoryKey] = {
             value: memoryValue,
-            expires_at: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString()
+            expires_at: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString()
         };
         await updateUserState(phone, { memory_data: currentMemory });
     } catch (err) {
@@ -469,30 +534,100 @@ async function getUserMemory(phone, memoryKey) {
     }
 }
 
+async function checkAndSendFollowup(phone, user) {
+    try {
+        const lastEmotion = await getUserMemory(phone, 'last_emotion');
+        const emotionTime = await getUserMemory(phone, 'emotion_detected_time');
+        
+        if (lastEmotion && emotionTime) {
+            const hoursSinceEmotion = (new Date() - new Date(emotionTime)) / (1000 * 60 * 60);
+            if (hoursSinceEmotion >= 7 && hoursSinceEmotion <= 8) {
+                await sendEmotionalFollowup(phone, lastEmotion, user.language_preference);
+                await storeUserMemory(phone, 'last_emotion', '', 1);
+            }
+        }
+    } catch (err) {
+        console.error("Follow-up check error:", err);
+    }
+}
+
+async function sendEmotionalFollowup(phone, previousEmotion, language) {
+    const followupMessages = {
+        stressed: {
+            hindi: "🌅 7-8 घंटे पहले आपने तनाव की बात की थी। क्या अब आपको थोड़ा बेहतर महसूस हो रहा है? 🙏",
+            english: "🌅 You mentioned feeling stressed 7-8 hours ago. Are you feeling a bit better now? 🙏"
+        },
+        sadness: {
+            hindi: "💫 कुछ घंटे पहले आप उदास महसूस कर रहे थे। क्या अब आपके मन को थोड़ी शांति मिली है?",
+            english: "💫 You were feeling sad a few hours ago. Has your mind found some peace now?"
+        },
+        anger: {
+            hindi: "☁️ पहले की बातचीत में आप नाराज़गी महसूस कर रहे थे। क्या अब स्थिति बेहतर है?",
+            english: "☁️ You mentioned feeling angry earlier. Has the situation improved?"
+        }
+    };
+
+    const message = followupMessages[previousEmotion] || {
+        hindi: "🌼 कुछ घंटे पहले की हमारी बातचीत के बाद, क्या आप अब बेहतर महसूस कर रहे हैं?",
+        english: "🌼 Since our conversation a few hours ago, are you feeling better now?"
+    };
+
+    const text = language === "Hindi" ? message.hindi : message.english;
+    await sendViaHeltar(phone, text, "emotional_followup");
+}
+
 /* ========== IMPROVED RAG SYSTEM ========== */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad-Gita guide. Respond in a warm, helpful tone.
+const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad-Gita guide. Respond appropriately:
 
-Key guidelines:
+FOR EMOTIONAL SUPPORT:
+- First acknowledge their feeling with empathy
+- Provide relevant verse ONLY if it directly helps
+- Keep explanation practical and comforting
+- End with a caring question
+
+FOR FACTUAL QUERIES:
+- Provide clear, concise information
+- Include relevant verse references
+- Stick to factual accuracy
+
+FOR GENERAL GUIDANCE:
+- Use verse structure only if highly relevant
+- Focus on practical wisdom from Krishna's teachings
+
+ALWAYS:
 - Be concise (2-3 sentences maximum)
-- Show empathy and understanding
-- Provide practical wisdom from Gita teachings
-- Use simple, clear language
-- End with a caring question to continue conversation
+- Speak in warm, compassionate tone
+- Use {{LANGUAGE}} appropriately
+- Avoid preaching or overwhelming with philosophy
 
-User language: {{LANGUAGE}}
-User message: "{{USER_QUERY}}"`;
+User concern: "{{USER_QUERY}}"
+`;
+
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate listener. Respond based on situation:
+
+If emotional distress:
+- Show empathy first
+- Ask gentle questions to understand
+- Offer support without immediately jumping to verses
+
+If simple questions:
+- Give direct, friendly answers
+- Keep it conversational
+
+If general guidance:
+- Provide thoughtful, practical advice
+- Reference Gita wisdom naturally if relevant
+
+Always: Be warm, concise (1-2 sentences), and end with inviting question. Use {{LANGUAGE}}.
+`;
 
 /* ---------------- OpenAI & Pinecone helpers ---------------- */
 async function openaiChat(messages, maxTokens = 400) {
-  if (!OPENAI_KEY) {
-    console.log("⚠️ OpenAI key missing - using fallback");
-    return null;
-  }
+  if (!OPENAI_KEY) return null;
   try {
-    const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.7 };
+    const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.6 };
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
-      timeout: 25000
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 25000
     });
     return resp.data?.choices?.[0]?.message?.content || null;
   } catch (err) {
@@ -504,10 +639,9 @@ async function openaiChat(messages, maxTokens = 400) {
 async function getEmbedding(text) {
   if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY missing");
   try {
-    const resp = await axios.post("https://api.openai.com/v1/embeddings", 
-      { model: EMBED_MODEL, input: text }, 
-      { headers: { Authorization: `Bearer ${OPENAI_KEY}` }, timeout: 30000 }
-    );
+    const resp = await axios.post("https://api.openai.com/v1/embeddings", { model: EMBED_MODEL, input: text }, {
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" }, timeout: 30000
+    });
     return resp.data?.data?.[0]?.embedding;
   } catch (err) {
     console.error("getEmbedding error:", err);
@@ -516,23 +650,14 @@ async function getEmbedding(text) {
 }
 
 async function pineconeQuery(vector, topK = 5, namespace) {
-  if (!PINECONE_HOST || !PINECONE_API_KEY) {
-    console.log("⚠️ Pinecone config missing - using fallback");
-    return { matches: [] };
-  }
+  if (!PINECONE_HOST || !PINECONE_API_KEY) throw new Error("Pinecone config missing");
   const url = `${PINECONE_HOST.replace(/\/$/, "")}/query`;
   const body = { vector, topK, includeMetadata: true };
   if (namespace) body.namespace = namespace;
-  try {
-    const resp = await axios.post(url, body, {
-      headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" },
-      timeout: 20000
-    });
-    return resp.data;
-  } catch (err) {
-    console.error("Pinecone query error:", err);
-    return { matches: [] };
-  }
+  const resp = await axios.post(url, body, {
+    headers: { "Api-Key": PINECONE_API_KEY, "Content-Type": "application/json" }, timeout: 20000
+  });
+  return resp.data;
 }
 
 function getNamespacesArray() {
@@ -556,54 +681,56 @@ async function multiNamespaceQuery(vector, topK = 8) {
   return merged;
 }
 
-/* ---------------- IMPROVED RAG Response Function ---------------- */
-async function getRAGResponse(phone, text, language, emotionLabel = null) {
+/* ---------------- RAG Response Function ---------------- */
+async function getRAGResponse(phone, text, language, chatHistory, emotionLabel = null) {
   try {
-    // Try to get relevant verses from Pinecone
-    let verseMatch = null;
-    try {
-      const qVec = await getEmbedding(text);
-      const matches = await multiNamespaceQuery(qVec, 5);
-      verseMatch = matches.find(m => m.score > 0.25);
-    } catch (err) {
-      console.log("⚠️ RAG search failed, using direct AI response:", err.message);
-    }
+    const qVec = await getEmbedding(text);
+    const matches = await multiNamespaceQuery(qVec, 8);
+    const verseMatch = matches.find(m => (m.metadata && (m.metadata.sanskrit || m.metadata.verse)));
 
-    let systemPrompt = RAG_SYSTEM_PROMPT
-      .replace("{{LANGUAGE}}", language)
-      .replace("{{USER_QUERY}}", text);
-
-    let userContent = `User's message: "${text}"`;
-    
-    if (verseMatch && verseMatch.metadata) {
-      const md = verseMatch.metadata;
-      userContent += `\n\nRelevant Gita verse:\nSanskrit: ${md.sanskrit || md.verse || ""}\nTranslation: ${md.translation || md.english || ""}\nReference: ${md.reference || md.verse_ref || ""}`;
-    }
-
-    const aiResp = await openaiChat([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userContent }
-    ], 500);
-
-    if (aiResp) {
-      const cleanResp = String(aiResp).trim().slice(0, MAX_REPLY_LENGTH);
-      await sendViaHeltar(phone, cleanResp, "ai_response");
-      return { assistantResponse: cleanResp, stage: "chatting" };
-    } else {
-      // Fallback responses when AI fails
-      const fallback = language === "Hindi" 
-        ? "मैं आपकी बात समझ रहा हूँ। क्या आप इसके बारे में थोड़ा और बता सकते हैं? 🙏"
-        : "I understand what you're sharing. Could you tell me a bit more about this? 🙏";
+    if (!verseMatch || (verseMatch.score || 0) < 0.25) {
+      const fallback = language === "Hindi" ? "मैं आपकी बात सुन रहा हूँ। थोड़ा और बताइये?" : "I hear your concern. Could you share a little more?";
       await sendViaHeltar(phone, fallback, "fallback");
       return { assistantResponse: fallback, stage: "chatting" };
     }
 
+    const md = verseMatch.metadata || {};
+    const user = await getUserState(phone);
+    
+    // Use appropriate prompt based on context
+    let systemPrompt = RAG_SYSTEM_PROMPT;
+    if (user.conversation_stage === "factual_query" || user.conversation_stage === 'knowledge_seeker') {
+        systemPrompt = RAG_SYSTEM_PROMPT.replace("{{USER_QUERY}}", `Factual question: ${text}`);
+    } else if (emotionLabel || user.conversation_stage === "emotional_support" || user.conversation_stage === 'conversation') {
+        systemPrompt = RAG_SYSTEM_PROMPT.replace("{{USER_QUERY}}", `Emotional concern: ${text}`);
+    } else {
+        systemPrompt = RAG_SYSTEM_PROMPT.replace("{{USER_QUERY}}", text);
+    }
+    
+    systemPrompt = systemPrompt.replace("{{LANGUAGE}}", language || "English");
+
+    const sanskritText = (md.sanskrit || md.verse || "").toString();
+    const translation = (md.translation || md.hinglish1 || md.english || "").toString();
+    const verseRef = (md.reference || md.verse_ref || md.id || "").toString();
+    
+    const modelUser = `User's query: "${text}"\n\nVerse Context:\nSanskrit: ${sanskritText}\nTranslation: ${translation}\nReference: ${verseRef}`;
+    
+    const aiResp = await openaiChat([{ role: "system", content: systemPrompt }, { role: "user", content: modelUser }], 600);
+    
+    if (!aiResp) {
+        const fallback2 = language === "Hindi" ? "मैं यहाँ हूँ, अगर आप साझा करें तो मैं मदद कर सकता हूँ।" : "I am here to listen.";
+        await sendViaHeltar(phone, fallback2, "fallback");
+        return { assistantResponse: fallback2, stage: "chatting" };
+    }
+    
+    const cleanResp = String(aiResp).trim().slice(0, MAX_REPLY_LENGTH);
+    await sendViaHeltar(phone, cleanResp, "verse");
+    return { assistantResponse: cleanResp, stage: "chatting" };
+
   } catch (err) {
     console.error("getRAGResponse failed:", err);
-    const fallback = language === "Hindi" 
-      ? "मैं यहाँ हूँ आपके लिए। आप कैसा महसूस कर रहे हैं? 💫"
-      : "I'm here for you. How are you feeling today? 💫";
-    await sendViaHeltar(phone, fallback, "error_fallback");
+    const fallback = language === "Hindi" ? "मैं सुन रहा हूँ।" : "I am here to listen.";
+    try { await sendViaHeltar(phone, fallback, "fallback"); } catch (e) {}
     return { assistantResponse: fallback, stage: "chatting" };
   }
 }
@@ -613,60 +740,37 @@ function parseWebhookMessage(body) {
   if (!body) return null;
   
   // Try different webhook formats
-  if (body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-    return body.entry[0].changes[0].value.messages[0];
-  }
-  if (body?.messages?.[0]) {
-    return body.messages[0];
-  }
-  if (body?.from && body?.text) {
-    return body;
-  }
+  const entry = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  if (entry) return entry;
+  
+  const messages = body?.messages?.[0];
+  if (messages) return messages;
+  
+  // Direct message object
+  if (body?.from && body?.text) return body;
   
   return null;
-}
-
-/* ========== FIXED LANGUAGE HANDLING ========== */
-async function determineUserLanguage(phone, text, user) {
-    // Always start with user's saved preference
-    let language = user.language_preference || 'English';
-    
-    // For new users (first 3 messages), detect language more aggressively
-    const isNewUser = (user.total_incoming || 0) <= 3;
-    
-    if (isNewUser) {
-        const detectedLang = detectLanguageFromText(text);
-        if (detectedLang === "Hindi" && language === "English") {
-            // New user typing in Hindi - switch preference
-            language = "Hindi";
-            await updateUserState(phone, { language_preference: "Hindi" });
-            console.log(`🔄 New user language switched to: ${language}`);
-        }
-    }
-    
-    return language;
 }
 
 /* ========== MAIN WEBHOOK HANDLER ========== */
 app.post("/webhook", async (req, res) => {
   try {
-    // Send immediate response
     res.status(200).send("OK");
 
     const body = req.body || {};
     const msg = parseWebhookMessage(body);
     
     if (!msg) {
-      console.log("⚠️ Ignoring non-message webhook event");
+      console.log("⚠️ Ignoring non-message webhook event.");
       return;
     }
 
     const phone = msg?.from || msg?.clientWaNumber;
-    const rawText = msg?.text?.body || msg?.button?.payload || "";
+    const rawText = msg?.text?.body || msg?.button?.payload || msg?.interactive?.button_reply?.id || msg?.interactive?.list_reply?.id || "";
     const text = String(rawText || "").trim();
     
     if (!phone || text.length === 0) {
-      console.warn("⚠️ Webhook missing phone/text");
+      console.warn("⚠️ Webhook missing phone/text.");
       return;
     }
 
@@ -679,7 +783,15 @@ app.post("/webhook", async (req, res) => {
     
     const lower = text.toLowerCase();
     
-    console.log(`🎯 Processing: language=${language}, stage=${user.conversation_stage}`);
+    // Check for emotional follow-ups
+    await checkAndSendFollowup(phone, user);
+
+    // Advanced emotion detection for current message
+    const chatHistory = parseChatHistory(user.chat_history || []);
+    const emotionDetection = detectEmotionAdvanced(text, chatHistory);
+    const detectedEmotion = emotionDetection ? emotionDetection.emotion : null;
+
+    console.log(`🎯 Detected: emotion=${detectedEmotion}, confidence=${emotionDetection?.confidence || 0}, language=${language}`);
 
     // 1. GREETINGS (Highest Priority)
     if (isGreetingQuery(lower)) {
@@ -688,69 +800,108 @@ app.post("/webhook", async (req, res) => {
         return;
     }
 
-    // 2. MENU CHOICE HANDLING
+    // 2. CAPABILITIES QUERIES
+    if (isCapabilitiesQuery(lower)) {
+        console.log(`✅ Intent: Capabilities Query`);
+        const reply = language === "Hindi"
+            ? "मैं सारथी हूँ, आपका निजी गीता साथी। मैं आपको जीवन की चुनौतियों में कृष्ण का मार्गदर्शन प्रदान करता हूँ। आप किस तरह की सहायता चाहते हैं?"
+            : "I'm Sarathi, your personal Gita companion. I provide Krishna's guidance for life's challenges. What kind of assistance would you like?";
+        await sendViaHeltar(phone, reply, "capabilities");
+        return;
+    }
+
+    // 3. MENU CHOICE HANDLING
     if (user.conversation_stage === "awaiting_menu_choice" && /^[1-4]$/.test(text.trim())) {
         console.log(`✅ Intent: Menu Choice`);
         await handleEnhancedMenuChoice(phone, text.trim(), language, user);
         return;
     }
 
-    // 3. CAPABILITIES QUERIES
-    if (isCapabilitiesQuery(lower)) {
-        console.log(`✅ Intent: Capabilities Query`);
-        const reply = language === "Hindi"
-            ? "मैं सारथी AI हूँ, आपका निजी गीता साथी! 🙏 मैं आपको जीवन की चुनौतियों के लिए भगवद गीता का मार्गदर्शन प्रदान करता हूँ। आप कैसे मदद चाहते हैं?"
-            : "I'm Sarathi AI, your personal Gita companion! 🙏 I provide guidance from Bhagavad Gita for life's challenges. How can I help you today?";
-        await sendViaHeltar(phone, reply, "capabilities");
-        return;
-    }
-
-    // 4. EMOTIONAL EXPRESSIONS
-    if (isEmotionalExpression(lower)) {
+    // 4. EMOTIONAL EXPRESSIONS (Empathy first, not immediate RAG)
+    if (isEmotionalExpression(lower) || detectedEmotion) {
         console.log(`✅ Intent: Emotional Expression`);
-        const emotionDetection = detectEmotionAdvanced(text);
         
-        const empatheticResponse = language === "Hindi"
-            ? "मैं समझ रहा हूँ कि आप कुछ परेशान हैं। कृपया मुझे बताएं, मैं आपकी मदद करना चाहता हूँ। 🙏"
-            : "I understand you're going through something difficult. Please share with me, I'm here to help. 🙏";
+        const empatheticResponses = {
+            hindi: [
+                "मैं समझ रहा हूँ कि आप कुछ परेशान हैं। क्या आप थोड़ा और बता सकते हैं कि आप कैसा महसूस कर रहे हैं?",
+                "यह सुनकर दुख हुआ कि आप मुश्किल दौर से गुजर रहे हैं। क्या आप अपनी भावनाओं के बारे में और साझा करेंगे?"
+            ],
+            english: [
+                "I understand you're going through something difficult. Could you share a bit more about how you're feeling?",
+                "I'm sorry to hear you're facing challenges. Would you like to talk more about what's on your mind?"
+            ]
+        };
+
+        const responses = language === "Hindi" ? empatheticResponses.hindi : empatheticResponses.english;
+        const randomResponse = responses[Math.floor(Math.random() * responses.length)];
         
-        await sendViaHeltar(phone, empatheticResponse, "empathy");
+        await sendViaHeltar(phone, randomResponse, "empathy_first");
         await updateUserState(phone, { conversation_stage: "emotional_support" });
         
-        if (emotionDetection) {
-            await storeUserMemory(phone, 'last_emotion', emotionDetection.emotion);
+        if (detectedEmotion) {
+            await storeUserMemory(phone, 'last_emotion', detectedEmotion, 8);
+            await storeUserMemory(phone, 'emotion_detected_time', new Date().toISOString(), 8);
         }
         return;
     }
 
-    // 5. SMALL TALK
+    // 5. FACTUAL QUERIES
+    if (isFactualQuery(lower)) {
+        console.log(`✅ Intent: Factual Query`);
+        await updateUserState(phone, { conversation_stage: "factual_query" });
+        // Let it continue to RAG below
+    }
+
+    // 6. SMALL TALK (No RAG)
     if (isSmallTalk(lower)) {
         console.log(`✅ Intent: Small Talk`);
+        const responses = {
+            hindi: {
+                thanks: "आपका स्वागत है! 🙏 क्या आप आज कुछ और साझा करना चाहेंगे?",
+                okay: "ठीक है! क्या आप आगे बातचीत जारी रखना चाहेंगे?",
+                bye: "धन्यवाद! जब भी आपको जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🙏"
+            },
+            english: {
+                thanks: "You're welcome! 🙏 Would you like to share anything else today?",
+                okay: "Okay! Would you like to continue our conversation?",
+                bye: "Thank you! I'm here whenever you need me. Hare Krishna! 🙏"
+            }
+        };
+
         let response;
-        if (language === "Hindi") {
-            if (lower.includes('thank') || lower.includes('धन्यवाद') || lower.includes('शुक्रिया')) {
-                response = "आपका स्वागत है! 🙏 क्या आप और कुछ बात करना चाहेंगे?";
-            } else if (lower.includes('bye') || lower.includes('बाय')) {
-                response = "धन्यवाद! जब भी जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🌟";
-            } else {
-                response = "ठीक है! 😊 आप आगे क्या जानना चाहेंगे?";
-            }
+        const respDict = language === "Hindi" ? responses.hindi : responses.english;
+        
+        if (lower.includes('thank') || lower.includes('धन्यवाद') || lower.includes('शुक्रिया')) {
+            response = respDict.thanks;
+        } else if (lower.includes('bye') || lower.includes('बाय') || lower.includes('stop')) {
+            response = respDict.bye;
         } else {
-            if (lower.includes('thank')) {
-                response = "You're welcome! 🙏 Is there anything else you'd like to talk about?";
-            } else if (lower.includes('bye')) {
-                response = "Thank you! I'm here whenever you need me. Hare Krishna! 🌟";
-            } else {
-                response = "Okay! 😊 What would you like to know more about?";
-            }
+            response = respDict.okay;
         }
+        
         await sendViaHeltar(phone, response, "small_talk");
         return;
     }
 
-    // 6. FALLBACK: Use RAG for everything else
-    console.log(`ℹ️  Intent: General -> Using RAG`);
-    await getRAGResponse(phone, text, language);
+    // 7. FALLBACK: Only unmatched intents go to RAG
+    console.log(`ℹ️  Intent: General/Unmatched -> Proceeding to RAG`);
+
+    const ragResult = await getRAGResponse(phone, text, language, chatHistory, detectedEmotion);
+    if (ragResult && ragResult.assistantResponse) {
+        const updatedChatHistory = [...chatHistory];
+        updatedChatHistory.push({ role: "user", content: text });
+        updatedChatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+        
+        if (updatedChatHistory.length > 12) {
+            updatedChatHistory.splice(0, updatedChatHistory.length - 12);
+        }
+        
+        await updateUserState(phone, {
+            conversation_stage: ragResult.stage || "chatting",
+            chat_history: JSON.stringify(updatedChatHistory),
+            language_preference: language
+        });
+    }
 
   } catch (err) {
     console.error("❌ Webhook error:", err?.message || err);
@@ -762,7 +913,10 @@ app.get("/health", (req, res) => {
   res.json({ 
     status: "ok", 
     bot: BOT_NAME, 
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    database: DATABASE_URL ? "configured" : "missing",
+    openai: OPENAI_KEY ? "configured" : "missing",
+    pinecone: PINECONE_API_KEY ? "configured" : "missing"
   });
 });
 
@@ -772,6 +926,7 @@ app.listen(PORT, () => {
   setupDatabase().catch(console.error);
 });
 
+// Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
   await dbPool.end();
