@@ -675,14 +675,20 @@ app.post("/webhook", async (req, res) => {
     console.log(`📩 Incoming from ${phone}: "${text}"`);
     await trackIncoming(phone, text);
 
+    // This is the new, correct block
     const user = await getUserState(phone);
-    const autoLang = detectLanguageFromText(text);
-    let language = user.language_preference || "English";
-    if ((!user.language_preference || user.language_preference === "English") && autoLang === "Hindi") {
-      language = "Hindi";
-      await updateUserState(phone, { language_preference: "Hindi" });
-    } else {
-      language = user.language_preference || autoLang;
+    
+    // 1. Start with the user's saved preference, or default to English.
+    let language = user.language_preference || 'English';
+
+    // 2. Detect language from the current message.
+    const detectedLang = detectLanguageFromText(text);
+
+    // 3. ONLY if the user's preference is English AND they typed in Hindi, switch to Hindi.
+    if (language === 'English' && detectedLang === 'Hindi') {
+        language = 'Hindi';
+        // Also, update their preference for future conversations.
+        await updateUserState(phone, { language_preference: 'Hindi' });
     }
 
     const lower = text.toLowerCase();
