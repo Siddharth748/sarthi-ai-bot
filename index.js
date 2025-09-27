@@ -1,6 +1,4 @@
-// index.js — SarathiAI (Production-ready: Heltar + RAG + Speaker-check + Emotion mapping + Final Patches)
-// Paste/replace this entire file in your project. This is a full and complete replacement.
-
+// index.js — SarathiAI (Production Ready: Enhanced Intents + Menu + Memory + Robust DB)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -31,7 +29,7 @@ const PINECONE_NAMESPACES = (process.env.PINECONE_NAMESPACES || "").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
-const MAX_OUTGOING_MESSAGES = parseInt(process.env.MAX_OUTGOING_MESSAGES || "3", 10) || 3; // Allowing 3 for better verse flow
+const MAX_OUTGOING_MESSAGES = parseInt(process.env.MAX_OUTGOING_MESSAGES || "3", 10) || 3;
 const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "420", 10) || 420;
 
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
@@ -40,29 +38,44 @@ const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthori
 async function setupDatabase() {
   try {
     const client = await dbPool.connect();
-    // users table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        phone_number VARCHAR(255) PRIMARY KEY,
-        subscribed_daily BOOLEAN DEFAULT FALSE,
-        last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        chat_history JSONB DEFAULT '[]'::jsonb,
-        conversation_stage VARCHAR(50) DEFAULT 'new_topic',
-        last_topic_summary TEXT,
-        messages_since_verse INT DEFAULT 0,
-        first_seen_date DATE,
-        last_seen_date DATE,
-        total_sessions INT DEFAULT 0,
-        total_incoming INT DEFAULT 0,
-        total_outgoing INT DEFAULT 0,
-        last_message TEXT,
-        last_message_role VARCHAR(20),
-        last_response_type VARCHAR(20),
-        current_lesson INT DEFAULT 0,
-        language_preference VARCHAR(10) DEFAULT 'English'
-      );
+    
+    // Check if we need to alter users table (robust migration)
+    const checkUsersTable = await client.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name = 'memory_data'
     `);
-    // keep lessons table definition in DB in case you re-enable later
+    
+    if (checkUsersTable.rows.length === 0) {
+      // Add missing columns to an existing users table
+      await client.query(`
+        ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS subscribed_daily BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS chat_history JSONB DEFAULT '[]'::jsonb,
+        ADD COLUMN IF NOT EXISTS conversation_stage VARCHAR(50) DEFAULT 'new_topic',
+        ADD COLUMN IF NOT EXISTS last_topic_summary TEXT,
+        ADD COLUMN IF NOT EXISTS messages_since_verse INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS first_seen_date DATE,
+        ADD COLUMN IF NOT EXISTS last_seen_date DATE,
+        ADD COLUMN IF NOT EXISTS total_sessions INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS total_incoming INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS total_outgoing INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS last_message TEXT,
+        ADD COLUMN IF NOT EXISTS last_message_role VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS last_response_type VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS current_lesson INT DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS language_preference VARCHAR(10) DEFAULT 'English',
+        ADD COLUMN IF NOT EXISTS memory_data JSONB DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS last_menu_choice VARCHAR(5),
+        ADD COLUMN IF NOT EXISTS last_menu_date DATE,
+        ADD COLUMN IF NOT EXISTS primary_use_case VARCHAR(20),
+        ADD COLUMN IF NOT EXISTS user_segment VARCHAR(20) DEFAULT 'new',
+        ADD COLUMN IF NOT EXISTS last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      `);
+      console.log("✅ Added new columns to existing users table.");
+    }
+
+    // Ensure lessons table exists (for future use or compatibility)
     await client.query(`
       CREATE TABLE IF NOT EXISTS lessons (
         lesson_number INT PRIMARY KEY,
@@ -72,11 +85,11 @@ async function setupDatabase() {
         reflection_question TEXT
       );
     `);
+
     client.release();
-    console.log("✅ Database tables 'users' & 'lessons' are ready.");
+    console.log("✅ Database setup complete.");
   } catch (err) {
-    console.error("❌ Error setting up database tables:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | DB Setup Error | ${JSON.stringify(err?.message || err)}\n`);
+    console.error("❌ Database setup error:", err?.message || err);
   }
 }
 
@@ -91,30 +104,47 @@ async function getUserState(phone) {
   try {
     const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
     if (res.rows.length === 0) {
-      // create a new user row with sensible defaults
-      await dbPool.query(
-        "INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions, language_preference) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English')",
-        [phone]
-      );
+      // Create a new user with all required fields for robust operation
+      await dbPool.query(`
+        INSERT INTO users (
+          phone_number, first_seen_date, last_seen_date, total_sessions, 
+          language_preference, last_activity_ts, memory_data, chat_history,
+          conversation_stage
+        ) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English', CURRENT_TIMESTAMP, '{}', '[]', 'new_topic')
+      `, [phone]);
+      
       const newRes = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
       const u = newRes.rows[0];
-      u.chat_history = parseChatHistory(u.chat_history);
+      u.chat_history = parseChatHistory(u.chat_history || '[]');
+      u.memory_data = u.memory_data || {};
       return u;
     }
+    
+    // For existing users, ensure critical fields are not null to prevent crashes
     const user = res.rows[0];
-    user.chat_history = parseChatHistory(user.chat_history);
+    user.chat_history = parseChatHistory(user.chat_history || '[]');
+    user.memory_data = user.memory_data || {};
+    user.conversation_stage = user.conversation_stage || 'new_topic';
+    user.language_preference = user.language_preference || 'English';
+    user.last_activity_ts = user.last_activity_ts || new Date().toISOString();
+    
     return user;
   } catch (err) {
-    console.error("getUserState failed:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getUserState Error | ${JSON.stringify(err?.message || err)}\n`);
-    return { phone_number: phone, chat_history: [], conversation_stage: "new_topic", current_lesson: 0, language_preference: "English" };
+    console.error("getUserState failed:", err);
+    // Return a safe default object in case of error
+    return { 
+      phone_number: phone, 
+      chat_history: [], 
+      memory_data: {}, 
+      conversation_stage: "new_topic",
+      language_preference: "English"
+    };
   }
 }
 
 async function updateUserState(phone, updates) {
   try {
     if (!updates || Object.keys(updates).length === 0) return;
-    if (updates.last_activity_ts === "NOW()") updates.last_activity_ts = new Date().toISOString();
     const keys = Object.keys(updates);
     const vals = keys.map(k => {
       const v = updates[k];
@@ -126,8 +156,7 @@ async function updateUserState(phone, updates) {
     const sql = `UPDATE users SET ${clauses.join(", ")} WHERE phone_number = $${keys.length + 1}`;
     await dbPool.query(sql, vals);
   } catch (err) {
-    console.error("updateUserState failed:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | updateUserState Error | ${JSON.stringify(err?.message || err)}\n`);
+    console.error("updateUserState failed:", err);
   }
 }
 
@@ -156,9 +185,8 @@ async function trackIncoming(phone, text) {
     if (addSession) updates.total_sessions = (user.total_sessions || 0) + 1;
 
     await updateUserState(phone, updates);
-    console.log(`📊 Incoming tracked: ${phone}`);
   } catch (err) {
-    console.error("trackIncoming failed:", err?.message || err);
+    console.error("trackIncoming failed:", err);
   }
 }
 
@@ -173,9 +201,8 @@ async function trackOutgoing(phone, reply, type = "chat") {
       total_outgoing: (user.total_outgoing || 0) + 1
     };
     await updateUserState(phone, updates);
-    console.log(`📊 Outgoing tracked: ${phone} (${type})`);
   } catch (err) {
-    console.error("trackOutgoing failed:", err?.message || err);
+    console.error("trackOutgoing failed:", err);
   }
 }
 
@@ -183,7 +210,7 @@ async function trackOutgoing(phone, reply, type = "chat") {
 async function sendViaHeltar(phone, message, type = "chat") {
   try {
     const safeMessage = String(message || "").trim().slice(0, 4096);
-    if (!safeMessage) return; // Do not send empty messages
+    if (!safeMessage) return;
     if (!HELTAR_API_KEY) {
       console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
       await trackOutgoing(phone, safeMessage, type);
@@ -200,82 +227,310 @@ async function sendViaHeltar(phone, message, type = "chat") {
     });
 
     await trackOutgoing(phone, safeMessage, type);
-    console.log(`✅ Heltar message sent to ${phone}: ${String(safeMessage).slice(0, 140).replace(/\n/g, " ")}`);
     return resp.data;
   } catch (err) {
     console.error("Heltar send error:", err?.response?.data || err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Heltar Send Error | ${JSON.stringify(err?.response?.data || err?.message || err)}\n`);
     return null;
   }
 }
 
-/* ---------------- Text classification / intents (Patched) ---------------- */
+/* ========== ENHANCED INTENT CLASSIFICATION SYSTEM ========== */
 function isGreetingQuery(text) {
     const lowerText = text.toLowerCase();
-    const greetingRegex = /\b(hi|hello|hey|hii|hiya|yo|good morning|good afternoon|good evening|how are you|what's up|how's it going|kaise ho|kaise hain aap|namaste|hare krishna)\b/;
+    const greetingRegex = /\b(hi|hello|hey|hii|hiya|yo|good morning|good afternoon|good evening|how are you|what's up|how's it going|kaise ho|kaise hain aap|namaste|hare krishna|hola|sup)\b/i;
     return greetingRegex.test(lowerText);
 }
 
 function isCapabilitiesQuery(text) {
     const lowerText = text.toLowerCase();
-    const capabilitiesRegex = /\b(what can you do|what are your capabilities|tell me about yourself|who are you|can i get more info|give me info|what do you do)\b/;
-    return capabilitiesRegex.test(lowerText);
+    const capabilitiesRegex = /\b(what can you do|what are your capabilities|tell me about yourself|who are you|can i get more info|give me info|what do you do|more info|info about|introduce yourself|what is this|how does this work)\b/i;
+    
+    return capabilitiesRegex.test(lowerText) || 
+           lowerText.includes("more info") || 
+           lowerText.includes("what is this") ||
+           lowerText.includes("introduce yourself") ||
+           lowerText.includes("can i get more info");
 }
 
-function isSmallTalk(t) { return /\b(thanks|thank you|ok|okay|good|nice|cool|bye|fine|im fine|i am fine|i'm fine|i am happy|i'm happy|i am well|i'm well)\b/i.test(t); }
-function isEnglishRequest(t) { return /\benglish\b/i.test(t); }
-function isHindiRequest(t) { return /\b(hindi|हिन्दी|हिंदी)\b/i.test(t); }
+function isEmotionalExpression(text) {
+    const lowerText = text.toLowerCase();
+    const emotionalPatterns = [
+        // Stress/Anxiety
+        /\b(stress|stressed|stressing|anxious|anxiety|tension|overwhelmed|pressure|worried|worrying)\b/i,
+        /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन)\b/,
+        // Sadness/Depression
+        /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow)\b/i,
+        /\b(दुखी|उदास|निराश|हताश|दुख|उदासी)\b/,
+        // Life problems (nuanced detection)
+        /\b(my life|married life|relationship|husband|wife|family|job|work|career).*(problem|issue|difficult|hard|trouble|disturb|bad)\b/i,
+        /\b(जीवन|शादी|रिश्ता|पति|पत्नी|परिवार|नौकरी|काम).*(समस्या|परेशानी|मुश्किल|बुरा|खराब)\b/,
+        // General distress
+        /\b(not good|not well|feeling bad|going through|facing problem|having issue)\b/i,
+        /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो)\b/,
+        // Confusion/Uncertainty
+        /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं)\b/i
+    ];
+    return emotionalPatterns.some(pattern => pattern.test(lowerText));
+}
 
-/* ---------------- Emotion detection (keyword-based) ---------------- */
-const EMOTION_KEYWORDS = {
-  stressed: ["stress", "stressed", "stressing", "anxious", "anxiety", "tension", "overwhelmed", "panic"],
-  sadness: ["sad", "depressed", "depression", "lonely", "sorrow", "low", "down", "tired", "mnn nhi krta"],
-  anger: ["angry", "rage", "annoyed", "irritated", "frustrated"],
-  confusion: ["confused", "lost", "uncertain", "uncertainty", "doubt", "what to do"],
-  fear: ["afraid", "scared", "fear", "fearful", "terror"]
-};
+function isFactualQuery(text) {
+    const lowerText = text.toLowerCase();
+    const factualPatterns = [
+        /\b(what is|who is|how old|when was|where was|explain|meaning of|verse about|chapter|shlok|अर्थ|श्लोक|अध्याय|कितने साल|कौन था|क्या है)\b/i,
+        /\b(arjuna|krishna|radha|gita|bhagavad|mahabharat|pandava|kaurava|अर्जुन|कृष्ण|राधा|गीता|महाभारत)\b/i
+    ];
+    return factualPatterns.some(pattern => pattern.test(lowerText));
+}
 
-function detectEmotion(text) {
-  if (!text) return null;
-  const t = text.toLowerCase();
-  for (const [label, keywords] of Object.entries(EMOTION_KEYWORDS)) {
-    for (const k of keywords) {
-      if (t.includes(k)) return label;
+function isSmallTalk(text) {
+    const lowerText = text.toLowerCase();
+    const smallTalkPatterns = [
+        /\b(thanks|thank you|ok|okay|good|nice|cool|great|awesome|fine|good job|well done|शुक्रिया|धन्यवाद|ठीक|अच्छा|बढ़िया)\b/i,
+        /\b(bye|goodbye|see you|talk later|stop|end|बाय|अलविदा|फिर मिलेंगे|रुकिए)\b/i,
+        /\b(haha|hehe|lol|hihi|😂|😊|🙏|❤️|✨)\b/i
+    ];
+    return smallTalkPatterns.some(pattern => pattern.test(lowerText));
+}
+
+function detectEmotionAdvanced(text, chatHistory = []) {
+    const lowerText = text.toLowerCase();
+    let emotion = null;
+    let confidence = 0;
+
+    const emotionKeywords = {
+        stressed: { keywords: ['stress', 'stressed', 'tension', 'pressure', 'overwhelmed', 'worried', 'anxious', 'परेशान', 'तनाव', 'चिंता'], weight: 1.0 },
+        sadness: { keywords: ['sad', 'depressed', 'unhappy', 'hopeless', 'sorrow', 'crying', 'tears', 'दुखी', 'उदास', 'निराश'], weight: 1.0 },
+        anger: { keywords: ['angry', 'frustrated', 'irritated', 'annoyed', 'mad', 'hate', 'गुस्सा', 'नाराज', 'क्रोध'], weight: 0.9 },
+        confusion: { keywords: ['confused', 'lost', 'uncertain', 'doubt', 'unsure', 'what to do', 'कंफ्यूज', 'उलझन', 'असमंजस'], weight: 0.8 },
+        fear: { keywords: ['scared', 'afraid', 'fear', 'nervous', 'anxious', 'worry', 'डर', 'भय', 'घबराहट'], weight: 0.9 }
+    };
+
+    const lifeSituationPatterns = [
+        { pattern: /\b(married life|relationship|husband|wife).*(problem|issue|difficult|disturb|bad)\b/i, emotion: 'stressed', weight: 1.5 },
+        { pattern: /\b(job|work|career|office).*(problem|issue|stress|pressure|difficult)\b/i, emotion: 'stressed', weight: 1.3 },
+        { pattern: /\b(family|parents|children|kids).*(problem|issue|tension|worry)\b/i, emotion: 'stressed', weight: 1.3 },
+        { pattern: /\b(शादी|रिश्ता|पति|पत्नी).*(समस्या|परेशानी|मुश्किल|खराब)\b/, emotion: 'stressed', weight: 1.5 },
+        { pattern: /\b(नौकरी|काम|ऑफिस).*(समस्या|तनाव|दबाव|मुश्किल)\b/, emotion: 'stressed', weight: 1.3 }
+    ];
+
+    for (const situation of lifeSituationPatterns) {
+        if (situation.pattern.test(lowerText)) {
+            emotion = situation.emotion;
+            confidence = situation.weight;
+            break;
+        }
     }
-  }
-  return null;
+
+    if (!emotion) {
+        for (const [emotionType, data] of Object.entries(emotionKeywords)) {
+            for (const keyword of data.keywords) {
+                if (lowerText.includes(keyword)) {
+                    if (data.weight > confidence) {
+                        emotion = emotionType;
+                        confidence = data.weight;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return confidence > 0.5 ? { emotion, confidence } : null;
 }
 
-/* ---------------- Language detection (lightweight) ---------------- */
-function detectLanguageFromText(text) {
-  if (!text || typeof text !== "string") return "English";
-  if (/[ऀ-ॿ]/.test(text)) return "Hindi";
-  const hindiKeywords = ["है", "मैं", "और", "क्या", "कर", "किया", "हूँ", "हैं", "नहीं", "आप", "क्यों"];
-  const lowered = text.toLowerCase();
-  for (const k of hindiKeywords) if (lowered.includes(k)) return "Hindi";
-  return "English";
+/* ========== ENHANCED STARTUP MENU SYSTEM ========== */
+async function handleEnhancedStartupMenu(phone, language, user) {
+    const menuMessage = language === "Hindi" 
+        ? `🚩 *सारथी AI में आपका स्वागत है!* 🚩
+
+मैं आपका निजी गीता साथी हूँ। कृपया चुनें:
+
+1️⃣ *तत्काल मार्गदर्शन* - वर्तमान चुनौती के लिए श्लोक
+2️⃣ *दैनिक ज्ञान* - आज की विशेष शिक्षा  
+3️⃣ *वार्तालाप* - अपनी भावनाओं को साझा करें
+4️⃣ *गीता ज्ञान* - विशिष्ट प्रश्न पूछें
+
+कृपया 1-4 का चयन करें 🙏`
+        : `🚩 *Welcome to Sarathi AI!* 🚩
+
+I'm your personal Gita companion. Please choose:
+
+1️⃣ *Immediate Guidance* - Verse for current challenge
+2️⃣ *Daily Wisdom* - Today's special teaching  
+3️⃣ *Have a Conversation* - Share your feelings
+4️⃣ *Gita Knowledge* - Ask specific questions
+
+Please choose 1-4 🙏`;
+
+    await sendViaHeltar(phone, menuMessage, "enhanced_welcome");
+    await updateUserState(phone, { 
+        conversation_stage: "awaiting_menu_choice",
+        last_menu_shown: new Date().toISOString()
+    });
 }
 
-/* ---------------- System prompts (tightened) ---------------- */
-const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad-Gita guide. Produce a short, structured reply using the following parts separated by "||".
-Parts:
-1) Sanskrit verse (one short line or verse reference). 
-2) A one-sentence translation (Hinglish if user language is Hindi, otherwise English). 
-3) "Shri Krishna kehte hain:" + a 1-2 sentence essence/explanation tailored to the user's concern (only Krishna's teaching content here).
-4) A single short reflection question (exactly one question sentence) inviting action.
+async function handleEnhancedMenuChoice(phone, choice, language, user) {
+    const choices = {
+        "1": {
+            hindi: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?",
+            english: "🌅 Right guidance for your current challenge. Please briefly describe your situation?",
+            action: "immediate_guidance",
+            tracking: "guidance_seeker"
+        },
+        "2": {
+            hindi: "📖 आइए आज की विशेष गीता शिक्षा से दिन की शुरुआत करें!",
+            english: "📖 Let's start the day with today's special Gita teaching!",
+            action: "daily_wisdom",
+            tracking: "daily_learner"
+        },
+        "3": {
+            hindi: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं?",
+            english: "💬 I'm here to listen. Please share how you're feeling?",
+            action: "conversation",
+            tracking: "emotional_support"
+        },
+        "4": {
+            hindi: "🎓 ज्ञान की यात्रा शुरू करें! आप गीता के बारे में क्या जानना चाहते हैं?",
+            english: "🎓 Begin your knowledge journey! What would you like to know about Gita?",
+            action: "knowledge_seeker",
+            tracking: "factual_learner"
+        }
+    };
 
-STRICT: Entire reply <= 3 sentences, each bubble <= 60 words. Last bubble MUST be a question. Reply in {{LANGUAGE}}.
+    const selected = choices[choice];
+    if (selected) {
+        const message = language === "Hindi" ? selected.hindi : selected.english;
+        await sendViaHeltar(phone, message, `menu_${selected.action}`);
+        
+        await updateUserState(phone, { 
+            conversation_stage: selected.action,
+            last_menu_choice: choice,
+            primary_use_case: selected.tracking,
+            last_menu_date: new Date().toISOString().slice(0, 10)
+        });
+    }
+}
+
+/* ========== SIMPLE MEMORY SYSTEM FOR FOLLOW-UPS ========== */
+async function storeUserMemory(phone, memoryKey, memoryValue, ttlHours = 8) {
+    try {
+        const user = await getUserState(phone);
+        const currentMemory = user.memory_data || {};
+        currentMemory[memoryKey] = {
+            value: memoryValue,
+            expires_at: new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString()
+        };
+        await updateUserState(phone, { memory_data: currentMemory });
+    } catch (err) {
+        console.error("Memory storage error:", err);
+    }
+}
+
+async function getUserMemory(phone, memoryKey) {
+    try {
+        const user = await getUserState(phone);
+        const memory = user.memory_data || {};
+        const memoryItem = memory[memoryKey];
+        if (memoryItem && new Date(memoryItem.expires_at) > new Date()) {
+            return memoryItem.value;
+        }
+        return null;
+    } catch (err) {
+        return null;
+    }
+}
+
+async function checkAndSendFollowup(phone, user) {
+    try {
+        const lastEmotion = await getUserMemory(phone, 'last_emotion');
+        const emotionTime = await getUserMemory(phone, 'emotion_detected_time');
+        
+        if (lastEmotion && emotionTime) {
+            const hoursSinceEmotion = (new Date() - new Date(emotionTime)) / (1000 * 60 * 60);
+            if (hoursSinceEmotion >= 7 && hoursSinceEmotion <= 8) {
+                await sendEmotionalFollowup(phone, lastEmotion, user.language_preference);
+                // Clear memory after sending to avoid re-sending
+                await storeUserMemory(phone, 'last_emotion', '', 1); 
+            }
+        }
+    } catch (err) {
+        console.error("Follow-up check error:", err);
+    }
+}
+
+async function sendEmotionalFollowup(phone, previousEmotion, language) {
+    const followupMessages = {
+        stressed: {
+            hindi: "🌅 7-8 घंटे पहले आपने तनाव की बात की थी। क्या अब आपको थोड़ा बेहतर महसूस हो रहा है? 🙏",
+            english: "🌅 You mentioned feeling stressed 7-8 hours ago. Are you feeling a bit better now? 🙏"
+        },
+        sadness: {
+            hindi: "💫 कुछ घंटे पहले आप उदास महसूस कर रहे थे। क्या अब आपके मन को थोड़ी शांति मिली है?",
+            english: "💫 You were feeling sad a few hours ago. Has your mind found some peace now?"
+        },
+        anger: {
+            hindi: "☁️ पहले की बातचीत में आप नाराज़गी महसूस कर रहे थे। क्या अब स्थिति बेहतर है?",
+            english: "☁️ You mentioned feeling angry earlier. Has the situation improved?"
+        }
+    };
+
+    const message = followupMessages[previousEmotion] || {
+        hindi: "🌼 कुछ घंटे पहले की हमारी बातचीत के बाद, क्या आप अब बेहतर महसूस कर रहे हैं?",
+        english: "🌼 Since our conversation a few hours ago, are you feeling better now?"
+    };
+
+    const text = language === "Hindi" ? message.hindi : message.english;
+    await sendViaHeltar(phone, text, "emotional_followup");
+}
+
+/* ========== IMPROVED RAG SYSTEM ========== */
+const RAG_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Bhagavad-Gita guide. Respond appropriately:
+
+FOR EMOTIONAL SUPPORT:
+- First acknowledge their feeling with empathy
+- Provide relevant verse ONLY if it directly helps
+- Keep explanation practical and comforting
+- End with a caring question
+
+FOR FACTUAL QUERIES:
+- Provide clear, concise information
+- Include relevant verse references
+- Stick to factual accuracy
+
+FOR GENERAL GUIDANCE:
+- Use verse structure only if highly relevant
+- Focus on practical wisdom from Krishna's teachings
+
+ALWAYS:
+- Be concise (2-3 sentences maximum)
+- Speak in warm, compassionate tone
+- Use {{LANGUAGE}} appropriately
+- Avoid preaching or overwhelming with philosophy
+
+User concern: "{{USER_QUERY}}"
 `;
 
-const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate Gita guide. Reply briefly (1-3 sentences, under 60 words), empathetically, and end with a question to invite a reply. Use user's chat history for context. If the user expresses severe distress, signal [NEW_TOPIC]. Do not quote new Sanskrit verses here. Reply in {{LANGUAGE}}.
+const CHAT_SYSTEM_PROMPT = `You are SarathiAI, a compassionate listener. Respond based on situation:
+
+If emotional distress:
+- Show empathy first
+- Ask gentle questions to understand
+- Offer support without immediately jumping to verses
+
+If simple questions:
+- Give direct, friendly answers
+- Keep it conversational
+
+If general guidance:
+- Provide thoughtful, practical advice
+- Reference Gita wisdom naturally if relevant
+
+Always: Be warm, concise (1-2 sentences), and end with inviting question. Use {{LANGUAGE}}.
 `;
 
 /* ---------------- OpenAI & Pinecone helpers ---------------- */
 async function openaiChat(messages, maxTokens = 400) {
-  if (!OPENAI_KEY) {
-    console.warn("OPENAI_API_KEY missing — openaiChat returning null");
-    return null;
-  }
+  if (!OPENAI_KEY) return null;
   try {
     const body = { model: OPENAI_MODEL, messages, max_tokens: maxTokens, temperature: 0.6 };
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
@@ -284,7 +539,6 @@ async function openaiChat(messages, maxTokens = 400) {
     return resp.data?.choices?.[0]?.message?.content || null;
   } catch (err) {
     console.error("openaiChat error:", err?.response?.data || err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | openaiChat Error | ${JSON.stringify(err?.response?.data || err?.message)}\n`);
     return null;
   }
 }
@@ -297,8 +551,7 @@ async function getEmbedding(text) {
     });
     return resp.data?.data?.[0]?.embedding;
   } catch (err) {
-    console.error("getEmbedding error:", err?.response?.data || err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getEmbedding Error | ${JSON.stringify(err?.response?.data || err?.message)}\n`);
+    console.error("getEmbedding error:", err);
     throw err;
   }
 }
@@ -326,7 +579,6 @@ async function multiNamespaceQuery(vector, topK = 8) {
       const r = await pineconeQuery(vector, topK, ns);
       return (r?.matches || []).map(m => ({ ...m, _namespace: ns }));
     } catch (err) {
-      console.warn("Pinecone namespace query failed:", ns, err?.message || err);
       return [];
     }
   });
@@ -336,186 +588,71 @@ async function multiNamespaceQuery(vector, topK = 8) {
   return merged;
 }
 
-/* ---------------- Utilities for response processing ---------------- */
-function ensureResponseBrevity(text) {
-  if (!text) return text;
-  let t = String(text).trim();
-  if (t.length > MAX_REPLY_LENGTH) t = t.slice(0, MAX_REPLY_LENGTH).trim();
-  // Don't replace all whitespace, just multiple newlines to one, and trim spaces
-  t = t.replace(/\n\s*\n/g, '\n').trim();
-  return t;
-}
-
-function ensureEndsWithQuestion(text, language = "English") {
-    if (!text) return text;
-    let t = String(text).trim();
-    if (/[?？]\s*$/.test(t)) return t;
-    if (t.includes("||")) return t;
-    
-    const questionPrompt = language === "Hindi" ? "क्या आप इस पर और जानना चाहेंगे?" : "Would you like to explore this further?";
-    return `${t} ${questionPrompt}`.trim();
-}
-
-/* ---------------- Verse speaker detection & reframing ---------------- */
-function identifySpeakerFromMetadata(metadata = {}) {
-  const possible = (metadata.speaker || metadata.author || metadata.role || metadata.source || "").toString().toLowerCase();
-  if (possible.includes("krishna") || possible.includes("śrī bhagavān") || possible.includes("shri krishna") || possible.includes("bhagavan")) return "krishna";
-  if (possible.includes("arjuna")) return "arjuna";
-  if (possible.includes("sanjaya")) return "sanjaya";
-  if (possible.includes("dhritarashtra") || possible.includes("dhritarashtra")) return "dhritarashtra";
-  const text = (metadata.sanskrit || metadata.verse || metadata.sanskrit_text || "").toString();
-  if (/श्रीभगवानुवाच|श्रीभगवान् उवाच|śrī bhagavān uvāca/i.test(text)) return "krishna";
-  if (/अर्जुन उवाच|arjuna uvacha|arjuna said/i.test(text)) return "arjuna";
-  if (/सञ्जय उवाच|sanjaya uvacha|sanjaya said/i.test(text)) return "sanjaya";
-  return "unknown";
-}
-
-/* Helper: fetch a strong Krishna verse for a mapped emotion (fallback list) - MODIFIED */
-const KRISHNA_FALLBACK_BY_EMOTION = {
-  stressed: { 
-    verseRef: "2.47", 
-    sanskrit: "कर्मण्येवाधिकारस्ते मा फलेषु कदाचन", 
-    translation: "You have a right to perform your actions, but not to the fruits of them.",
-    reflection_question: "What is one task today where you can focus only on your effort, not the result?"
-  },
-  sadness: { 
-    verseRef: "2.13", 
-    sanskrit: "देहिनोऽस्मिन्यथा देहे", 
-    translation: "Just as the embodied soul passes through childhood, youth, and old age, it similarly passes into another body at death. The wise are not bewildered by this.",
-    reflection_question: "Remembering that feelings, like seasons, pass, what is one constant truth you can hold onto today?"
-  },
-  anger: { 
-    verseRef: "2.63", 
-    sanskrit: "क्रोधाद्भवति संमोहः", 
-    translation: "From anger comes delusion, and from delusion, the bewilderment of memory. When memory is bewildered, intelligence is lost.",
-    reflection_question: "What is one thing you can do to create a moment of pause before you react today?"
-  },
-  confusion: { 
-    verseRef: "18.66", 
-    sanskrit: "सर्वधर्मान्परित्यज्य मामेकं शरणं व्रज", 
-    translation: "Abandon all varieties of duties and just surrender unto Me. I shall deliver you from all sinful reactions; do not fear.",
-    reflection_question: "What is one worry you can try to let go of and trust in a higher plan for?"
-  },
-  fear: { 
-    verseRef: "2.40", 
-    sanskrit: "नेहाभिक्रमनाशोऽस्ति", 
-    translation: "In this endeavor, there is no loss or diminution, and even a little advancement on this path can protect one from the most dangerous type of fear.",
-    reflection_question: "What is one small step forward, no matter how tiny, you can take right now?"
-  }
-};
-
-/* ---------------- RAG & response assembly (Patched) ---------------- */
-async function transformQueryForRetrieval(userQuery) {
-  try {
-    const prompt = `You are an expert in the Bhagavad Gita. Transform the user's query into a concise search phrase for retrieval of related verses.\nUser: "${userQuery}"\nReturn just a short search phrase.`;
-    const resp = await openaiChat([{ role: "user", content: prompt }], 40);
-    if (!resp) return userQuery;
-    return resp.replace(/["']/g, "").trim();
-  } catch (err) {
-    console.warn("transformQueryForRetrieval failed — using original query");
-    return userQuery;
-  }
-}
-
-function safeText(md, key) { return md && md[key] ? String(md[key]).trim() : ""; }
-
-async function fetchKrishnaVerseByEmotion(emotionLabel) {
-  const fallback = KRISHNA_FALLBACK_BY_EMOTION[emotionLabel];
-  if (!fallback) return null;
-  
-  const part1 = `${fallback.sanskrit} (${fallback.verseRef})`;
-  const part2 = `Shri Krishna says: "${fallback.translation}"`;
-  const part3 = fallback.reflection_question;
-  
-  return { combined: `${part1}\n\n${part2}\n\n${part3}`, parts: [part1, part2, part3] };
-}
-
+/* ---------------- RAG Response Function ---------------- */
 async function getRAGResponse(phone, text, language, chatHistory, emotionLabel = null) {
   try {
-    if (emotionLabel) {
-      const fallback = await fetchKrishnaVerseByEmotion(emotionLabel);
-      if (fallback) {
-        for (const part of fallback.parts) {
-          await sendViaHeltar(phone, part, "verse");
-          await new Promise(r => setTimeout(r, 900));
-        }
-        return { assistantResponse: fallback.combined, stage: "chatting", topic: text };
-      }
-    }
-
-    const transformed = await transformQueryForRetrieval(text);
-    const qVec = await getEmbedding(transformed);
+    const qVec = await getEmbedding(text);
     const matches = await multiNamespaceQuery(qVec, 8);
-
-    const verseMatch = matches.find(m => (m.metadata && (m.metadata.sanskrit || m.metadata.verse || m.metadata.sanskrit_text)));
-    console.log(`[Pinecone] matches: ${matches.length}; best score: ${verseMatch?.score}`);
+    const verseMatch = matches.find(m => (m.metadata && (m.metadata.sanskrit || m.metadata.verse)));
 
     if (!verseMatch || (verseMatch.score || 0) < 0.25) {
-      const fallback = language === "Hindi" ? "मैं आपकी बात सुन रहा हूँ। थोड़ा और बताइये ताकि मैं बेहतर मदद कर सकूँ?" : "I hear your concern. Could you please share a little more so I can offer the best guidance?";
+      const fallback = language === "Hindi" ? "मैं आपकी बात सुन रहा हूँ। थोड़ा और बताइये?" : "I hear your concern. Could you share a little more?";
       await sendViaHeltar(phone, fallback, "fallback");
-      return { assistantResponse: fallback, stage: "chatting", topic: text };
+      return { assistantResponse: fallback, stage: "chatting" };
     }
 
     const md = verseMatch.metadata || {};
-    const speaker = identifySpeakerFromMetadata(md);
+    const user = await getUserState(phone);
     
-    let aiResp;
-
-    if (speaker === "krishna") {
-      const sanskritText = safeText(md, "sanskrit") || safeText(md, "verse") || safeText(md, "sanskrit_text");
-      const translation = safeText(md, "translation") || safeText(md, "hinglish1") || safeText(md, "english") || "";
-      const verseRef = safeText(md, "reference") || safeText(md, "verse_ref") || safeText(md, "id") || "";
-      const ragPrompt = RAG_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language || "English");
-      const modelUser = `User's problem: "${text}"\n\nVerse Context:\nSanskrit: ${sanskritText}\nTranslation: ${translation}\nReference: ${verseRef}`;
-      aiResp = await openaiChat([{ role: "system", content: ragPrompt }, { role: "user", content: modelUser }], 600);
+    // Use appropriate prompt based on context
+    let systemPrompt = RAG_SYSTEM_PROMPT;
+    if (user.conversation_stage === "factual_query" || user.conversation_stage === 'knowledge_seeker') {
+        systemPrompt = RAG_SYSTEM_PROMPT.replace("{{USER_QUERY}}", `Factual question: ${text}`);
+    } else if (emotionLabel || user.conversation_stage === "emotional_support" || user.conversation_stage === 'conversation') {
+        systemPrompt = RAG_SYSTEM_PROMPT.replace("{{USER_QUERY}}", `Emotional concern: ${text}`);
     } else {
-      const validationText = safeText(md, "translation") || safeText(md, "sanskrit");
-      const reframePrompt = `A user feels "${text}". A related but non-Krishna Gita passage says: "${validationText}". Reframe this by acknowledging the feeling (e.g., "Even Arjuna felt this way..."), then provide a relevant teaching directly from Krishna to offer guidance. Formulate a response based on Krishna's words.`;
-      const messages = [{ role: "system", content: CHAT_SYSTEM_PROMPT.replace("{{LANGUAGE}}", language) }, { role: "user", content: reframePrompt }];
-      aiResp = await openaiChat(messages, 600);
+        systemPrompt = RAG_SYSTEM_PROMPT.replace("{{USER_QUERY}}", text);
     }
+    
+    systemPrompt = systemPrompt.replace("{{LANGUAGE}}", language || "English");
 
+    const sanskritText = (md.sanskrit || md.verse || "").toString();
+    const translation = (md.translation || md.hinglish1 || md.english || "").toString();
+    const verseRef = (md.reference || md.verse_ref || md.id || "").toString();
+    
+    const modelUser = `User's query: "${text}"\n\nVerse Context:\nSanskrit: ${sanskritText}\nTranslation: ${translation}\nReference: ${verseRef}`;
+    
+    const aiResp = await openaiChat([{ role: "system", content: systemPrompt }, { role: "user", content: modelUser }], 600);
+    
     if (!aiResp) {
         const fallback2 = language === "Hindi" ? "मैं यहाँ हूँ, अगर आप साझा करें तो मैं मदद कर सकता हूँ।" : "I am here to listen.";
         await sendViaHeltar(phone, fallback2, "fallback");
-        return { assistantResponse: fallback2, stage: "chatting", topic: text };
+        return { assistantResponse: fallback2, stage: "chatting" };
     }
     
-    const cleanResp = ensureResponseBrevity(aiResp);
-    const finalResp = ensureEndsWithQuestion(cleanResp, language);
-    const parts = finalResp.split("||").map(p => p.trim()).filter(Boolean);
-
-    if (parts.length > 1) { // It's a structured RAG response
-        if (parts.length <= MAX_OUTGOING_MESSAGES) {
-            for (const part of parts) {
-                await sendViaHeltar(phone, part, "verse");
-                await new Promise(r => setTimeout(r, 900));
-            }
-        } else {
-            const toSendIndividually = Math.max(0, MAX_OUTGOING_MESSAGES - 1);
-            for (let i = 0; i < toSendIndividually; i++) {
-                await sendViaHeltar(phone, parts[i], "verse");
-                await new Promise(r => setTimeout(r, 900));
-            }
-            const remaining = parts.slice(toSendIndividually).join("\n\n");
-            await sendViaHeltar(phone, remaining, "verse");
-        }
-        return { assistantResponse: finalResp.replace(/\|\|/g, "\n"), stage: "chatting", topic: text };
-    } else { // It's a single bubble (likely a reframed response)
-        await sendViaHeltar(phone, finalResp, "chat");
-        return { assistantResponse: finalResp, stage: "chatting", topic: text };
-    }
+    const cleanResp = String(aiResp).trim().slice(0, MAX_REPLY_LENGTH);
+    await sendViaHeltar(phone, cleanResp, "verse");
+    return { assistantResponse: cleanResp, stage: "chatting" };
 
   } catch (err) {
-    console.error("getRAGResponse failed:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | getRAGResponse Error | ${JSON.stringify(err?.message || err)}\n`);
+    console.error("getRAGResponse failed:", err);
     const fallback = language === "Hindi" ? "मैं सुन रहा हूँ।" : "I am here to listen.";
     try { await sendViaHeltar(phone, fallback, "fallback"); } catch (e) {}
-    return { assistantResponse: fallback, stage: "chatting", topic: text };
+    return { assistantResponse: fallback, stage: "chatting" };
   }
 }
 
-/* ---------------- Webhook handler ---------------- */
+/* ========== LANGUAGE DETECTION ========== */
+function detectLanguageFromText(text) {
+  if (!text || typeof text !== "string") return "English";
+  if (/[ऀ-ॿ]/.test(text)) return "Hindi";
+  const hindiKeywords = ["है", "मैं", "और", "क्या", "कर", "किया", "हूँ", "हैं", "नहीं", "आप", "क्यों"];
+  const lowered = text.toLowerCase();
+  for (const k of hindiKeywords) if (lowered.includes(k)) return "Hindi";
+  return "English";
+}
+
+/* ========== MAIN WEBHOOK HANDLER ========== */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -539,7 +676,6 @@ app.post("/webhook", async (req, res) => {
     await trackIncoming(phone, text);
 
     const user = await getUserState(phone);
-
     const autoLang = detectLanguageFromText(text);
     let language = user.language_preference || "English";
     if ((!user.language_preference || user.language_preference === "English") && autoLang === "Hindi") {
@@ -551,87 +687,126 @@ app.post("/webhook", async (req, res) => {
 
     const lower = text.toLowerCase();
     
-    // --- Patched Intent Handling ---
+    // ========== ENHANCED INTENT HANDLING HIERARCHY ==========
+    
+    // Check for emotional follow-ups (runs once per session ideally)
+    await checkAndSendFollowup(phone, user);
+
+    // Advanced emotion detection for current message
+    const chatHistory = parseChatHistory(user.chat_history || []);
+    const emotionDetection = detectEmotionAdvanced(text, chatHistory);
+    const detectedEmotion = emotionDetection ? emotionDetection.emotion : null;
+
+    console.log(`🎯 Detected: emotion=${detectedEmotion}, confidence=${emotionDetection?.confidence || 0}`);
+
+    // 1. GREETINGS (Highest Priority)
+    if (isGreetingQuery(lower)) {
+        console.log(`✅ Intent: Greeting`);
+        await handleEnhancedStartupMenu(phone, language, user);
+        return;
+    }
+
+    // 2. CAPABILITIES QUERIES
     if (isCapabilitiesQuery(lower)) {
-        console.log(`✅ Intent detected: Capabilities Query`);
+        console.log(`✅ Intent: Capabilities Query`);
         const reply = language === "Hindi"
-            ? "मैं सारथी हूँ, आपका साथी। मैं आपको गीता के श्लोक समझा सकता हूँ, आपके सवालों का जवाब दे सकता हूँ, और आपकी बातें सुन सकता हूँ।"
-            : "I am Sarathi, your companion. I can help you by explaining Gita verses, answering your questions, and listening to what's on your mind.";
+            ? "मैं सारथी हूँ, आपका निजी गीता साथी। मैं आपको जीवन की चुनौतियों में कृष्ण का मार्गदर्शन प्रदान करता हूँ। आप किस तरह की सहायता चाहते हैं?"
+            : "I'm Sarathi, your personal Gita companion. I provide Krishna's guidance for life's challenges. What kind of assistance would you like?";
         await sendViaHeltar(phone, reply, "capabilities");
         return;
     }
-    
-    if (isGreetingQuery(lower)) {
-        console.log(`✅ Intent detected: Greeting`);
-        const welcome = language === "Hindi"
-            ? "Hare Krishna 🙏\nमैं सारथी हूँ, आपका साथी। क्या आप चाहेंगे: (1) एक छोटा उपदेश, या (2) अपनी बात साझा करें? कृपया 1 या 2 में जवाब दें।"
-            : "Hare Krishna 🙏\nI am Sarathi, your companion. Would you like: (1) a short teaching from Krishna, or (2) to share what's on your mind? Please reply with 1 or 2.";
-        await sendViaHeltar(phone, welcome, "welcome");
-        await updateUserState(phone, { conversation_stage: "new_topic", chat_history: JSON.stringify([]) });
+
+    // 3. MENU CHOICE HANDLING
+    if (user.conversation_stage === "awaiting_menu_choice" && /^[1-4]$/.test(text.trim())) {
+        console.log(`✅ Intent: Menu Choice`);
+        await handleEnhancedMenuChoice(phone, text.trim(), language, user);
         return;
     }
-    // --- End Patched Intent Handling ---
 
-    if (isEnglishRequest(lower)) {
-      await updateUserState(phone, { language_preference: "English" });
-      await sendViaHeltar(phone, "Language switched to English. How can I help you today?", "language");
-      return;
-    }
-    if (isHindiRequest(lower)) {
-      await updateUserState(phone, { language_preference: "Hindi" });
-      await sendViaHeltar(phone, "भाषा बदल दी गई है — अब उत्तर हिन्दी में मिलेंगे।", "language");
-      return;
-    }
-    
-    if (["1", "2", "one", "two"].includes(lower.trim())) {
-      if (["1", "one"].includes(lower.trim())) {
-        const fallback = await fetchKrishnaVerseByEmotion("stressed");
-        if (fallback) {
-          for (const part of fallback.parts) {
-            await sendViaHeltar(phone, part, "verse");
-            await new Promise(r => setTimeout(r, 900));
-          }
-          await updateUserState(phone, { conversation_stage: "chatting" });
-          return;
+    // 4. EMOTIONAL EXPRESSIONS (Empathy first, not immediate RAG)
+    if (isEmotionalExpression(lower) || detectedEmotion) {
+        console.log(`✅ Intent: Emotional Expression`);
+        
+        const empatheticResponses = {
+            hindi: [
+                "मैं समझ रहा हूँ कि आप कुछ परेशान हैं। क्या आप थोड़ा और बता सकते हैं कि आप कैसा महसूस कर रहे हैं?",
+                "यह सुनकर दुख हुआ कि आप मुश्किल दौर से गुजर रहे हैं। क्या आप अपनी भावनाओं के बारे में और साझा करेंगे?"
+            ],
+            english: [
+                "I understand you're going through something difficult. Could you share a bit more about how you're feeling?",
+                "I'm sorry to hear you're facing challenges. Would you like to talk more about what's on your mind?"
+            ]
+        };
+
+        const responses = language === "Hindi" ? empatheticResponses.hindi : empatheticResponses.english;
+        const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+        
+        await sendViaHeltar(phone, randomResponse, "empathy_first");
+        await updateUserState(phone, { conversation_stage: "emotional_support" });
+        
+        if (detectedEmotion) {
+            await storeUserMemory(phone, 'last_emotion', detectedEmotion, 8);
+            await storeUserMemory(phone, 'emotion_detected_time', new Date().toISOString(), 8);
         }
-      } else {
-        const prompt = language === "Hindi" ? "कृपया बताइये — अभी आपके मन में क्या चल रहा है?" : "Please share — what is on your mind right now?";
-        await sendViaHeltar(phone, prompt, "prompt");
-        await updateUserState(phone, { conversation_stage: "chatting" });
         return;
-      }
     }
 
+    // 5. FACTUAL QUERIES
+    if (isFactualQuery(lower)) {
+        console.log(`✅ Intent: Factual Query`);
+        await updateUserState(phone, { conversation_stage: "factual_query" });
+        // Let it continue to RAG below
+    }
+
+    // 6. SMALL TALK (No RAG)
     if (isSmallTalk(lower)) {
-      const reply = language === "Hindi"
-        ? "धन्यवाद 🙏 क्या आप आज किसी विशेष विषय पर बात करना चाहेंगे?"
-        : "Thanks! Would you like a short thought for the day or to share what you're feeling?";
-      await sendViaHeltar(phone, reply, "small_talk");
-      return;
+        console.log(`✅ Intent: Small Talk`);
+        const responses = {
+            hindi: {
+                thanks: "आपका स्वागत है! 🙏 क्या आप आज कुछ और साझा करना चाहेंगे?",
+                okay: "ठीक है! क्या आप आगे बातचीत जारी रखना चाहेंगे?",
+                bye: "धन्यवाद! जब भी आपको जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🙏"
+            },
+            english: {
+                thanks: "You're welcome! 🙏 Would you like to share anything else today?",
+                okay: "Okay! Would you like to continue our conversation?",
+                bye: "Thank you! I'm here whenever you need me. Hare Krishna! 🙏"
+            }
+        };
+
+        let response;
+        const respDict = language === "Hindi" ? responses.hindi : responses.english;
+        
+        if (lower.includes('thank') || lower.includes('धन्यवाद') || lower.includes('शुक्रिया')) {
+            response = respDict.thanks;
+        } else if (lower.includes('bye') || lower.includes('बाय') || lower.includes('stop')) {
+            response = respDict.bye;
+        } else {
+            response = respDict.okay;
+        }
+        
+        await sendViaHeltar(phone, response, "small_talk");
+        return;
     }
 
-    const emotionLabel = detectEmotion(text);
-    console.log(`Detected emotion: ${emotionLabel}`);
+    // 7. FALLBACK: Only unmatched intents go to RAG
+    console.log(`ℹ️  Intent: General/Unmatched -> Proceeding to RAG`);
 
-    let chatHistory = parseChatHistory(user.chat_history || []);
-    chatHistory.push({ role: "user", content: text });
-    if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
-
-    const ragResult = await getRAGResponse(phone, text, language, chatHistory, emotionLabel);
+    const ragResult = await getRAGResponse(phone, text, language, chatHistory, detectedEmotion);
     if (ragResult && ragResult.assistantResponse) {
+        chatHistory.push({ role: "user", content: text });
         chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+        if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+        
         await updateUserState(phone, {
-          last_topic_summary: ragResult.topic || text,
-          conversation_stage: "chatting",
+          conversation_stage: ragResult.stage || "chatting",
           chat_history: JSON.stringify(chatHistory),
           language_preference: language
         });
     }
-    return;
 
   } catch (err) {
     console.error("❌ Webhook error:", err?.message || err);
-    fs.appendFileSync("heltar-error.log", `${new Date().toISOString()} | Webhook Error | ${JSON.stringify(err?.message || err)}\n`);
   }
 });
 
