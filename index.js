@@ -4,7 +4,6 @@ dotenv.config();
 
 import express from "express";
 import axios from "axios";
-import fs from "fs";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -68,6 +67,7 @@ async function setupDatabase() {
         ADD COLUMN IF NOT EXISTS memory_data JSONB DEFAULT '{}'::jsonb,
         ADD COLUMN IF NOT EXISTS last_menu_choice VARCHAR(5),
         ADD COLUMN IF NOT EXISTS last_menu_date DATE,
+        ADD COLUMN IF NOT EXISTS last_menu_shown TIMESTAMP WITH TIME ZONE,
         ADD COLUMN IF NOT EXISTS primary_use_case VARCHAR(20),
         ADD COLUMN IF NOT EXISTS user_segment VARCHAR(20) DEFAULT 'new',
         ADD COLUMN IF NOT EXISTS last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
@@ -642,31 +642,100 @@ async function getRAGResponse(phone, text, language, chatHistory, emotionLabel =
   }
 }
 
-/* ========== LANGUAGE DETECTION ========== */
+/* ========== CORRECTED LANGUAGE DETECTION ========== */
 function detectLanguageFromText(text) {
   if (!text || typeof text !== "string") return "English";
-  if (/[ऀ-ॿ]/.test(text)) return "Hindi";
-  const hindiKeywords = ["है", "मैं", "और", "क्या", "कर", "किया", "हूँ", "हैं", "नहीं", "आप", "क्यों"];
+  
+  // First check for Hindi characters
+  if (/[\u0900-\u097F]/.test(text)) return "Hindi";
+  
+  // Then check for common Hindi words in Roman script
+  const hindiRomanKeywords = [
+    "hai", "hain", "ho", "main", "aap", "kyu", "kya", "kaise", "karo", "kiya",
+    "nahi", "par", "aur", "lekin", "agar", "toh", "tha", "thi", "the"
+  ];
+  
   const lowered = text.toLowerCase();
-  for (const k of hindiKeywords) if (lowered.includes(k)) return "Hindi";
+  let hindiScore = 0;
+  let englishScore = 0;
+  
+  // Score Hindi keywords
+  for (const keyword of hindiRomanKeywords) {
+    if (lowered.includes(keyword)) hindiScore++;
+  }
+  
+  // Score English keywords
+  const englishKeywords = ["the", "and", "for", "with", "this", "that", "what", "when", "where", "how"];
+  for (const keyword of englishKeywords) {
+    if (new RegExp(`\\b${keyword}\\b`).test(lowered)) englishScore++;
+  }
+  
+  // If Hindi score is significantly higher, return Hindi
+  if (hindiScore > englishScore + 2) return "Hindi";
+  
   return "English";
+}
+
+/* ========== IMPROVED WEBHOOK PARSING ========== */
+function parseWebhookMessage(body) {
+  if (!body) return null;
+  
+  // Try different webhook formats
+  const entry = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+  if (entry) return entry;
+  
+  const messages = body?.messages?.[0];
+  if (messages) return messages;
+  
+  // Direct message object
+  if (body?.from && body?.text) return body;
+  
+  return null;
+}
+
+/* ========== IMPROVED LANGUAGE HANDLING ========== */
+async function determineUserLanguage(phone, text, user) {
+    // Start with user's saved preference
+    let language = user.language_preference || 'English';
+    
+    // Detect language from current message
+    const detectedLang = detectLanguageFromText(text);
+    
+    // Only switch language if there's strong evidence AND user hasn't established a preference
+    const isNewUser = user.total_incoming <= 2; // First 2 messages
+    
+    if (isNewUser && detectedLang === "Hindi") {
+        // For new users, if they type in Hindi, switch preference to Hindi
+        language = "Hindi";
+        await updateUserState(phone, { language_preference: "Hindi" });
+    } else if (!isNewUser && detectedLang === "Hindi" && language === "English") {
+        // For existing English users who suddenly type in Hindi, ask for confirmation
+        const confirmMessage = "I notice you're typing in Hindi. Would you like to switch to Hindi? (हाँ/Yes)";
+        await sendViaHeltar(phone, confirmMessage, "language_confirm");
+        await updateUserState(phone, { conversation_stage: "language_confirmation" });
+    }
+    
+    return language;
 }
 
 /* ========== MAIN WEBHOOK HANDLER ========== */
 app.post("/webhook", async (req, res) => {
   try {
+    // Send immediate response to webhook
     res.status(200).send("OK");
 
     const body = req.body || {};
-    let msg = body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body?.messages?.[0] || body;
-    if (!msg || typeof msg !== "object") {
+    const msg = parseWebhookMessage(body);
+    
+    if (!msg) {
       console.log("⚠️ Ignoring non-message webhook event.");
       return;
     }
 
-    const phone = msg?.from;
+    const phone = msg?.from || msg?.clientWaNumber;
     const rawText = msg?.text?.body || msg?.button?.payload || msg?.interactive?.button_reply?.id || msg?.interactive?.list_reply?.id || "";
     const text = String(rawText || "").trim();
+    
     if (!phone || text.length === 0) {
       console.warn("⚠️ Webhook missing phone/text.");
       return;
@@ -675,27 +744,31 @@ app.post("/webhook", async (req, res) => {
     console.log(`📩 Incoming from ${phone}: "${text}"`);
     await trackIncoming(phone, text);
 
-    // This is the new, correct block
+    // Get user state and determine language
     const user = await getUserState(phone);
+    const language = await determineUserLanguage(phone, text, user);
     
-    // 1. Start with the user's saved preference, or default to English.
-    let language = user.language_preference || 'English';
-
-    // 2. Detect language from the current message.
-    const detectedLang = detectLanguageFromText(text);
-
-    // 3. ONLY if the user's preference is English AND they typed in Hindi, switch to Hindi.
-    if (language === 'English' && detectedLang === 'Hindi') {
-        language = 'Hindi';
-        // Also, update their preference for future conversations.
-        await updateUserState(phone, { language_preference: 'Hindi' });
-    }
-
     const lower = text.toLowerCase();
     
     // ========== ENHANCED INTENT HANDLING HIERARCHY ==========
     
-    // Check for emotional follow-ups (runs once per session ideally)
+    // Check for language confirmation first
+    if (user.conversation_stage === "language_confirmation") {
+        if (lower.includes('हाँ') || lower.includes('yes') || lower.includes('ok') || lower.includes('okay')) {
+            await updateUserState(phone, { 
+                language_preference: "Hindi",
+                conversation_stage: "new_topic"
+            });
+            await sendViaHeltar(phone, "धन्यवाद! अब मैं हिंदी में बात करूंगा।", "language_switch");
+            return;
+        } else {
+            await updateUserState(phone, { 
+                conversation_stage: "new_topic"
+            });
+        }
+    }
+
+    // Check for emotional follow-ups
     await checkAndSendFollowup(phone, user);
 
     // Advanced emotion detection for current message
@@ -703,7 +776,7 @@ app.post("/webhook", async (req, res) => {
     const emotionDetection = detectEmotionAdvanced(text, chatHistory);
     const detectedEmotion = emotionDetection ? emotionDetection.emotion : null;
 
-    console.log(`🎯 Detected: emotion=${detectedEmotion}, confidence=${emotionDetection?.confidence || 0}`);
+    console.log(`🎯 Detected: emotion=${detectedEmotion}, confidence=${emotionDetection?.confidence || 0}, language=${language}`);
 
     // 1. GREETINGS (Highest Priority)
     if (isGreetingQuery(lower)) {
@@ -800,14 +873,20 @@ app.post("/webhook", async (req, res) => {
 
     const ragResult = await getRAGResponse(phone, text, language, chatHistory, detectedEmotion);
     if (ragResult && ragResult.assistantResponse) {
-        chatHistory.push({ role: "user", content: text });
-        chatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
-        if (chatHistory.length > 12) chatHistory = chatHistory.slice(-12);
+        // Update chat history
+        const updatedChatHistory = [...chatHistory];
+        updatedChatHistory.push({ role: "user", content: text });
+        updatedChatHistory.push({ role: "assistant", content: ragResult.assistantResponse });
+        
+        // Keep only last 12 messages
+        if (updatedChatHistory.length > 12) {
+            updatedChatHistory.splice(0, updatedChatHistory.length - 12);
+        }
         
         await updateUserState(phone, {
-          conversation_stage: ragResult.stage || "chatting",
-          chat_history: JSON.stringify(chatHistory),
-          language_preference: language
+            conversation_stage: ragResult.stage || "chatting",
+            chat_history: JSON.stringify(updatedChatHistory),
+            language_preference: language
         });
     }
 
@@ -818,11 +897,25 @@ app.post("/webhook", async (req, res) => {
 
 /* ---------------- Health check endpoint ---------------- */
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString() });
+  res.json({ 
+    status: "ok", 
+    bot: BOT_NAME, 
+    timestamp: new Date().toISOString(),
+    database: DATABASE_URL ? "configured" : "missing",
+    openai: OPENAI_KEY ? "configured" : "missing",
+    pinecone: PINECONE_API_KEY ? "configured" : "missing"
+  });
 });
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   console.log(`\n🚀 ${BOT_NAME} listening on port ${PORT}`);
-  setupDatabase();
+  setupDatabase().catch(console.error);
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await dbPool.end();
+  process.exit(0);
 });
