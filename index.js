@@ -1,3 +1,5 @@
+check out this code:
+
 // index.js — SarathiAI (Complete Enhanced Version with User Fixes)
 import dotenv from "dotenv";
 dotenv.config();
@@ -26,7 +28,7 @@ const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "800", 10) || 
 
 const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
 
-// Enhanced Gita Knowledge Base with Practical Applications
+/* ========== [CHANGE] ENHANCED GITA WISDOM DATABASE ========== */
 const GITA_WISDOM_DATABASE = {
     anger: {
         verses: ["2.63", "2.62", "2.56"],
@@ -68,15 +70,41 @@ const GITA_WISDOM_DATABASE = {
         }
     },
     purpose: {
-        verses: ["3.35", "18.47", "18.45"],
+        verses: ["2.47", "3.35", "18.46"],
         teachings: {
             hindi: [
-                "🎯 **जीवन के उद्देश्य की खोज:**\n\n'श्रेयान्स्वधर्मो विगुणः' (3.35) - अपना धर्म दूसरे के धर्म से बेहतर है।\n\n**खोज के चरण:**\n1. अपनी प्रतिभाओं की सूची बनाएं\n2. समाज की आवश्यकताओं को देखें\n3. दोनों का मेल खोजें\n\nक्या आप इन चरणों पर विचार करना चाहेंगे?",
-                "🌟 **स्वधर्म की पहचान:**\n\n'स्वे स्वे कर्मण्यभिरतः' (18.45) - अपने कर्म में तल्लीन रहें।\n\n**आत्म-खोज प्रश्न:**\n• बचपन में क्या करना पसंद था?\n• लोग आपसे किस लिए सहायता मांगते हैं?\n• कौन सा काम करते समय समय का पता नहीं चलता?\n\nइनमें से कौन सा प्रश्न आपको सबसे अधिक प्रेरित करता है?"
+                "🌅 **जीवन के उद्देश्य की खोज:**\n\nगीता (3.35) कहती है: 'स्वधर्मे निधनं श्रेय:' - अपने धर्म में रहते हुए मरना भी श्रेयस्कर है।\n\nजब आप खोया हुआ महसूस कर रहे हों, तो याद रखें:\n• आपका उद्देश्य बाहर नहीं, आपके भीतर है\n• छोटे-छोटे कर्मों से शुरुआत करें\n• प्रतिदिन स्वयं से पूछें: 'आज मैं किसकी सेवा कर सकता हूँ?'\n\nक्या आप आज एक छोटा सा कर्म करने का संकल्प लेंगे?",
+                "💫 **अर्थ की खोज:**\n\n'कर्मण्येवाधिकारस्ते मा फलेषु कदाचन' (2.47) - कर्तव्य पर ध्यान दें, परिणाम पर नहीं।\n\n**खोज के चरण:**\n1. अपनी प्रतिभाओं की सूची बनाएं\n2. देखें समाज को किसकी आवश्यकता है\n3. वहां सेवा करें जहां दोनों मिलते हैं\n\nआपकी कौन सी प्रतिभा आज किसी की मदद कर सकती है?"
             ],
             english: [
-                "🎯 **Discovering Life's Purpose:**\n\n'Better is one's own duty though imperfect' (3.35).\n\n**Discovery Steps:**\n1. List your natural talents\n2. Observe society's needs\n3. Find where they intersect\n\nWould you like to explore these steps?",
-                "🌟 **Identifying Your Swadharma:**\n\n'By devotion to one's own duty' (18.45).\n\n**Self-Discovery Questions:**\n• What did you love doing as a child?\n• What do people ask your help for?\n• What work makes you lose track of time?\n\nWhich question resonates most with you?"
+                "🌅 **Finding Life's Purpose:**\n\nGita (3.35) teaches: 'Better is one's own duty though imperfect' - Your unique path matters most.\n\nWhen feeling lost, remember:\n• Your purpose isn't out there, it's within you\n• Start with small, meaningful actions\n• Ask daily: 'Who can I serve today?'\n\nWould you like to commit to one small purposeful action today?",
+                "💫 **The Search for Meaning:**\n\n'You have right to work only, never to its fruits' (2.47).\n\n**Discovery Steps:**\n1. List your natural talents and joys\n2. Observe where society needs help\n3. Serve where your gifts meet others' needs\n\nWhich of your talents could help someone today?"
+            ]
+        }
+    },
+    dharma: {
+        verses: ["3.35", "18.45", "18.47"],
+        teachings: {
+            hindi: [
+                "🎯 **स्वधर्म की पहचान:**\n\nगीता (3.35) कहती है: 'स्वधर्मे निधनं श्रेय:' - अपना धर्म दूसरे के धर्म से बेहतर है।\n\n**पहचान के तरीके:**\n1. बचपन में क्या करना पसंद था?\n2. लोग आपसे किस लिए सहायता मांगते हैं?\n3. कौन सा काम करते समय समय का पता नहीं चलता?\n\nइनमें से कौन सा प्रश्न आपके लिए सबसे सार्थक लगता है?",
+                "🌟 **कर्तव्य का मार्ग:**\n\n'स्वे स्वे कर्मण्यभिरतः' (18.45) - अपने कर्म में तल्लीन रहें।\n\n**आत्म-खोज के प्रश्न:**\n• किस काम को करने में आपको ऊर्जा मिलती है?\n• आपकी कौन सी विशेषता लोगों को आकर्षित करती है?\n• किस सेवा में आपको आनंद आता है?\n\nआज आप किस एक प्रश्न पर विचार करना चाहेंगे?"
+            ],
+            english: [
+                "🎯 **Discovering Your Dharma:**\n\nGita (3.35): 'Better is one's own duty though imperfect' - Your unique path is your perfection.\n\n**Self-Discovery Questions:**\n1. What did you love doing as a child?\n2. What do people naturally ask your help for?\n3. What work makes you lose track of time?\n\nWhich question resonates most with you right now?",
+                "🌟 **The Path of Right Action:**\n\n'By devotion to one's own duty' (18.45) - Excellence comes from embracing your nature.\n\n**Reflection Points:**\n• What activities give you energy rather than drain you?\n• What unique perspective do you bring to challenges?\n• Where does your compassion naturally flow?\n\nWould you like to explore any of these reflection points further?"
+            ]
+        }
+    },
+    motivation: {
+        verses: ["2.47", "2.50", "6.5"],
+        teachings: {
+            hindi: [
+                "💪 **निरंतर प्रेरणा:**\n\nगीता (2.50) कहती है: 'योगः कर्मसु कौशलम्' - कर्म में कुशलता ही योग है।\n\n**प्रेरणा बनाए रखने के उपाय:**\n1. छोटे-छोटे लक्ष्य बनाएं\n2. प्रतिदिन की सफलताओं को लिखें\n3. अपने 'क्यों' को याद रखें\n\nआज आप कौन सा छोटा कदम उठा सकते हैं?",
+                "🚀 **मुश्किल समय में आगे बढ़ें:**\n\n'कर्मण्येवाधिकारस्ते' (2.47) - कर्तव्य पर ध्यान दें, परिणाम पर नहीं।\n\n**तत्काल कार्ययोजना:**\n• आज का एक छोटा सा काम पूरा करें\n• खुद को एक छोटा इनाम दें\n• कल के बारे में सोचें, सालों बाद के बारे में नहीं\n\nआज आप किस एक काम पर फोकस करना चाहेंगे?"
+            ],
+            english: [
+                "💪 **Sustaining Motivation:**\n\nGita (2.50): 'Yoga is skill in action' - Excellence comes from focused effort.\n\n**Motivation Boosters:**\n1. Set tiny, achievable goals\n2. Celebrate daily micro-wins\n3. Reconnect with your 'why'\n\nWhat's one small step you can take today?",
+                "🚀 **Moving Forward in Tough Times:**\n\n'You have right to work only' (2.47) - Focus on action, not outcomes.\n\n**Immediate Action Plan:**\n• Complete one small task right now\n• Give yourself a mini-reward\n• Think about tomorrow, not years ahead\n\nWhat's one thing you'd like to focus on completing today?"
             ]
         }
     }
@@ -472,57 +500,75 @@ function isOutOfScopeQuery(text) {
     return outOfScopePatterns.some(pattern => pattern.test(lowerText));
 }
 
+/* ========== [CHANGE] ENHANCED EMOTION DETECTION FOR PURPOSE/MEANING ========== */
 function detectEmotionAdvanced(text) {
     const lowerText = text.toLowerCase();
     let emotion = null;
     let confidence = 0;
 
     const emotionKeywords = {
+        purpose: { 
+            keywords: [
+                'purpose', 'meaning', 'why am i here', 'what is my life', 'reason to live',
+                'lost purpose', 'no purpose', 'empty', 'aimless', 'directionless',
+                'what should i do with my life', 'life purpose', 'existential',
+                'उद्देश्य', 'मकसद', 'जीवन का मतलब', 'क्यों हूँ', 'रास्ता नहीं', 'दिशा नहीं',
+                'ज़िंदगी का मकसद', 'कोई उद्देश्य नहीं', 'खालीपन', 'निरर्थक', 'जीवन सार्थक नहीं'
+            ], 
+            weight: 1.2 
+        },
+        dharma: { 
+            keywords: [
+                'dharma', 'duty', 'calling', 'vocation', 'life purpose', 'swadharma',
+                'career path', 'what should i do', 'which path', 'right path',
+                'धर्म', 'कर्तव्य', 'स्वधर्म', 'जीवन का धर्म', 'क्या करूं', 'कैसे पहचानूं',
+                'अपना काम', 'सही रास्ता', 'जीवन का उद्देश्य', 'करियर', 'पेशा'
+            ], 
+            weight: 1.1 
+        },
+        motivation: {
+            keywords: [
+                'motivated', 'motivation', 'stay motivated', 'keep going', 'demotivated',
+                'things not going my way', 'stuck', 'not progressing', 'frustrated',
+                'प्रेरणा', 'मोटिवेशन', 'हिम्मत', 'जोश', 'अटका हुआ', 'आगे नहीं बढ़ रहा',
+                'निराश', 'हार मान ली', 'जारी रखें'
+            ],
+            weight: 1.0
+        },
         stressed: { 
             keywords: [
-                'stress', 'stressed', 'stressing', 'tension', 'pressure', 'overwhelmed', 
-                'worried', 'worrying', 'anxious', 'anxiety', 'pressure', 'can\'t handle',
-                'too much', 'overwhelming', 'परेशान', 'तनाव', 'चिंता', 'घबराहट', 'दबाव', 'टेंशन'
+                'stress', 'stressed', 'stressing', 'anxious', 'anxiety', 'tension', 'overwhelmed', 
+                'worried', 'worrying', 'pressure', 'can\'t handle', 'too much', 'overwhelming', 
+                'परेशान', 'तनाव', 'चिंता', 'घबराहट', 'दबाव', 'टेंशन'
             ], 
             weight: 1.0 
         },
         sadness: { 
             keywords: [
                 'sad', 'depressed', 'unhappy', 'hopeless', 'sorrow', 'crying', 'tears',
-                'empty', 'down', 'low', 'दुखी', 'उदास', 'निराश', 'हताश', 'दुख', 'उदासी'
+                'empty', 'down', 'low', 'lonely', 'lost', 'confused about life',
+                'दुखी', 'उदास', 'निराश', 'हताश', 'दुख', 'उदासी', 'अकेला', 'अकेलापन'
             ], 
             weight: 1.0 
-        },
-        anger: { 
-            keywords: [
-                'angry', 'frustrated', 'irritated', 'annoyed', 'mad', 'hate', 'furious',
-                'गुस्सा', 'नाराज', 'क्रोध', 'चिढ़', 'तंग'
-            ], 
-            weight: 0.9 
-        },
-        confusion: { 
-            keywords: [
-                'confused', 'lost', 'uncertain', 'doubt', 'unsure', 'what to do', 
-                'don\'t know', 'कंफ्यूज', 'उलझन', 'असमंजस', 'पता नहीं', 'समझ नहीं'
-            ], 
-            weight: 0.8 
-        },
-        fear: { 
-            keywords: [
-                'scared', 'afraid', 'fear', 'nervous', 'anxious', 'worry', 'panic',
-                'डर', 'भय', 'घबराहट', 'आशंका', 'सहमा हुआ'
-            ], 
-            weight: 0.9 
         }
     };
 
-    // Enhanced "I am in [emotion]" patterns with Hindi support
+    // Enhanced patterns with better context
     const iAmPatterns = [
-        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(stressed|stress|anxious|overwhelmed|परेशान|तनाव|चिंता)\b/i, emotion: 'stressed', weight: 1.5 },
-        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(sad|depressed|unhappy|hopeless|दुखी|उदास|निराश)\b/i, emotion: 'sadness', weight: 1.5 },
-        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(angry|mad|frustrated|गुस्सा|नाराज)\b/i, emotion: 'anger', weight: 1.3 },
-        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(confused|lost|uncertain|कंफ्यूज|उलझन)\b/i, emotion: 'confusion', weight: 1.2 },
-        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(scared|afraid|nervous|डर|भय)\b/i, emotion: 'fear', weight: 1.3 }
+        // Purpose patterns
+        { pattern: /\b(i am|i'm|feeling).*(lost|empty|aimless|directionless|purposeless)\b/i, emotion: 'purpose', weight: 1.5 },
+        { pattern: /\b(what is|what's).*(purpose|meaning).*(life|my life)\b/i, emotion: 'purpose', weight: 1.5 },
+        { pattern: /\b(मैं|मुझे).*(खोया|खोया हुआ|खाली|निरर्थक|उद्देश्यहीन)\b/i, emotion: 'purpose', weight: 1.5 },
+        
+        // Dharma patterns
+        { pattern: /\b(how do i know|how to find).*(dharma|duty|calling|purpose)\b/i, emotion: 'dharma', weight: 1.4 },
+        { pattern: /\b(what is|what should be).*(my duty|my dharma|my calling)\b/i, emotion: 'dharma', weight: 1.4 },
+        { pattern: /\b(कैसे पहचानूं|क्या है).*(मेरा धर्म|मेरा कर्तव्य|मेरा स्वधर्म)\b/i, emotion: 'dharma', weight: 1.4 },
+        
+        // Motivation patterns
+        { pattern: /\b(stay|keep).*motivated\b/i, emotion: 'motivation', weight: 1.3 },
+        { pattern: /\b(things|life).*(not going|not working)\b/i, emotion: 'motivation', weight: 1.3 },
+        { pattern: /\b(कैसे बनाएं|कैसे रखें).*(प्रेरणा|मोटिवेशन|हिम्मत)\b/i, emotion: 'motivation', weight: 1.3 }
     ];
 
     for (const situation of iAmPatterns) {
@@ -655,26 +701,28 @@ async function sendEmotionalFollowup(phone, previousEmotion, language) {
     await sendViaHeltar(phone, text, "emotional_followup");
 }
 
-/* ========== ENHANCED EMOTIONAL RESPONSE HANDLER ========== */
+/* ========== [CHANGE] FIXED: EMOTIONAL RESPONSE HANDLER ========== */
 async function handleEmotionalExpression(phone, text, language, user, detectedEmotion) {
   console.log(`💔 Handling emotional expression: ${detectedEmotion}`);
   
-  // Use Gita wisdom database for structured responses
-  const gitaWisdom = GITA_WISDOM_DATABASE[detectedEmotion] || GITA_WISDOM_DATABASE.stress;
-  const responses = language === "Hindi" 
-    ? gitaWisdom.teachings.hindi 
-    : gitaWisdom.teachings.english;
+  // Enhanced context for emotional responses
+  const conversationContext = {
+    stage: "emotional_support",
+    emotion: detectedEmotion,
+    situation: detectUserSituation(text),
+    previousMessage: user.last_message,
+    language: language
+  };
+
+  // Use AI for emotional responses instead of fixed responses
+  await getAIResponse(phone, text, language, conversationContext);
   
-  const selectedResponse = responses[Math.floor(Math.random() * responses.length)];
-  
-  await sendViaHeltar(phone, selectedResponse, "emotional_response");
+  // Update user state
   await updateUserState(phone, { conversation_stage: "emotional_support" });
   
   // Store emotion for follow-up
   await storeUserMemory(phone, 'last_emotion', detectedEmotion, 8);
   await storeUserMemory(phone, 'emotion_detected_time', new Date().toISOString(), 8);
-  
-  console.log(`✅ Gita-grounded emotional response sent for ${detectedEmotion}`);
 }
 
 /* ========== ENHANCED STARTUP MENU SYSTEM ========== */
@@ -889,60 +937,81 @@ function getFallbackDailyWisdom(language, dayOfYear) {
   return formatDailyWisdom(fallbackLesson, language, dayOfYear);
 }
 
-/* ========== ENHANCED AI RESPONSE SYSTEM ========== */
+/* ========== [CHANGE] FIXED: PROPER AI RESPONSE FLOW ========== */
 async function getAIResponse(phone, text, language, conversationContext = {}) {
   try {
-    if (!OPENAI_KEY) {
-      return await getFallbackResponse(phone, text, language);
+    // Only use fallback if OpenAI is completely unavailable
+    if (!OPENAI_KEY || OPENAI_KEY === '') {
+      console.log("🔄 No OpenAI key, using fallback response");
+      return await getFallbackResponse(phone, text, language, conversationContext);
     }
 
-    // Enhanced system prompt with strict Gita grounding
+    console.log("🤖 Using OpenAI for dynamic response...");
+
+    // Enhanced system prompt with empathy and context awareness
     const systemPrompt = language === "Hindi" 
       ? `आप सारथी AI हैं, भगवद गीता के विशेषज्ञ मार्गदर्शक। निम्नलिखित नियमों का सख्ती से पालन करें:
 
-1. हर उत्तर में SPECIFIC गीता श्लोक संदर्भ दें (जैसे "2.47", "3.35")
-2. व्यावहारिक क्रिया-योजना प्रदान करें (3 चरणों में)
-3. उत्तर 4-6 वाक्यों में पूरा करें, कभी भी अधूरा न छोड़ें
-4. गीता की शिक्षाओं को उपयोगकर्ता की विशिष्ट स्थिति से जोड़ें
+1. पहले उपयोगकर्ता की भावना को समझें और सहानुभूति दिखाएं
+2. SPECIFIC गीता श्लोक संदर्भ दें (जैसे "2.47", "3.35")
+3. व्यावहारिक क्रिया-योजना प्रदान करें (2-3 चरणों में)
+4. उत्तर 4-6 वाक्यों में पूरा करें, कभी भी अधूरा न छोड़ें
 5. उत्तर के अंत में एक सार्थक प्रश्न पूछें
-6. उदाहरण: "गीता 2.47 के अनुसार... यह आपकी स्थिति में इस प्रकार लागू होता है... क्या आप इस पर अमल करना चाहेंगे?"
+6. उपयोगकर्ता की विशिष्ट स्थिति से जोड़ें
+
+उदाहरण संरचना:
+"मैं समझता हूँ कि आप [भावना] महसूस कर रहे हैं... गीता [श्लोक] में कहती है... आपकी स्थिति में यह इस प्रकार लागू होता है... [व्यावहारिक सलाह]... क्या आप [प्रश्न]?"
 
 कभी भी सामान्य थेरेपी जैसी बातें न करें। सीधे गीता की शिक्षाओं से जोड़ें।`
       : `You are Sarathi AI, an expert Bhagavad Gita guide. Strictly follow these rules:
 
-1. Include SPECIFIC Gita verse references in every response (e.g., "2.47", "3.35")
-2. Provide practical action plans (3 steps)
-3. Complete answers in 4-6 sentences, NEVER leave incomplete
-4. Connect Gita teachings to user's specific situation
+1. First acknowledge and empathize with user's emotion
+2. Include SPECIFIC Gita verse references (e.g., "2.47", "3.35")
+3. Provide practical action plans (2-3 steps)
+4. Complete answers in 4-6 sentences, NEVER leave incomplete
 5. End with a meaningful question
-6. Example: "According to Gita 2.47... This applies to your situation by... Would you like to implement this?"
+6. Connect to user's specific situation
+
+Example structure:
+"I understand you're feeling [emotion]... The Gita [verse] teaches... This applies to your situation by... [practical advice]... Would you like to [question]?"
 
 Never use generic therapy language. Directly connect to Gita teachings.`;
 
+    // Enhanced user prompt with better context
+    const userContext = {
+      emotion: conversationContext.emotion || 'uncertain',
+      situation: conversationContext.situation || 'general',
+      stage: conversationContext.stage || 'general',
+      language: language
+    };
+
     const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता की स्थिति: "${text}"
-संदर्भ: ${conversationContext.stage || 'सामान्य'}
-उपयोगकर्ता की भावना: ${conversationContext.emotion || 'तटस्थ'}
-उपयोगकर्ता की स्थिति: ${conversationContext.situation || 'सामान्य'}
+      ? `उपयोगकर्ता: "${text}"
+भावना: ${userContext.emotion}
+स्थिति: ${userContext.situation}
+संदर्भ: ${userContext.stage}
 
-कृपया एक संपूर्ण, गीता-आधारित उत्तर दें जिसमें श्लोक संदर्भ, व्यावहारिक सलाह और एक engaging प्रश्न शामिल हो:`
-      : `User's situation: "${text}"
-Context: ${conversationContext.stage || 'general'}
-User's emotion: ${conversationContext.emotion || 'neutral'}
-User's situation: ${conversationContext.situation || 'general'}
+कृपया एक संपूर्ण, सहानुभूतिपूर्ण उत्तर दें जो भगवद गीता की शिक्षाओं से सीधे जुड़ा हो। उपयोगकर्ता की विशिष्ट स्थिति को ध्यान में रखें:`
+      : `User: "${text}"
+Emotion: ${userContext.emotion}
+Situation: ${userContext.situation}
+Context: ${userContext.stage}
 
-Please provide a complete, Gita-grounded response including verse reference, practical advice, and an engaging question:`;
+Please provide a complete, empathetic response directly connected to Bhagavad Gita teachings. Consider the user's specific situation:`;
 
     const messages = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt }
     ];
 
+    console.log("📤 Sending to OpenAI with context:", userContext);
+
     const body = { 
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 500,  // Increased for complete answers
-      temperature: 0.7 
+      max_tokens: 600,  // Increased to prevent truncation
+      temperature: 0.8, // Slightly higher for more varied responses
+      top_p: 0.9
     };
 
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
@@ -955,29 +1024,57 @@ Please provide a complete, Gita-grounded response including verse reference, pra
 
     const aiResponse = resp.data?.choices?.[0]?.message?.content;
     
-    if (aiResponse) {
+    if (aiResponse && aiResponse.trim().length > 10) {
+      console.log("✅ OpenAI response received:", aiResponse.substring(0, 100) + "...");
+      
       // Ensure response is complete and not truncated
       const completeResponse = ensureCompleteResponse(aiResponse, language);
-      await sendViaHeltar(phone, completeResponse.slice(0, MAX_REPLY_LENGTH), "ai_response");
+      const finalResponse = completeResponse.slice(0, MAX_REPLY_LENGTH);
+      
+      await sendViaHeltar(phone, finalResponse, "ai_response");
+      return;
     } else {
-      throw new Error("No response from AI");
+      throw new Error("Empty or invalid response from OpenAI");
     }
 
   } catch (err) {
-    console.error("AI response error:", err.message);
-    await getFallbackResponse(phone, text, language);
+    console.error("❌ AI response error:", err.message);
+    
+    // Only fallback to fixed responses if OpenAI completely fails
+    console.log("🔄 Falling back to fixed response due to OpenAI error");
+    await getFallbackResponse(phone, text, language, conversationContext);
   }
 }
 
-/* ========== ENSURE COMPLETE RESPONSES ========== */
-function ensureCompleteResponse(response, language) {
-  // Check if response ends properly
-  const trimmedResponse = response.trim();
-  const endsWithPunctuation = /[.!?।]$/.test(trimmedResponse);
-  const endsWithQuestion = /[?؟]$/.test(trimmedResponse);
+/* ========== [CHANGE] ENHANCED FALLBACK RESPONSES ========== */
+async function getFallbackResponse(phone, text, language, conversationContext = {}) {
+  console.log("🔄 Using enhanced fallback response");
   
-  if (!endsWithPunctuation) {
-    // Add appropriate ending based on language and content
+  const emotion = detectEmotionAdvanced(text)?.emotion;
+  console.log(`🎯 Detected emotion for fallback: ${emotion}`);
+  
+  const gitaWisdom = GITA_WISDOM_DATABASE[emotion] || GITA_WISDOM_DATABASE.purpose;
+  
+  const responses = language === "Hindi" 
+    ? gitaWisdom.teachings.hindi 
+    : gitaWisdom.teachings.english;
+  
+  const selectedResponse = responses[Math.floor(Math.random() * responses.length)];
+  
+  console.log(`📤 Sending fallback response for emotion: ${emotion}`);
+  await sendViaHeltar(phone, selectedResponse, "fallback_wisdom");
+}
+
+/* ========== [CHANGE] ENSURE COMPLETE RESPONSES ========== */
+function ensureCompleteResponse(response, language) {
+  const trimmedResponse = response.trim();
+  
+  // Check if response ends with complete sentence
+  const endsWithCompleteSentence = /[.!?।][^.!?।]*$/.test(trimmedResponse);
+  const endsWithQuestion = /[?؟][^?؟]*$/.test(trimmedResponse);
+  
+  if (!endsWithCompleteSentence) {
+    // If response is truncated, add appropriate ending
     if (language === "Hindi") {
       return trimmedResponse + " क्या आप इस पर और चर्चा करना चाहेंगे?";
     } else {
@@ -985,29 +1082,16 @@ function ensureCompleteResponse(response, language) {
     }
   }
   
-  // If ends with punctuation but not a question, add engaging question
-  if (endsWithPunctuation && !endsWithQuestion) {
+  // If ends with sentence but not a question, add engaging question
+  if (endsWithCompleteSentence && !endsWithQuestion) {
     if (language === "Hindi") {
       return trimmedResponse + " क्या यह उपयोगी लगा?";
     } else {
-      return trimmedResponse + " Does this seem helpful?";
+      return trimmedResponse + " Does this resonate with you?";
     }
   }
   
   return response;
-}
-
-/* ========== ENHANCED FALLBACK RESPONSES ========== */
-async function getFallbackResponse(phone, text, language) {
-  const emotion = detectEmotionAdvanced(text)?.emotion;
-  const gitaWisdom = GITA_WISDOM_DATABASE[emotion] || GITA_WISDOM_DATABASE.stress;
-  
-  const responses = language === "Hindi" 
-    ? gitaWisdom.teachings.hindi 
-    : gitaWisdom.teachings.english;
-  
-  const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-  await sendViaHeltar(phone, randomResponse, "gita_wisdom");
 }
 
 /* ========== WEBHOOK PARSING ========== */
@@ -1109,13 +1193,14 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`💭 Emotion detected: ${detectedEmotion}, Situation: ${userSituation}`);
 
-    // Enhanced context for AI responses
+    // [CHANGE] Enhanced context for AI responses
     const conversationContext = {
       stage: user.conversation_stage,
       emotion: detectedEmotion,
       situation: userSituation,
       previousMessage: user.last_message,
-      language: language
+      language: language,
+      userHistory: user.chat_history?.slice(-2) || [] // Last 2 messages for context
     };
 
     // 1. GREETINGS (Highest Priority)
@@ -1193,6 +1278,7 @@ app.post("/webhook", async (req, res) => {
     console.error("❌ Webhook error:", err?.message || err);
   }
 });
+
 
 /* ---------------- Health check ---------------- */
 app.get("/health", (req, res) => {
