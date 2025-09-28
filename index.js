@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Complete Fixed Version)
+// index.js — SarathiAI (Complete Integrated Fixed Version)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -70,9 +70,24 @@ async function setupDatabase() {
         verse TEXT,
         translation TEXT,
         commentary TEXT,
-        reflection_question TEXT
+        reflection_question TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // Insert sample lessons if table is empty
+    const lessonCount = await client.query("SELECT COUNT(*) FROM lessons");
+    if (parseInt(lessonCount.rows[0].count) === 0) {
+      console.log("📚 Inserting sample lessons...");
+      await client.query(`
+        INSERT INTO lessons (lesson_number, verse, translation, commentary, reflection_question) VALUES
+        (1, 'कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।', 'You have the right to work only, but never to the fruits.', 'Focus on your duty without attachment to results. This is the path to peace and success.', 'What action can I take today without worrying about the outcome?'),
+        (2, 'योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय।', 'Perform your duty equipoised, O Arjuna, abandoning all attachment to success or failure.', 'Balance and equanimity lead to excellence in work and peace in life.', 'How can I stay balanced in challenging situations today?'),
+        (3, 'श्रेयो हि ज्ञानमभ्यासाज्ज्ञानाद्ध्यानं विशिष्यते।', 'Better than practice is knowledge, better than knowledge is meditation.', 'True wisdom comes from deep contemplation and self-awareness.', 'What can I meditate on today to gain deeper understanding?'),
+        (4, 'उद्धरेदात्मनात्मानं नात्मानमवसादयेत्।', 'Elevate yourself by yourself; do not degrade yourself.', 'You are your own best friend and worst enemy. Choose to uplift yourself.', 'How can I encourage myself today?'),
+        (5, 'समत्वं योग उच्यते।', 'Equanimity is called yoga.', 'True yoga is maintaining mental balance in all circumstances.', 'Where can I practice equanimity in my life today?')
+      `);
+    }
 
     client.release();
     console.log("✅ Database setup complete.");
@@ -109,7 +124,7 @@ async function getUserState(phone) {
     
     const user = res.rows[0];
     user.chat_history = parseChatHistory(user.chat_history || '[]');
-    user.memory_data = user.memory_data || {};
+    user.memory_data = u.memory_data || {};
     user.conversation_stage = user.conversation_stage || 'new_topic';
     user.language_preference = user.language_preference || 'English';
     user.last_activity_ts = user.last_activity_ts || new Date().toISOString();
@@ -219,28 +234,30 @@ async function sendViaHeltar(phone, message, type = "chat") {
   }
 }
 
-/* ========== FIXED LANGUAGE DETECTION ========== */
+/* ========== FIX 1: ENHANCED HINDI LANGUAGE DETECTION ========== */
 function detectLanguageFromText(text) {
   if (!text || typeof text !== "string") return "English";
   
   const cleanText = text.trim().toLowerCase();
   
-  // 1. EXPLICIT language commands (HIGHEST PRIORITY)
-  if (cleanText.includes('english') || cleanText.includes('speak english')) {
+  // 1. ABSOLUTE PRIORITY: Hindi characters (Devanagari Unicode range)
+  if (/[\u0900-\u097F]/.test(text)) {
+    console.log("🔤 Hindi detected: Devanagari characters found");
+    return "Hindi";
+  }
+  
+  // 2. EXPLICIT language commands (HIGH PRIORITY)
+  if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
     return "English";
   }
-  if (cleanText.includes('hindi') || cleanText.includes('speak hindi')) {
+  if (cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('hind')) {
     return "Hindi";
   }
   
-  // 2. Actual Hindi characters (definitive)
-  if (/[\u0900-\u097F]/.test(text)) {
-    return "Hindi";
-  }
-  
-  // 3. Hindi greetings in Roman script
-  const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe', 'hare krishna'];
-  if (hindiGreetings.some(greeting => cleanText === greeting)) {
+  // 3. Hindi greetings in Roman script (HIGH CONFIDENCE)
+  const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe', 'hare krishna', 'jai shri krishna', 'jai shree krishna'];
+  if (hindiGreetings.some(greeting => cleanText === greeting || cleanText.startsWith(greeting))) {
+    console.log("🔤 Hindi detected: Hindi greeting found");
     return "Hindi";
   }
   
@@ -251,7 +268,8 @@ function detectLanguageFromText(text) {
     /^thanks?$/i, /^thank you$/i, /^ok$/i, /^okay$/i, /^bye$/i,
     /^yes$/i, /^no$/i, /^please$/i, /^sorry$/i, /^what$/i, /^when$/, 
     /^where$/i, /^why$/i, /^how$/i, /^help$/i, /^stop$/i, /^start$/i,
-    /^menu$/i, /^[1-4]$/, /^whats happening$/i, /^what's happening$/i
+    /^menu$/i, /^[1-4]$/, /^whats happening$/i, /^what's happening$/i,
+    /^cool$/i, /^great$/i, /^awesome$/i, /^fine$/i, /^good$/i
   ];
   
   for (const pattern of englishPatterns) {
@@ -265,15 +283,25 @@ function detectLanguageFromText(text) {
     return "English";
   }
   
-  // 6. Strong Romanized Hindi indicators
-  const strongHindiIndicators = ['kyu', 'kya', 'kaise', 'karo', 'kiya', 'mera', 'tera', 'apna'];
-  for (const word of strongHindiIndicators) {
-    if (new RegExp(`\\b${word}\\b`).test(cleanText)) {
-      return "Hindi";
-    }
+  // 6. ENHANCED Romanized Hindi indicators with better pattern matching
+  const strongHindiIndicators = [
+    'kyu', 'kya', 'kaise', 'karo', 'kiya', 'mera', 'tera', 'apna', 'hai', 'ho', 'hun',
+    'main', 'tum', 'aap', 'ko', 'ka', 'ki', 'ke', 'se', 'mein', 'par', 'aur', 'lekin',
+    'agar', 'toh', 'phir', 'abhi', 'kal', 'aaj', 'kahan', 'kab', 'kaun', 'kis', 'kisi',
+    'sab', 'thoda', 'bahut', 'accha', 'bura', 'sahi', 'galat', 'chahiye', 'pata', 'samajh'
+  ];
+  
+  const hindiWordCount = strongHindiIndicators.filter(word => 
+    new RegExp(`\\b${word}\\b`).test(cleanText)
+  ).length;
+  
+  // If multiple Hindi indicators found, prioritize Hindi
+  if (hindiWordCount >= 2) {
+    console.log(`🔤 Hindi detected: ${hindiWordCount} Hindi indicators found`);
+    return "Hindi";
   }
   
-  // 7. Default to English
+  // 7. Default to English for safety
   return "English";
 }
 
@@ -312,10 +340,120 @@ async function determineUserLanguage(phone, text, user) {
   if (isNewUser && detectedLanguage === 'Hindi' && currentLanguage === 'English') {
     currentLanguage = 'Hindi';
     await updateUserState(phone, { language_preference: 'Hindi' });
-    console.log(`🔄 New user language switched to Hindi`);
+    console.log(`🔄 New user language switched to Hindi based on detection`);
+  }
+  
+  // If user consistently uses Hindi, adapt to their preference
+  if (detectedLanguage === 'Hindi' && currentLanguage === 'English' && (user.total_incoming || 0) > 5) {
+    const recentMessages = user.chat_history?.slice(-3) || [];
+    const hindiCount = recentMessages.filter(msg => 
+      msg.role === 'user' && detectLanguageFromText(msg.content) === 'Hindi'
+    ).length;
+    
+    if (hindiCount >= 2) {
+      currentLanguage = 'Hindi';
+      await updateUserState(phone, { language_preference: 'Hindi' });
+      console.log(`🔄 Adaptive language switch to Hindi based on recent usage`);
+    }
   }
   
   return { language: currentLanguage, isSwitch: false };
+}
+
+/* ========== FIX 3: DATABASE-POWERED DAILY WISDOM ========== */
+async function getDailyWisdom(language) {
+  try {
+    // Get day of year (1-365) for consistent daily rotation
+    const now = new Date();
+    const start = new Date(now.getFullYear(), 0, 0);
+    const diff = now - start;
+    const oneDay = 1000 * 60 * 60 * 24;
+    const dayOfYear = Math.floor(diff / oneDay);
+    
+    // Get total lessons for modulo operation
+    const countResult = await dbPool.query("SELECT COUNT(*) as total FROM lessons");
+    const totalLessons = parseInt(countResult.rows[0].total) || 5;
+    const lessonNumber = (dayOfYear % totalLessons) + 1;
+    
+    // Fetch the lesson
+    const result = await dbPool.query(
+      "SELECT lesson_number, verse, translation, commentary, reflection_question FROM lessons WHERE lesson_number = $1",
+      [lessonNumber]
+    );
+    
+    if (result.rows.length === 0) {
+      throw new Error(`Lesson ${lessonNumber} not found`);
+    }
+    
+    const lesson = result.rows[0];
+    
+    if (language === "Hindi") {
+      return `📖 *आज की गीता शिक्षा (दिन ${dayOfYear})*
+
+🎯 *श्लोक ${lesson.lesson_number}:*
+"${lesson.verse}"
+
+💫 *अर्थ:*
+${lesson.translation}
+
+🌅 *व्याख्या:*
+${lesson.commentary}
+
+🤔 *प्रतिबिंब प्रश्न:*
+${lesson.reflection_question}
+
+✨ इस शिक्षा को आज के दिन कैसे लागू कर सकते हैं?`;
+    } else {
+      return `📖 *Today''s Gita Wisdom (Day ${dayOfYear})*
+
+🎯 *Verse ${lesson.lesson_number}:*
+"${lesson.verse}"
+
+💫 *Translation:*
+${lesson.translation}
+
+🌅 *Commentary:*
+${lesson.commentary}
+
+🤔 *Reflection Question:*
+${lesson.reflection_question}
+
+✨ How can you apply this teaching in your day today?`;
+    }
+  } catch (error) {
+    console.error("❌ Daily wisdom error:", error);
+    const fallback = language === "Hindi" 
+      ? `📖 *आज की गीता शिक्षा*
+
+"कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।"
+
+💫 *अर्थ:*
+तुम्हारा अधिकार सिर्फ कर्म पर है, फल पर नहीं।
+
+🌅 *व्याख्या:*
+परिणाम की चिंता किए बिना अपना कर्तव्य निभाएं। यही सच्ची स्वतंत्रता का मार्ग है।
+
+🤔 *प्रतिबिंब प्रश्न:*
+आज मैं कौन सा कर्म बिना परिणाम की चिंता के कर सकता हूँ?
+
+✨ इस शिक्षा को आज के दिन कैसे लागू कर सकते हैं?`
+      : `📖 *Today''s Gita Wisdom*
+
+"You have the right to work only, but never to the fruits."
+
+💫 *Translation:*
+Focus on your duty without attachment to results.
+
+🌅 *Commentary:*
+Perform your actions without worrying about outcomes. This is the path to true freedom.
+
+🤔 *Reflection Question:*
+What action can I take today without attachment to results?
+
+✨ How can you apply this teaching in your day today?`;
+    
+    return fallback;
+  }
 }
 
 /* ========== INTENT CLASSIFICATION ========== */
@@ -339,12 +477,12 @@ function isEmotionalExpression(text) {
         /\b(i am in stress|i feel stressed|i'm stressed|i have stress|feeling stressed|under stress)\b/i,
         /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन|मन परेशान|दिल परेशान|मन भारी)\b/,
         
-        // Sadness/Depression - ADDED MORE HINDI PATTERNS
+        // Sadness/Depression - ENHANCED HINDI PATTERNS
         /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow|lonely)\b/i,
         /\b(i am sad|i feel sad|i'm sad|feeling down|feeling low|feeling lonely)\b/i,
-        /\b(दुखी|उदास|निराश|हताश|दुख|उदासी|अकेला|अकेलापन|तन्हाई|मन उदास)\b/,
+        /\b(दुखी|उदास|निराश|हताश|दुख|उदासी|अकेला|अकेलापन|तन्हाई|मन उदास|दिल टूटा)\b/,
         
-        // Life problems (nuanced detection)
+        // Life problems (enhanced detection)
         /\b(my life|married life|relationship|husband|wife|family|job|work|career).*(problem|issue|difficult|hard|trouble|disturb|bad)\b/i,
         /\b(जीवन|शादी|रिश्ता|पति|पत्नी|परिवार|नौकरी|काम).*(समस्या|परेशानी|मुश्किल|बुरा|खराब)\b/,
         
@@ -354,15 +492,15 @@ function isEmotionalExpression(text) {
         /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो|संघर्ष कर|मुश्किल में|परेशानी में)\b/,
         
         // Hindi-specific emotional expressions
-        /\b(मन भारी|दिल टूट|टेंशन|फिक्र|चिंतित|घबराया|निराशाजनक)\b/,
-        /\b(मेरा मन|मेरा दिल).*(परेशान|दुखी|उदास|भारी|टूट)\b/,
+        /\b(मन भारी|दिल टूट|टेंशन|फिक्र|चिंतित|घबराया|निराशाजनक|तंग आ गया|हार मान ली)\b/,
+        /\b(मेरा मन|मेरा दिल).*(परेशान|दुखी|उदास|भारी|टूट|बेचैन)\b/,
         
         // Confusion/Uncertainty
-        /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं)\b/i,
+        /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं|रास्ता नहीं)\b/i,
         
         // Physical symptoms of stress
         /\b(can't sleep|sleep problems|headache|tired|exhausted|fatigue|can't focus)\b/i,
-        /\b(नींद नहीं|सिर दर्द|थकान|कमजोरी|बेचैनी)\b/
+        /\b(नींद नहीं|सिर दर्द|थकान|कमजोरी|बेचैनी|चैन नहीं)\b/
     ];
     
     return emotionalPatterns.some(pattern => pattern.test(lowerText));
@@ -390,47 +528,47 @@ function detectEmotionAdvanced(text) {
             keywords: [
                 'stress', 'stressed', 'stressing', 'tension', 'pressure', 'overwhelmed', 
                 'worried', 'worrying', 'anxious', 'anxiety', 'pressure', 'can\'t handle',
-                'too much', 'overwhelming', 'परेशान', 'तनाव', 'चिंता', 'घबराहट', 'दबाव'
+                'too much', 'overwhelming', 'परेशान', 'तनाव', 'चिंता', 'घबराहट', 'दबाव', 'टेंशन'
             ], 
             weight: 1.0 
         },
         sadness: { 
             keywords: [
                 'sad', 'depressed', 'unhappy', 'hopeless', 'sorrow', 'crying', 'tears',
-                'empty', 'down', 'low', 'दुखी', 'उदास', 'निराश', 'हताश', 'दुख'
+                'empty', 'down', 'low', 'दुखी', 'उदास', 'निराश', 'हताश', 'दुख', 'उदासी'
             ], 
             weight: 1.0 
         },
         anger: { 
             keywords: [
                 'angry', 'frustrated', 'irritated', 'annoyed', 'mad', 'hate', 'furious',
-                'गुस्सा', 'नाराज', 'क्रोध', 'चिढ़'
+                'गुस्सा', 'नाराज', 'क्रोध', 'चिढ़', 'तंग'
             ], 
             weight: 0.9 
         },
         confusion: { 
             keywords: [
                 'confused', 'lost', 'uncertain', 'doubt', 'unsure', 'what to do', 
-                'don\'t know', 'कंफ्यूज', 'उलझन', 'असमंजस', 'पता नहीं'
+                'don\'t know', 'कंफ्यूज', 'उलझन', 'असमंजस', 'पता नहीं', 'समझ नहीं'
             ], 
             weight: 0.8 
         },
         fear: { 
             keywords: [
                 'scared', 'afraid', 'fear', 'nervous', 'anxious', 'worry', 'panic',
-                'डर', 'भय', 'घबराहट', 'आशंका'
+                'डर', 'भय', 'घबराहट', 'आशंका', 'सहमा हुआ'
             ], 
             weight: 0.9 
         }
     };
 
-    // Check for "I am in [emotion]" patterns
+    // Enhanced "I am in [emotion]" patterns with Hindi support
     const iAmPatterns = [
-        { pattern: /\b(i am|i'm|feeling) (stressed|stress|anxious|overwhelmed)\b/i, emotion: 'stressed', weight: 1.5 },
-        { pattern: /\b(i am|i'm|feeling) (sad|depressed|unhappy|hopeless)\b/i, emotion: 'sadness', weight: 1.5 },
-        { pattern: /\b(i am|i'm|feeling) (angry|mad|frustrated)\b/i, emotion: 'anger', weight: 1.3 },
-        { pattern: /\b(i am|i'm|feeling) (confused|lost|uncertain)\b/i, emotion: 'confusion', weight: 1.2 },
-        { pattern: /\b(i am|i'm|feeling) (scared|afraid|nervous)\b/i, emotion: 'fear', weight: 1.3 }
+        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(stressed|stress|anxious|overwhelmed|परेशान|तनाव|चिंता)\b/i, emotion: 'stressed', weight: 1.5 },
+        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(sad|depressed|unhappy|hopeless|दुखी|उदास|निराश)\b/i, emotion: 'sadness', weight: 1.5 },
+        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(angry|mad|frustrated|गुस्सा|नाराज)\b/i, emotion: 'anger', weight: 1.3 },
+        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(confused|lost|uncertain|कंफ्यूज|उलझन)\b/i, emotion: 'confusion', weight: 1.2 },
+        { pattern: /\b(i am|i'm|feeling|मैं|मुझे).*(scared|afraid|nervous|डर|भय)\b/i, emotion: 'fear', weight: 1.3 }
     ];
 
     for (const situation of iAmPatterns) {
@@ -470,9 +608,9 @@ function isFactualQuery(text) {
 function isSmallTalk(text) {
     const lowerText = text.toLowerCase();
     const smallTalkPatterns = [
-        /\b(thanks|thank you|ok|okay|good|nice|cool|great|awesome|fine|good job|well done|शुक्रिया|धन्यवाद|ठीक|अच्छा|बढ़िया)\b/i,
-        /\b(bye|goodbye|see you|talk later|stop|end|बाय|अलविदा|फिर मिलेंगे|रुकिए)\b/i,
-        /\b(haha|hehe|lol|hihi|😂|😊|🙏|❤️|✨)\b/i
+        /\b(thanks|thank you|ok|okay|good|nice|cool|great|awesome|fine|good job|well done|शुक्रिया|धन्यवाद|ठीक|अच्छा|बढ़िया|बहुत अच्छा)\b/i,
+        /\b(bye|goodbye|see you|talk later|stop|end|बाय|अलविदा|फिर मिलेंगे|रुकिए|बंद करो)\b/i,
+        /\b(haha|hehe|lol|hihi|😂|😊|🙏|❤️|✨|👍)\b/i
     ];
     return smallTalkPatterns.some(pattern => pattern.test(lowerText));
 }
@@ -526,63 +664,73 @@ async function checkAndSendFollowup(phone, user) {
 async function sendEmotionalFollowup(phone, previousEmotion, language) {
     const followupMessages = {
         stressed: {
-            hindi: "🌅 7-8 घंटे पहले आपने तनाव की बात की थी। क्या अब आपको थोड़ा बेहतर महसूस हो रहा है? 🙏",
-            english: "🌅 You mentioned feeling stressed 7-8 hours ago. Are you feeling a bit better now? 🙏"
+            hindi: "🌅 7-8 घंटे पहले आपने तनाव की बात की थी। क्या अब आपको थोड़ा बेहतर महसूस हो रहा है? अगर अभी भी परेशानी हो तो बात कर सकते हैं। 🙏",
+            english: "🌅 You mentioned feeling stressed 7-8 hours ago. Are you feeling a bit better now? If you're still troubled, we can talk about it. 🙏"
         },
         sadness: {
-            hindi: "💫 कुछ घंटे पहले आप उदास महसूस कर रहे थे। क्या अब आपके मन को थोड़ी शांति मिली है?",
-            english: "💫 You were feeling sad a few hours ago. Has your mind found some peace now?"
+            hindi: "💫 कुछ घंटे पहले आप उदास महसूस कर रहे थे। क्या अब आपके मन को थोड़ी शांति मिली है? कैसा महसूस हो रहा है अब?",
+            english: "💫 You were feeling sad a few hours ago. Has your mind found some peace now? How are you feeling currently?"
         },
         anger: {
-            hindi: "☁️ पहले की बातचीत में आप नाराज़गी महसूस कर रहे थे। क्या अब स्थिति बेहतर है?",
-            english: "☁️ You mentioned feeling angry earlier. Has the situation improved?"
+            hindi: "☁️ पहले की बातचीत में आप नाराज़गी महसूस कर रहे थे। क्या अब स्थिति बेहतर है? कोई नई बात साझा करना चाहेंगे?",
+            english: "☁️ You mentioned feeling angry earlier. Has the situation improved? Would you like to share any updates?"
         }
     };
 
     const message = followupMessages[previousEmotion] || {
-        hindi: "🌼 कुछ घंटे पहले की हमारी बातचीत के बाद, क्या आप अब बेहतर महसूस कर रहे हैं?",
-        english: "🌼 Since our conversation a few hours ago, are you feeling better now?"
+        hindi: "🌼 कुछ घंटे पहले की हमारी बातचीत के बाद, क्या आप अब बेहतर महसूस कर रहे हैं? आपकी भावनाओं में कोई बदलाव आया है?",
+        english: "🌼 Since our conversation a few hours ago, are you feeling better now? Has there been any change in how you feel?"
     };
 
     const text = language === "Hindi" ? message.hindi : message.english;
     await sendViaHeltar(phone, text, "emotional_followup");
 }
 
-/* ========== EMOTIONAL RESPONSE HANDLER ========== */
+/* ========== FIX 4: ENHANCED EMOTIONAL RESPONSES ========== */
 async function handleEmotionalExpression(phone, text, language, user, detectedEmotion) {
     console.log(`💔 Handling emotional expression: ${detectedEmotion}`);
     
     const empatheticResponses = {
         stressed: {
             hindi: [
-                "मैं समझ रहा हूँ कि आप तनाव महसूस कर रहे हैं। तनाव की स्थिति में गीता हमें सिखाती है कि शांत रहें और अपने भीतर की शक्ति को पहचानें। क्या आप इस बारे में थोड़ा और बता सकते हैं?",
-                "तनाव होना स्वाभाविक है। कृष्ण अर्जुन से कहते हैं: 'योगस्थः कुरु कर्माणि' - मन को स्थिर रखकर कर्म करो। आप किस बात से सबसे ज्यादा तनाव महसूस कर रहे हैं?"
+                "मैं समझ रहा हूँ कि आप तनाव महसूस कर रहे हैं। तनाव की स्थिति में गीता हमें सिखाती है कि शांत रहें और अपने भीतर की शक्ति को पहचानें। क्या आप इस बारे में थोड़ा और बता सकते हैं कि क्या चीज आपको सबसे ज्यादा परेशान कर रही है?",
+                "तनाव होना स्वाभाविक है। कृष्ण अर्जुन से कहते हैं: 'योगस्थः कुरु कर्माणि' - मन को स्थिर रखकर कर्म करो। आप किस बात से सबसे ज्यादा तनाव महसूस कर रहे हैं? क्या आप मुझे और बता सकते हैं?"
             ],
             english: [
-                "I understand you're feeling stressed. In stressful times, the Gita teaches us to remain calm and recognize our inner strength. Could you share a bit more about what's causing this stress?",
-                "It's natural to feel stressed. Krishna tells Arjuna: 'Perform your duty equipoised' - act with a balanced mind. What's causing you the most stress right now?"
+                "I understand you're feeling stressed. In stressful times, the Gita teaches us to remain calm and recognize our inner strength. Could you share a bit more about what's causing this stress specifically?",
+                "It's natural to feel stressed. Krishna tells Arjuna: 'Perform your duty equipoised' - act with a balanced mind. What's causing you the most stress right now? Would you like to talk more about it?"
             ]
         },
         sadness: {
             hindi: [
-                "मैं देख रहा हूँ कि आप दुखी महसूस कर रहे हैं। गीता हमें सिखाती है कि दुख और सुख जीवन के अंग हैं, पर हम उनसे परे हैं। क्या आप अपनी भावनाओं के बारे में बात करना चाहेंगे?",
-                "दुख की घड़ी में, याद रखें कि यह समय भी बीतेगा। कृष्ण कहते हैं: 'दुःखेष्वनुद्विग्नमनाः' - दुख में जिसका मन विचलित नहीं होता। आप कैसा महसूस कर रहे हैं?"
+                "मैं देख रहा हूँ कि आप दुखी महसूस कर रहे हैं। गीता हमें सिखाती है कि दुख और सुख जीवन के अंग हैं, पर हम उनसे परे हैं। क्या आप अपनी भावनाओं के बारे में बात करना चाहेंगे? क्या कोई विशेष बात है जो आपको परेशान कर रही है?",
+                "दुख की घड़ी में, याद रखें कि यह समय भी बीतेगा। कृष्ण कहते हैं: 'दुःखेष्वनुद्विग्नमनाः' - दुख में जिसका मन विचलित नहीं होता। आप कैसा महसूस कर रहे हैं? क्या आप इस दुख के पीछे की वजह के बारे में बात करना चाहेंगे?"
             ],
             english: [
-                "I see you're feeling sad. The Gita teaches us that sorrow and happiness are part of life, but we are beyond them. Would you like to talk about your feelings?",
-                "In moments of sadness, remember this too shall pass. Krishna says: 'Be undisturbed in sorrow.' How are you feeling right now?"
+                "I see you're feeling sad. The Gita teaches us that sorrow and happiness are part of life, but we are beyond them. Would you like to talk about your feelings? Is there something specific that's bothering you?",
+                "In moments of sadness, remember this too shall pass. Krishna says: 'Be undisturbed in sorrow.' How are you feeling right now? Would it help to share what's on your mind?"
+            ]
+        },
+        anger: {
+            hindi: [
+                "मैं समझता हूँ कि आप नाराज़ महसूस कर रहे हैं। गीता में कहा गया है कि क्रोध से भ्रम पैदा होता है। क्या आप बता सकते हैं कि क्या हुआ जिससे आपको गुस्सा आ रहा है?",
+                "गुस्सा आना स्वाभाविक है, पर महत्वपूर्ण है कि हम इसे समझें। क्या आप उस स्थिति के बारे में बात करना चाहेंगे जिसने आपको नाराज किया?"
+            ],
+            english: [
+                "I understand you're feeling angry. The Gita says that anger leads to confusion. Can you tell me what happened that made you feel this way?",
+                "Feeling angry is natural, but it's important to understand it. Would you like to talk about the situation that upset you?"
             ]
         }
     };
 
     const responses = empatheticResponses[detectedEmotion] || {
         hindi: [
-            "मैं समझ रहा हूँ कि आप कुछ परेशान हैं। कृपया मुझे बताएं, मैं गीता की शिक्षाओं के through आपकी मदद करना चाहता हूँ।",
-            "यह सुनकर दुख हुआ कि आप मुश्किल दौर से गुजर रहे हैं। क्या आप अपनी भावनाओं के बारे में और साझा करेंगे?"
+            "मैं समझ रहा हूँ कि आप कुछ परेशान हैं। कृपया मुझे बताएं, मैं गीता की शिक्षाओं के through आपकी मदद करना चाहता हूँ। आप कैसा महसूस कर रहे हैं और क्या चीज आपको सबसे ज्यादा परेशान कर रही है?",
+            "यह सुनकर दुख हुआ कि आप मुश्किल दौर से गुजर रहे हैं। क्या आप अपनी भावनाओं के बारे में और साझा करेंगे? मैं यहाँ आपकी बात सुनने और समझने के लिए हूँ।"
         ],
         english: [
-            "I understand you're going through something difficult. Please share with me, I'd like to help you through Gita's teachings.",
-            "I'm sorry to hear you're facing challenges. Would you like to talk more about what's on your mind?"
+            "I understand you're going through something difficult. Please share with me how you're feeling - I'd like to help you through Gita's teachings. What's troubling you the most right now?",
+            "I'm sorry to hear you're facing challenges. Would you like to talk more about what's on your mind? I'm here to listen and understand what you're experiencing."
         ]
     };
 
@@ -643,13 +791,19 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
             }
         },
         "2": {
-            hindi: {
-                prompt: "📖 आज की विशेष गीता शिक्षा: 'कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।' (2.47) - तुम्हारा अधिकार सिर्फ कर्म पर है, फल पर नहीं। आज बिना परिणाम की चिंता किए, अपना कर्तव्य निभाएं। 🙏",
-                action: "daily_wisdom"
+            hindi: async () => {
+                const wisdom = await getDailyWisdom("Hindi");
+                return {
+                    prompt: wisdom,
+                    action: "daily_wisdom"
+                };
             },
-            english: {
-                prompt: "📖 Today's special Gita teaching: 'You have the right to work, but never to the fruit of work.' (2.47) - Focus on your duty without attachment to results. Perform your actions with dedication today. 🙏",
-                action: "daily_wisdom"
+            english: async () => {
+                const wisdom = await getDailyWisdom("English");
+                return {
+                    prompt: wisdom,
+                    action: "daily_wisdom"
+                };
             }
         },
         "3": {
@@ -676,7 +830,13 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
 
     const selected = choices[choice];
     if (selected) {
-        const content = language === "Hindi" ? selected.hindi : selected.english;
+        let content;
+        if (typeof selected[language] === 'function') {
+            content = await selected[language]();
+        } else {
+            content = selected[language];
+        }
+        
         await sendViaHeltar(phone, content.prompt, `menu_${content.action}`);
         await updateUserState(phone, { 
             conversation_stage: content.action,
@@ -685,20 +845,20 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
     }
 }
 
-/* ========== IMPROVED AI RESPONSE SYSTEM ========== */
+/* ========== FIX 2: CONVERSATIONAL AI WITH ENGAGEMENT ========== */
 async function getAIResponse(phone, text, language, conversationContext = {}) {
   try {
     if (!OPENAI_KEY) {
       const fallbackResponses = {
         hindi: {
-          greeting: "नमस्ते! मैं सारथी AI हूँ। आपकी कैसे मदद कर सकता हूँ?",
-          general: "मैं आपकी बात समझ रहा हूँ। कृपया थोड़ा और विस्तार से बताएं।",
-          question: "यह एक अच्छा प्रश्न है! मैं गीता के ज्ञान से आपकी मदद करना चाहूंगा।"
+          greeting: "नमस्ते! मैं सारथी AI हूँ। आपकी कैसे मदद कर सकता हूँ? क्या आप आज किस विशेष बात पर चर्चा करना चाहेंगे?",
+          general: "मैं आपकी बात समझ रहा हूँ। कृपया थोड़ा और विस्तार से बताएं ताकि मैं बेहतर मार्गदर्शन दे सकूँ। आप इस विषय पर और क्या सोच रहे हैं?",
+          question: "यह एक अच्छा प्रश्न है! मैं गीता के ज्ञान से आपकी मदद करना चाहूंगा। क्या आप इस बारे में कुछ और जानना चाहेंगे?"
         },
         english: {
-          greeting: "Hello! I'm Sarathi AI. How can I help you today?",
-          general: "I understand what you're saying. Please share a bit more details.",
-          question: "That's a good question! I'd love to help you with Gita wisdom."
+          greeting: "Hello! I'm Sarathi AI. How can I help you today? Is there something specific you'd like to discuss?",
+          general: "I understand what you're saying. Please share a bit more details so I can provide better guidance. What are your thoughts on this matter?",
+          question: "That's a good question! I'd love to help you with Gita wisdom. Would you like to know more about this topic?"
         }
       };
 
@@ -712,13 +872,14 @@ async function getAIResponse(phone, text, language, conversationContext = {}) {
       return;
     }
 
+    // Enhanced system prompts with engagement focus
     const systemPrompt = language === "Hindi" 
-      ? `आप सारथी AI हैं, एक दयालु भगवद गीता मार्गदर्शक। 2-3 वाक्यों में संक्षिप्त, उपयोगी उत्तर दें। गीता की शिक्षाओं से practical wisdom दें। गर्मजोशी और देखभाल दिखाएं। हिंदी में उत्तर दें।`
-      : `You are Sarathi AI, a compassionate Bhagavad Gita guide. Give brief, helpful responses in 2-3 sentences. Provide practical wisdom from Gita teachings. Show warmth and care. Respond in English.`;
+      ? `आप सारथी AI हैं, एक दयालु भगवद गीता मार्गदर्शक। 2-3 वाक्यों में संक्षिप्त, उपयोगी उत्तर दें। गीता की शिक्षाओं से practical wisdom दें। गर्मजोशी और देखभाल दिखाएं। हर उत्तर के अंत में एक engaging question पूछें ताकि conversation continue हो सके। हिंदी में उत्तर दें। उदाहरण: "क्या आप इस बारे में और सोचना चाहेंगे?" या "आपकी इस पर क्या राय है?"`
+      : `You are Sarathi AI, a compassionate Bhagavad Gita guide. Give brief, helpful responses in 2-3 sentences. Provide practical wisdom from Gita teachings. Show warmth and care. End every response with an engaging question to continue the conversation. Respond in English. Examples: "What are your thoughts on this?" or "Would you like to explore this further?"`;
 
     const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता: "${text}"\n\nसंदर्भ: ${conversationContext.stage || 'सामान्य'}\n\nकृपया एक दयालु, संक्षिप्त उत्तर दें जो भगवद गीता की शिक्षाओं से जुड़ा हो:`
-      : `User: "${text}"\n\nContext: ${conversationContext.stage || 'general'}\n\nPlease provide a kind, brief response connected to Bhagavad Gita teachings:`;
+      ? `उपयोगकर्ता: "${text}"\n\nसंदर्भ: ${conversationContext.stage || 'सामान्य'}\n\nकृपया एक दयालु, संक्षिप्त उत्तर दें जो भगवद गीता की शिक्षाओं से जुड़ा हो और conversation को आगे बढ़ाने वाला प्रश्न पूछें:`
+      : `User: "${text}"\n\nContext: ${conversationContext.stage || 'general'}\n\nPlease provide a kind, brief response connected to Bhagavad Gita teachings and end with a question to continue our conversation:`;
 
     const messages = [
       { role: "system", content: systemPrompt },
@@ -750,8 +911,8 @@ async function getAIResponse(phone, text, language, conversationContext = {}) {
   } catch (err) {
     console.error("AI response error:", err.message);
     const fallback = language === "Hindi" 
-      ? "मैं यहाँ आपके लिए हूँ। क्या आप अपनी बात थोड़ा और समझा सकते हैं? 💫"
-      : "I'm here for you. Could you explain a bit more about what you need? 💫";
+      ? "मैं यहाँ आपके लिए हूँ। क्या आप अपनी बात थोड़ा और समझा सकते हैं? इस पर आपकी क्या राय है? 💫"
+      : "I'm here for you. Could you explain a bit more about what you need? What are your thoughts on this? 💫";
     await sendViaHeltar(phone, fallback, "error_fallback");
   }
 }
@@ -809,7 +970,7 @@ app.post("/webhook", async (req, res) => {
     // If it's a language switch command, send confirmation and STOP processing
     if (isLanguageSwitch) {
       const confirmationMessage = languageResult.switchTo === 'English' 
-        ? "Sure! I'll speak in English. How can I help you? 😊" 
+        ? "Sure! I'll speak in English. How can I help you today? 😊" 
         : "जरूर! मैं हिंदी में बात करूंगा। मैं आपकी कैसे मदद कर सकता हूँ? 😊";
       
       await sendViaHeltar(phone, confirmationMessage, "language_switch");
@@ -851,8 +1012,8 @@ app.post("/webhook", async (req, res) => {
     if (isCapabilitiesQuery(lower)) {
         console.log(`✅ Intent: Capabilities Query`);
         const reply = language === "Hindi"
-            ? "मैं सारथी AI हूँ, आपका निजी गीता साथी! 🙏 मैं आपको जीवन की चुनौतियों के लिए भगवद गीता का मार्गदर्शन प्रदान करता हूँ।"
-            : "I'm Sarathi AI, your personal Gita companion! 🙏 I provide guidance from Bhagavad Gita for life's challenges.";
+            ? "मैं सारथी AI हूँ, आपका निजी गीता साथी! 🙏 मैं आपको जीवन की चुनौतियों के लिए भगवद गीता का मार्गदर्शन प्रदान करता हूँ। क्या आप किस विशेष मुद्दे पर चर्चा करना चाहेंगे?"
+            : "I'm Sarathi AI, your personal Gita companion! 🙏 I provide guidance from Bhagavad Gita for life's challenges. Is there a specific issue you'd like to discuss?";
         await sendViaHeltar(phone, reply, "capabilities");
         return;
     }
@@ -863,19 +1024,19 @@ app.post("/webhook", async (req, res) => {
         let response;
         if (language === "Hindi") {
             if (lower.includes('thank')) {
-                response = "आपका स्वागत है! 🙏 क्या आप और कुछ चाहेंगे?";
+                response = "आपका स्वागत है! 🙏 क्या आप और कुछ चाहेंगे या किसी और विषय पर बात करना चाहेंगे?";
             } else if (lower.includes('bye')) {
-                response = "धन्यवाद! जब भी जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🌟";
+                response = "धन्यवाद! जब भी जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🌟 क्या आप कल फिर बात करेंगे?";
             } else {
-                response = "ठीक है! 😊 आप आगे क्या जानना चाहेंगे?";
+                response = "ठीक है! 😊 आप आगे क्या जानना चाहेंगे? क्या कोई और प्रश्न है आपके मन में?";
             }
         } else {
             if (lower.includes('thank')) {
-                response = "You're welcome! 🙏 Is there anything else you need?";
+                response = "You're welcome! 🙏 Is there anything else you need or would you like to discuss another topic?";
             } else if (lower.includes('bye')) {
-                response = "Thank you! I'm here whenever you need me. Hare Krishna! 🌟";
+                response = "Thank you! I'm here whenever you need me. Hare Krishna! 🌟 Will we talk again tomorrow?";
             } else {
-                response = "Okay! 😊 What would you like to know more about?";
+                response = "Okay! 😊 What would you like to know more about? Do you have any other questions in mind?";
             }
         }
         await sendViaHeltar(phone, response, "small_talk");
@@ -886,8 +1047,8 @@ app.post("/webhook", async (req, res) => {
     if (isOutOfScopeQuery(lower)) {
         console.log(`🚫 Intent: Out of Scope`);
         const response = language === "Hindi" 
-            ? "मैं विशेष रूप से भगवद गीता और आध्यात्मिक मार्गदर्शन के लिए बना हूँ। कृपया गीता, जीवन की चुनौतियों, या आध्यात्मिक विषयों के बारे में पूछें। 🙏"
-            : "I'm specifically designed for Bhagavad Gita and spiritual guidance. Please ask about Gita, life challenges, or spiritual topics. 🙏";
+            ? "मैं विशेष रूप से भगवद गीता और आध्यात्मिक मार्गदर्शन के लिए बना हूँ। कृपया गीता, जीवन की चुनौतियों, या आध्यात्मिक विषयों के बारे में पूछें। 🙏 क्या आप इनमें से किसी विषय पर चर्चा करना चाहेंगे?"
+            : "I'm specifically designed for Bhagavad Gita and spiritual guidance. Please ask about Gita, life challenges, or spiritual topics. 🙏 Would you like to discuss any of these subjects?";
         await sendViaHeltar(phone, response, "out_of_scope");
         return;
     }
@@ -909,13 +1070,19 @@ app.get("/health", (req, res) => {
   res.json({ 
     status: "ok", 
     bot: BOT_NAME, 
-    timestamp: new Date().toISOString() 
+    timestamp: new Date().toISOString(),
+    features: ["Hindi Detection", "Daily Wisdom", "Emotional Support", "AI Conversations"]
   });
 });
 
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   console.log(`\n🚀 ${BOT_NAME} listening on port ${PORT}`);
+  console.log("✅ Integrated Features:");
+  console.log("   🔤 Enhanced Hindi Language Detection");
+  console.log("   💬 Conversational AI with Engagement");
+  console.log("   📚 Database-Powered Daily Wisdom");
+  console.log("   💖 Enhanced Emotional Responses");
   setupDatabase().catch(console.error);
 });
 
