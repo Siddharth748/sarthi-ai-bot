@@ -1,5 +1,3 @@
-check out this code:
-
 // index.js — SarathiAI (Complete Enhanced Version with User Fixes)
 import dotenv from "dotenv";
 dotenv.config();
