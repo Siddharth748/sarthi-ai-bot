@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Complete Enhanced Version)
+// index.js — SarathiAI (Complete Enhanced Version with User Fixes)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -295,7 +295,7 @@ function detectLanguageFromText(text) {
     return "Hindi";
   }
   
-  // 2. EXPLICIT language commands (HIGH PRIORITY)
+  // 2. EXPLICIT language commands (HIGHEST PRIORITY - fix this)
   if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
     return "English";
   }
@@ -303,28 +303,16 @@ function detectLanguageFromText(text) {
     return "Hindi";
   }
   
-  // 3. Hindi greetings in Roman script (HIGH CONFIDENCE)
-  const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe', 'hare krishna', 'jai shri krishna', 'jai shree krishna'];
-  if (hindiGreetings.some(greeting => cleanText === greeting || cleanText.startsWith(greeting))) {
-    console.log("🔤 Hindi detected: Hindi greeting found");
-    return "Hindi";
+  // 3. Fix: Common English greetings should be English
+  const englishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya', 'hola', 'sup', 'good morning', 'good afternoon', 'good evening'];
+  if (englishGreetings.some(greeting => cleanText === greeting || cleanText.startsWith(greeting))) {
+    return "English";
   }
   
-  // 4. Common English phrases that should NEVER be detected as Hindi
-  const englishPatterns = [
-    /^hi+$/i, /^hello$/i, /^hey$/i, /^how are you\??$/i, /^what'?s up\??$/i,
-    /^good morning$/i, /^good afternoon$/i, /^good evening$/i,
-    /^thanks?$/i, /^thank you$/i, /^ok$/i, /^okay$/i, /^bye$/i,
-    /^yes$/i, /^no$/i, /^please$/i, /^sorry$/i, /^what$/i, /^when$/, 
-    /^where$/i, /^why$/i, /^how$/i, /^help$/i, /^stop$/i, /^start$/i,
-    /^menu$/i, /^[1-4]$/, /^whats happening$/i, /^what's happening$/i,
-    /^cool$/i, /^great$/i, /^awesome$/i, /^fine$/i, /^good$/i
-  ];
-  
-  for (const pattern of englishPatterns) {
-    if (pattern.test(cleanText)) {
-      return "English";
-    }
+  // 4. Hindi greetings in Roman script
+  const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe', 'hare krishna', 'jai shri krishna'];
+  if (hindiGreetings.some(greeting => cleanText === greeting || cleanText.startsWith(greeting))) {
+    return "Hindi";
   }
   
   // 5. If it contains only English letters and common punctuation, it's English
@@ -332,21 +320,17 @@ function detectLanguageFromText(text) {
     return "English";
   }
   
-  // 6. ENHANCED Romanized Hindi indicators with better pattern matching
+  // 6. Romanized Hindi indicators
   const strongHindiIndicators = [
     'kyu', 'kya', 'kaise', 'karo', 'kiya', 'mera', 'tera', 'apna', 'hai', 'ho', 'hun',
-    'main', 'tum', 'aap', 'ko', 'ka', 'ki', 'ke', 'se', 'mein', 'par', 'aur', 'lekin',
-    'agar', 'toh', 'phir', 'abhi', 'kal', 'aaj', 'kahan', 'kab', 'kaun', 'kis', 'kisi',
-    'sab', 'thoda', 'bahut', 'accha', 'bura', 'sahi', 'galat', 'chahiye', 'pata', 'samajh'
+    'main', 'tum', 'aap', 'ko', 'ka', 'ki', 'ke', 'se', 'mein', 'par', 'aur', 'lekin'
   ];
   
   const hindiWordCount = strongHindiIndicators.filter(word => 
     new RegExp(`\\b${word}\\b`).test(cleanText)
   ).length;
   
-  // If multiple Hindi indicators found, prioritize Hindi
   if (hindiWordCount >= 2) {
-    console.log(`🔤 Hindi detected: ${hindiWordCount} Hindi indicators found`);
     return "Hindi";
   }
   
@@ -358,51 +342,58 @@ function detectLanguageFromText(text) {
 async function determineUserLanguage(phone, text, user) {
   let currentLanguage = user.language_preference || 'English';
   const detectedLanguage = detectLanguageFromText(text);
-  const isLanguageSwitchCommand = text.toLowerCase().includes('english') || text.toLowerCase().includes('hindi');
+  const cleanText = text.toLowerCase().trim();
   
-  console.log(`🔤 Language: user_pref=${currentLanguage}, detected=${detectedLanguage}, is_switch=${isLanguageSwitchCommand}`);
+  // FIX: Check for explicit language commands first
+  const isLanguageSwitchCommand = 
+    cleanText.includes('english') || 
+    cleanText.includes('hindi') ||
+    cleanText.includes('speak english') ||
+    cleanText.includes('speak hindi');
   
-  // If it's a language switch command, handle it immediately and return the new language
+  console.log(`🔤 Language: user_pref=${currentLanguage}, detected=${detectedLanguage}, is_switch=${isLanguageSwitchCommand}, text="${text}"`);
+  
+  // If it's a language switch command, handle it immediately
   if (isLanguageSwitchCommand) {
-    if (text.toLowerCase().includes('english')) {
-      currentLanguage = 'English';
-      await updateUserState(phone, { 
-        language_preference: 'English',
-        conversation_stage: 'new_topic'
-      });
-      console.log(`🔄 Language switched to English`);
-      return { language: currentLanguage, isSwitch: true, switchTo: 'English' };
+    let newLanguage = currentLanguage; // default to current
+    
+    if (cleanText.includes('english')) {
+      newLanguage = 'English';
+    } else if (cleanText.includes('hindi')) {
+      newLanguage = 'Hindi';
     }
-    if (text.toLowerCase().includes('hindi')) {
-      currentLanguage = 'Hindi';
+    
+    // Only update if language actually changed
+    if (newLanguage !== currentLanguage) {
       await updateUserState(phone, { 
-        language_preference: 'Hindi',
+        language_preference: newLanguage,
         conversation_stage: 'new_topic'
       });
-      console.log(`🔄 Language switched to Hindi`);
-      return { language: currentLanguage, isSwitch: true, switchTo: 'Hindi' };
+      console.log(`🔄 Language switched to ${newLanguage}`);
+      return { language: newLanguage, isSwitch: true, switchTo: newLanguage };
     }
   }
   
-  // For new users, be more responsive to language detection
+  // For new users or when detection strongly suggests a change
   const isNewUser = (user.total_incoming || 0) <= 2;
+  
   if (isNewUser && detectedLanguage === 'Hindi' && currentLanguage === 'English') {
     currentLanguage = 'Hindi';
     await updateUserState(phone, { language_preference: 'Hindi' });
     console.log(`🔄 New user language switched to Hindi based on detection`);
   }
   
-  // If user consistently uses Hindi, adapt to their preference
-  if (detectedLanguage === 'Hindi' && currentLanguage === 'English' && (user.total_incoming || 0) > 5) {
+  // If user consistently uses a language, adapt
+  if (detectedLanguage !== currentLanguage && (user.total_incoming || 0) > 3) {
     const recentMessages = user.chat_history?.slice(-3) || [];
-    const hindiCount = recentMessages.filter(msg => 
-      msg.role === 'user' && detectLanguageFromText(msg.content) === 'Hindi'
+    const detectedLanguageCount = recentMessages.filter(msg => 
+      msg.role === 'user' && detectLanguageFromText(msg.content) === detectedLanguage
     ).length;
     
-    if (hindiCount >= 2) {
-      currentLanguage = 'Hindi';
-      await updateUserState(phone, { language_preference: 'Hindi' });
-      console.log(`🔄 Adaptive language switch to Hindi based on recent usage`);
+    if (detectedLanguageCount >= 2) {
+      currentLanguage = detectedLanguage;
+      await updateUserState(phone, { language_preference: detectedLanguage });
+      console.log(`🔄 Adaptive language switch to ${detectedLanguage} based on recent usage`);
     }
   }
   
@@ -410,9 +401,19 @@ async function determineUserLanguage(phone, text, user) {
 }
 
 /* ========== INTENT CLASSIFICATION ========== */
+/* ========== GREETING DETECTION FUNCTION ========== */
 function isGreetingQuery(text) {
-    const lowerText = text.toLowerCase();
+    if (!text || typeof text !== "string") return false;
+    
+    const lowerText = text.toLowerCase().trim();
     const greetingRegex = /\b(hi|hello|hey|hii|hiya|yo|good morning|good afternoon|good evening|how are you|what's up|how's it going|kaise ho|kaise hain aap|namaste|hare krishna|hola|sup)\b/i;
+    
+    // Fix: Also check for simple greetings without word boundaries
+    const simpleGreetings = ['hi', 'hello', 'hey', 'hii', 'namaste', 'hola', 'sup'];
+    if (simpleGreetings.includes(lowerText)) {
+        return true;
+    }
+    
     return greetingRegex.test(lowerText);
 }
 
@@ -707,71 +708,95 @@ Please choose 1-4 🙏`;
     });
 }
 
+/* ========== MENU CHOICE HANDLER ========== */
 async function handleEnhancedMenuChoice(phone, choice, language, user) {
-    const choices = {
-        "1": {
-            hindi: {
-                prompt: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?",
-                action: "immediate_guidance"
-            },
-            english: {
-                prompt: "🌅 Right guidance for your current challenge. Please briefly describe your situation?",
-                action: "immediate_guidance"
-            }
+  console.log(`📝 Menu choice received: ${choice}, language: ${language}`);
+  
+  const choices = {
+    "1": {
+      hindi: {
+        prompt: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?",
+        action: "immediate_guidance"
+      },
+      english: {
+        prompt: "🌅 Right guidance for your current challenge. Please briefly describe your situation?",
+        action: "immediate_guidance"
+      }
+    },
+    "2": {
+      hindi: {
+        prompt: async () => {
+          const wisdom = await getDailyWisdom("Hindi");
+          return wisdom;
         },
-        "2": {
-            hindi: async () => {
-                const wisdom = await getDailyWisdom("Hindi");
-                return {
-                    prompt: wisdom,
-                    action: "daily_wisdom"
-                };
-            },
-            english: async () => {
-                const wisdom = await getDailyWisdom("English");
-                return {
-                    prompt: wisdom,
-                    action: "daily_wisdom"
-                };
-            }
+        action: "daily_wisdom"
+      },
+      english: {
+        prompt: async () => {
+          const wisdom = await getDailyWisdom("English");
+          return wisdom;
         },
-        "3": {
-            hindi: {
-                prompt: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं? मैं गीता की शिक्षाओं के through आपकी मदद करूंगा।",
-                action: "conversation"
-            },
-            english: {
-                prompt: "💬 I'm here to listen. Please share how you're feeling? I'll help you through the teachings of Gita.",
-                action: "conversation"
-            }
-        },
-        "4": {
-            hindi: {
-                prompt: "🎓 गीता ज्ञान: भगवद गीता 18 अध्यायों में विभाजित है, जो जीवन के विभिन्न पहलुओं पर प्रकाश डालती है। आप किस विषय के बारे में जानना चाहते हैं?",
-                action: "knowledge_seeker"
-            },
-            english: {
-                prompt: "🎓 Gita Knowledge: The Bhagavad Gita is divided into 18 chapters, each illuminating different aspects of life. What specific topic would you like to know about?",
-                action: "knowledge_seeker"
-            }
-        }
-    };
-
-    const selected = choices[choice];
-    if (selected) {
-        let content;
-        if (typeof selected[language] === 'function') {
-            content = await selected[language]();
-        } else {
-            content = selected[language];
-        }
-        
-        await sendViaHeltar(phone, content.prompt, `menu_${content.action}`);
-        await updateUserState(phone, { 
-            conversation_stage: content.action,
-            last_menu_choice: choice
-        });
+        action: "daily_wisdom"
+      }
+    },
+    "3": {
+      hindi: {
+        prompt: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं? मैं गीता की शिक्षाओं के through आपकी मदद करूंगा।",
+        action: "conversation"
+      },
+      english: {
+        prompt: "💬 I'm here to listen. Please share how you're feeling? I'll help you through the teachings of Gita.",
+        action: "conversation"
+      }
+    },
+    "4": {
+      hindi: {
+        prompt: "🎓 गीता ज्ञान: भगवद गीता 18 अध्यायों में विभाजित है, जो जीवन के विभिन्न पहलुओं पर प्रकाश डालती है। आप किस विषय के बारे में जानना चाहते हैं?",
+        action: "knowledge_seeker"
+      },
+      english: {
+        prompt: "🎓 Gita Knowledge: The Bhagavad Gita is divided into 18 chapters, each illuminating different aspects of life. What specific topic would you like to know about?",
+        action: "knowledge_seeker"
+      }
     }
+  };
+
+  const selected = choices[choice];
+  if (!selected) {
+    console.error(`❌ Invalid menu choice: ${choice}`);
+    const errorMessage = language === "Hindi" 
+      ? "कृपया 1, 2, 3 या 4 में से चुनें।"
+      : "Please choose 1, 2, 3, or 4.";
+    await sendViaHeltar(phone, errorMessage, "menu_error");
+    return;
+  }
+
+  try {
+    let promptContent;
+    const selectedLang = selected[language] || selected.english;
+    
+    if (typeof selectedLang.prompt === 'function') {
+      // Handle async functions for daily wisdom
+      promptContent = await selectedLang.prompt();
+    } else {
+      promptContent = selectedLang.prompt;
+    }
+    
+    console.log(`✅ Sending menu response for choice ${choice}`);
+    await sendViaHeltar(phone, promptContent, `menu_${selectedLang.action}`);
+    await updateUserState(phone, { 
+      conversation_stage: selectedLang.action,
+      last_menu_choice: choice,
+      last_menu_shown: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error(`❌ Menu choice error for ${choice}:`, error);
+    const fallbackMessage = language === "Hindi" 
+      ? "क्षमा करें, तकनीकी समस्या आई है। कृपया पुनः प्रयास करें।"
+      : "Sorry, there was a technical issue. Please try again.";
+    await sendViaHeltar(phone, fallbackMessage, "menu_error");
+  }
 }
 
 /* ========== ENHANCED DAILY WISDOM WITH PRACTICAL STEPS ========== */
@@ -987,18 +1012,41 @@ async function getFallbackResponse(phone, text, language) {
 
 /* ========== WEBHOOK PARSING ========== */
 function parseWebhookMessage(body) {
+  console.log("📨 Raw webhook body:", JSON.stringify(body).substring(0, 200));
+  
   if (!body) return null;
   
+  // Try different webhook formats
   if (body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-    return body.entry[0].changes[0].value.messages[0];
+    const msg = body.entry[0].changes[0].value.messages[0];
+    console.log("📱 Heltar format message:", msg);
+    return msg;
   }
+  
   if (body?.messages?.[0]) {
+    console.log("📱 Direct messages format:", body.messages[0]);
     return body.messages[0];
   }
+  
   if (body?.from && body?.text) {
+    console.log("📱 Simple format message:", body);
     return body;
   }
   
+  // Fix: Also check for Meta webhook format
+  if (body?.object === 'whatsapp_business_account') {
+    const entry = body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const message = value?.messages?.[0];
+    
+    if (message) {
+      console.log("📱 Meta WhatsApp format:", message);
+      return message;
+    }
+  }
+  
+  console.log("❓ Unknown webhook format");
   return null;
 }
 
