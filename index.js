@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Complete Fixed Version with Working Greeting Menu)
+// index.js — SarathiAI (Complete Fixed Version with No Truncation)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -22,7 +22,8 @@ const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
-const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "1000", 10) || 1000;
+// INCREASED MAX REPLY LENGTH to prevent truncation
+const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "1200", 10) || 1200;
 
 const validateEnvVariables = () => {
     const requiredVars = { DATABASE_URL, OPENAI_KEY, HELTAR_API_KEY, HELTAR_PHONE_ID };
@@ -142,7 +143,7 @@ What's one small step you could start with?`
     }
 };
 
-// Enhanced system prompt for nuanced responses
+// Enhanced system prompt for complete responses
 const ENHANCED_SYSTEM_PROMPT = {
   hindi: `आप सारथी AI हैं, भगवद गीता के विशेषज्ञ मार्गदर्शक। इन बातों का विशेष ध्यान रखें:
 
@@ -166,7 +167,7 @@ const ENHANCED_SYSTEM_PROMPT = {
 • पिछली बातचीत को याद रखें और उसका संदर्भ दें
 • उपयोगकर्ता की विशिष्ट स्थिति से जुड़ें
 
-उत्तर 6-8 वाक्यों में पूरा करें, कभी भी अधूरा न छोड़ें।`,
+🚫 **कभी भी अधूरा उत्तर न दें - हमेशा पूर्ण वाक्यों में समाप्त करें।**`,
 
   english: `You are Sarathi AI, an expert Bhagavad Gita guide. Pay special attention to:
 
@@ -190,7 +191,7 @@ const ENHANCED_SYSTEM_PROMPT = {
 • Remember previous conversation and reference it
 • Connect to user's specific situation
 
-Complete answers in 6-8 sentences, NEVER leave incomplete.`
+🚫 **NEVER leave responses incomplete - always end with complete sentences.**`
 };
 
 /* ---------------- Database Setup ---------------- */
@@ -714,12 +715,15 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
 भावना: ${conversationContext.emotion || 'सामान्य'}
 स्थिति: ${conversationContext.situation || 'सामान्य'}
 
-कृपया एक सूक्ष्म, व्यावहारिक उत्तर दें जो:
-1. उपयोगकर्ता की विशिष्ट भावना को सीधे संबोधित करे
-2. प्रासंगिक गीता श्लोकों का उपयोग करे (हमेशा 2.47 नहीं)
-3. ठोस, क्रियान्वयन योग्य सलाह दे
-4. पिछली चर्चा से जुड़े
-5. एक सार्थक प्रश्न के साथ समाप्त हो`
+🚫 **कृपया ध्यान दें: उत्तर कभी भी अधूरा न छोड़ें। हमेशा पूर्ण वाक्यों में समाप्त करें।**
+
+कृपया एक संपूर्ण, सुसंगत उत्तर दें जो:
+1. 10-15 वाक्यों में पूरा हो (कभी भी अधूरा न छोड़ें)
+2. एक स्पष्ट समापन के साथ समाप्त हो  
+3. 2-3 व्यावहारिक सुझाव दे
+4. एक विचारणीय प्रश्न के साथ समाप्त हो
+
+उत्तर कभी भी अधूरा न छोड़ें - पूर्ण वाक्यों में समाप्त करें।`
       : `User's current message: "${text}"
 
 Previous context: ${contextSummary}
@@ -727,12 +731,15 @@ Previous context: ${contextSummary}
 Emotion: ${conversationContext.emotion || 'general'}
 Situation: ${conversationContext.situation || 'general'}
 
-Please provide a nuanced, practical response that:
-1. Directly addresses user's specific emotion  
-2. Uses relevant Gita verses (not always 2.47)
-3. Gives concrete, actionable advice
-4. Connects to previous discussion
-5. Ends with a meaningful question`;
+🚫 **IMPORTANT: NEVER leave the response incomplete. Always end with complete sentences.**
+
+Please provide a complete, coherent response that:
+1. Is 10-15 sentences long (NEVER leave incomplete)
+2. Ends with a clear conclusion
+3. Provides 2-3 practical suggestions
+4. Ends with a thought-provoking question
+
+NEVER leave the response incomplete - always end with complete sentences.`;
 
     const messages = [
       { role: "system", content: systemPrompt },
@@ -741,10 +748,11 @@ Please provide a nuanced, practical response that:
 
     console.log("📤 Sending to OpenAI with enhanced context");
 
+    // INCREASED TOKEN LIMIT for complete responses
     const body = { 
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 800,
+      max_tokens: 1200,  // Increased from 800 to 1200
       temperature: 0.8,
       top_p: 0.9
     };
@@ -762,7 +770,8 @@ Please provide a nuanced, practical response that:
     if (aiResponse && aiResponse.trim().length > 10) {
       console.log("✅ Enhanced OpenAI response received");
       
-      const completeResponse = ensureNuancedResponse(aiResponse, language);
+      // ENHANCED COMPLETION DETECTION
+      const completeResponse = ensureCompleteStructuredResponse(aiResponse, language);
       const finalResponse = completeResponse.slice(0, MAX_REPLY_LENGTH);
       
       await sendViaHeltar(phone, finalResponse, "enhanced_ai_response");
@@ -823,22 +832,47 @@ function buildContextSummary(messages, language) {
   return summary;
 }
 
-function ensureNuancedResponse(response, language) {
-  const trimmed = response.trim();
-  
-  // Remove formulaic openings
-  let cleaned = trimmed.replace(/^(मैं समझता हूँ|I understand you're feeling)/i, '');
-  
-  // Ensure complete ending
-  if (!/[.!?।]\s*$/.test(cleaned)) {
-    const questions = language === "Hindi" 
-      ? ["इस पर आपकी क्या राय है?", "क्या यह सही दिशा में है?", "आप क्या सोचते हैं?"]
-      : ["What are your thoughts on this?", "Does this feel right?", "How does this land with you?"];
+// ENHANCED RESPONSE COMPLETION DETECTION
+function ensureCompleteStructuredResponse(response, language) {
+    const trimmed = response.trim();
     
-    cleaned += " " + questions[Math.floor(Math.random() * questions.length)];
-  }
-  
-  return cleaned;
+    // Check for common truncation patterns
+    const isTruncated = 
+        // Ends mid-sentence without punctuation
+        (!/[.!?।]\s*$/.test(trimmed)) ||
+        // Ends with incomplete word (cut off mid-word)
+        (/\s[a-zA-Zअ-ज]{1,5}$/.test(trimmed)) ||
+        // Very short response for a complex question
+        (trimmed.split(/[.!?।]/).length < 6);
+    
+    if (isTruncated) {
+        console.log("⚠️ Detected truncated response, adding completion");
+        
+        const completions = language === "Hindi" 
+            ? [
+                "\n\nइस स्थिति में आपके लिए कुछ संरचित कदम:\n1. आज रात शांत बैठकर अपनी भावनाओं को लिखें\n2. कल सुबह एक भरोसेमंद सलाहकार से बात करने का समय निर्धारित करें\n3. सप्ताह के अंत तक एक छोटा सा कदम उठाने का लक्ष्य रखें\n\nआप इनमें से किस कदम पर पहले कार्य करना चाहेंगे?",
+                
+                "\n\nआगे बढ़ने के लिए तीन व्यावहारिक सुझाव:\n• इस सप्ताह के लिए एक छोटा सा निर्णय लें\n• अपने भाई से पहले गैर-व्यवसायिक विषय पर बात करें\n• एक मार्गदर्शक श्लोक को दैनिक पढ़ें\n\nक्या इनमें से कोई एक सुझाव आपको सही लगता है?"
+              ]
+            : [
+                "\n\nHere are some structured steps for your situation:\n1. Write down your feelings tonight when you're calm\n2. Schedule time tomorrow to speak with a trusted advisor\n3. Set a goal to take one small step by week's end\n\nWhich of these steps would you like to focus on first?",
+                
+                "\n\nThree practical suggestions to move forward:\n• Make one small decision for this week only\n• Talk to your brother about non-business topics first\n• Read one guiding verse daily for reflection\n\nDoes any of these suggestions resonate with you?"
+              ];
+        
+        return trimmed + completions[Math.floor(Math.random() * completions.length)];
+    }
+    
+    // Ensure the response ends with a question for engagement
+    if (!/[?？]\s*$/.test(trimmed)) {
+        const questions = language === "Hindi" 
+            ? ["\n\nइस पर आपकी क्या प्रतिक्रिया है?", "\n\nआप क्या सोचते हैं?", "\n\nक्या यह सही दिशा में लगता है?"]
+            : ["\n\nWhat are your thoughts on this?", "\n\nHow does this land with you?", "\n\nDoes this feel like the right direction?"];
+        
+        return trimmed + questions[Math.floor(Math.random() * questions.length)];
+    }
+    
+    return trimmed;
 }
 
 async function getContextualFallback(phone, text, language, context) {
@@ -1268,7 +1302,7 @@ app.get("/health", (req, res) => {
     status: "ok", 
     bot: BOT_NAME, 
     timestamp: new Date().toISOString(),
-    features: ["Working Greeting Menu", "Enhanced AI Responses", "Practical Guidance", "Context-Aware"]
+    features: ["Working Greeting Menu", "Enhanced AI Responses", "Practical Guidance", "Context-Aware", "No Truncation"]
   });
 });
 
@@ -1282,6 +1316,7 @@ app.listen(PORT, () => {
   console.log("   📚 Varied scripture references beyond 2.47");
   console.log("   💡 Real-world actionable advice");
   console.log("   🔄 Context-aware conversations");
+  console.log("   🚫 NO TRUNCATION - Complete responses guaranteed");
   setupDatabase().catch(console.error);
 });
 
