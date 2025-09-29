@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Complete Fixed Version with No Truncation)
+// index.js — SarathiAI (Enhanced Version with All Improvements)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -22,21 +22,22 @@ const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
-// INCREASED MAX REPLY LENGTH to prevent truncation
 const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "1200", 10) || 1200;
 
-const validateEnvVariables = () => {
-    const requiredVars = { DATABASE_URL, OPENAI_KEY, HELTAR_API_KEY, HELTAR_PHONE_ID };
-    const missingVars = Object.entries(requiredVars).filter(([, value]) => !value).map(([key]) => key);
-    if (missingVars.length > 0) {
-        console.error(`❌ Critical Error: Missing environment variables: ${missingVars.join(", ")}`);
-        process.exit(1);
-    }
-};
+/* ---------------- Enhanced Database Pool ---------------- */
+const dbPool = new Pool({ 
+    connectionString: DATABASE_URL, 
+    ssl: { rejectUnauthorized: false },
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+    maxUses: 7500,
+});
 
-const dbPool = new Pool({ connectionString: DATABASE_URL, ssl: { rejectUnauthorized: false } });
+/* ---------------- Response Cache ---------------- */
+const responseCache = new Map();
 
-/* ========== ENHANCED GITA WISDOM DATABASE ========== */
+/* ---------------- Enhanced Gita Wisdom Database ---------------- */
 const ENHANCED_GITA_WISDOM = {
     moral_dilemma: {
         verses: ["16.1-3", "17.14-16", "18.63"],
@@ -194,7 +195,16 @@ const ENHANCED_SYSTEM_PROMPT = {
 🚫 **NEVER leave responses incomplete - always end with complete sentences.**`
 };
 
-/* ---------------- Database Setup ---------------- */
+/* ---------------- Validation & Setup ---------------- */
+const validateEnvVariables = () => {
+    const requiredVars = { DATABASE_URL, OPENAI_KEY, HELTAR_API_KEY, HELTAR_PHONE_ID };
+    const missingVars = Object.entries(requiredVars).filter(([, value]) => !value).map(([key]) => key);
+    if (missingVars.length > 0) {
+        console.error(`❌ Critical Error: Missing environment variables: ${missingVars.join(", ")}`);
+        process.exit(1);
+    }
+};
+
 async function setupDatabase() {
     try {
         const client = await dbPool.connect();
@@ -222,7 +232,9 @@ async function setupDatabase() {
             ADD COLUMN IF NOT EXISTS last_menu_shown TIMESTAMP WITH TIME ZONE,
             ADD COLUMN IF NOT EXISTS primary_use_case VARCHAR(50),
             ADD COLUMN IF NOT EXISTS user_segment VARCHAR(20) DEFAULT 'new',
-            ADD COLUMN IF NOT EXISTS last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            ADD COLUMN IF NOT EXISTS last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS pending_followup TEXT,
+            ADD COLUMN IF NOT EXISTS followup_type VARCHAR(50)
         `);
 
         await client.query(`
@@ -257,11 +269,28 @@ async function setupDatabase() {
     }
 }
 
-/* ---------------- Helpers ---------------- */
+/* ---------------- Enhanced Helper Functions ---------------- */
 function parseChatHistory(raw) {
     if (!raw) return [];
     if (Array.isArray(raw)) return raw;
     try { return JSON.parse(raw); } catch { return []; }
+}
+
+function pruneChatHistory(history, maxMessages = 20) {
+    if (!Array.isArray(history) || history.length <= maxMessages) {
+        return history;
+    }
+    
+    // Keep system messages and recent conversation
+    const importantMessages = history.filter(msg => 
+        msg.role === 'system' || 
+        msg.content.includes('कृष्ण') || 
+        msg.content.includes('Krishna') ||
+        msg.content.length > 100 // Substantial messages
+    );
+    
+    const recentMessages = history.slice(-maxMessages + importantMessages.length);
+    return [...importantMessages, ...recentMessages].slice(-maxMessages);
 }
 
 async function getUserState(phone) {
@@ -284,7 +313,7 @@ async function getUserState(phone) {
         }
         
         const user = res.rows[0];
-        user.chat_history = parseChatHistory(user.chat_history || '[]');
+        user.chat_history = pruneChatHistory(parseChatHistory(user.chat_history || '[]'));
         user.memory_data = user.memory_data || {};
         user.conversation_stage = user.conversation_stage || 'new_topic';
         user.language_preference = user.language_preference || 'English';
@@ -321,7 +350,7 @@ async function updateUserState(phone, updates) {
     }
 }
 
-/* ---------------- Analytics ---------------- */
+/* ---------------- Enhanced Analytics & User Segmentation ---------------- */
 async function trackIncoming(phone, text) {
     try {
         const user = await getUserState(phone);
@@ -346,8 +375,30 @@ async function trackIncoming(phone, text) {
         if (addSession) updates.total_sessions = (user.total_sessions || 0) + 1;
 
         await updateUserState(phone, updates);
+        await updateUserSegment(phone); // Update segmentation
     } catch (err) {
         console.error("trackIncoming failed:", err);
+    }
+}
+
+async function updateUserSegment(phone) {
+    try {
+        const user = await getUserState(phone);
+        const totalMessages = (user.total_incoming || 0) + (user.total_outgoing || 0);
+        
+        let segment = 'new';
+        if (totalMessages > 50) segment = 'power_user';
+        else if (totalMessages > 10) segment = 'active';
+        else if (user.total_sessions > 1) segment = 'returning';
+        
+        if (segment !== user.user_segment) {
+            await updateUserState(phone, { user_segment: segment });
+        }
+        
+        return segment;
+    } catch (err) {
+        console.error("updateUserSegment failed:", err);
+        return 'new';
     }
 }
 
@@ -367,7 +418,7 @@ async function trackOutgoing(phone, reply, type = "chat") {
     }
 }
 
-/* ---------------- Heltar sending ---------------- */
+/* ---------------- Enhanced Heltar Sending with Layered Responses ---------------- */
 async function sendViaHeltar(phone, message, type = "chat") {
     try {
         const safeMessage = String(message || "").trim().slice(0, 4096);
@@ -395,7 +446,50 @@ async function sendViaHeltar(phone, message, type = "chat") {
     }
 }
 
-/* ========== LANGUAGE DETECTION ========== */
+async function sendLayeredResponse(phone, fullResponse, language, type = "chat") {
+    const maxInitialLength = 400; // Optimal for WhatsApp
+    const sentences = fullResponse.split(/[.!?।]/).filter(s => s.trim().length > 0);
+    
+    // If response is short enough, send directly
+    if (fullResponse.length <= maxInitialLength) {
+        await sendViaHeltar(phone, fullResponse, type);
+        return;
+    }
+    
+    // Build initial response with first 2-3 sentences
+    let initialResponse = '';
+    let charCount = 0;
+    
+    for (let i = 0; i < Math.min(sentences.length, 3); i++) {
+        const sentence = sentences[i].trim() + (language === "Hindi" ? '। ' : '. ');
+        if (charCount + sentence.length <= maxInitialLength) {
+            initialResponse += sentence;
+            charCount += sentence.length;
+        } else {
+            break;
+        }
+    }
+    
+    // Add "Read more" prompt
+    const prompt = language === "Hindi" 
+        ? "\n\n*'More' टाइप करें पूरा जवाब पढ़ने के लिए* 📖"
+        : "\n\n*Type 'More' to read the complete response* 📖";
+    
+    initialResponse += prompt;
+    const remainingResponse = sentences.slice(initialResponse.split(/[.!?।]/).length - 1).join('. ');
+    
+    await sendViaHeltar(phone, initialResponse, type);
+    
+    // Store remaining response for "More" command
+    if (remainingResponse.trim().length > 0) {
+        await updateUserState(phone, { 
+            pending_followup: remainingResponse,
+            followup_type: type
+        });
+    }
+}
+
+/* ---------------- Enhanced Language Detection ---------------- */
 function detectLanguageFromText(text) {
     if (!text || typeof text !== "string") return "English";
     
@@ -490,35 +584,76 @@ async function determineUserLanguage(phone, text, user) {
     return { language: currentLanguage, isSwitch: false };
 }
 
-/* ========== INTENT CLASSIFICATION ========== */
+/* ---------------- Enhanced Context Building ---------------- */
+function buildEnhancedContext(user, currentMessage) {
+    const recentMessages = user.chat_history?.slice(-6) || [];
+    const summary = recentMessages.map(msg => 
+        `${msg.role}: ${msg.content.substring(0, 80)}...`
+    ).join('\n');
+    
+    return {
+        userProfile: {
+            primaryUseCase: user.primary_use_case,
+            languagePreference: user.language_preference,
+            userSegment: user.user_segment,
+            totalSessions: user.total_sessions
+        },
+        recentConversation: summary,
+        currentEmotion: detectEmotionAdvanced(currentMessage)?.emotion,
+        currentSituation: detectUserSituation(currentMessage),
+        isReturningUser: (user.total_sessions || 0) > 1
+    };
+}
+
+function buildContextSummary(messages, language) {
+    if (!messages || messages.length === 0) {
+        return language === "Hindi" ? "कोई पिछला संदर्भ नहीं" : "No previous context";
+    }
+    
+    const userMessages = messages.filter(msg => msg.role === 'user').slice(-2);
+    const botMessages = messages.filter(msg => msg.role === 'assistant').slice(-1);
+    
+    let summary = "";
+    
+    if (language === "Hindi") {
+        summary = "उपयोगकर्ता ने पहले चर्चा की: ";
+        userMessages.forEach(msg => {
+            summary += `"${msg.content.substring(0, 50)}...", `;
+        });
+        if (botMessages.length > 0) {
+            summary += `मैंने जवाब दिया: "${botMessages[0].content.substring(0, 30)}..."`;
+        }
+    } else {
+        summary = "User previously discussed: ";
+        userMessages.forEach(msg => {
+            summary += `"${msg.content.substring(0, 50)}...", `;
+        });
+        if (botMessages.length > 0) {
+            summary += `I responded: "${botMessages[0].content.substring(0, 30)}..."`;
+        }
+    }
+    
+    return summary;
+}
+
+/* ---------------- Intent Classification (Existing) ---------------- */
 function isFollowUpToPreviousDeepQuestion(currentText, user) {
     if (user.last_message_role !== 'assistant') return false;
-
     const lastBotMessage = user.last_message || '';
-    const lastUserMessage = user.chat_history?.slice(-2, -1)?.[0]?.content || '';
-
-    // If last exchange was deep, current is likely follow-up
     const wasDeepExchange = 
-        isEmotionalExpression(lastUserMessage) || 
-        isDeepQuestion(lastUserMessage) ||
-        lastBotMessage.includes('?') || // Bot asked a question
-        lastBotMessage.length > 100;    // Bot gave substantial response
-        
+        isEmotionalExpression(currentText) || 
+        isDeepQuestion(currentText) ||
+        lastBotMessage.includes('?') ||
+        lastBotMessage.length > 100;
     return wasDeepExchange;
 }
 
 function isGreetingQuery(text) {
     if (!text || typeof text !== "string") return false;
-    
     const lowerText = text.toLowerCase().trim();
     const greetingRegex = /\b(hi|hello|hey|hii|hiya|good morning|good afternoon|good evening|how are you|what's up|how's it going|kaise ho|kaise hain aap|namaste|hare krishna|hola|sup)\b/i;
-    
-    // Check for simple greetings without word boundaries
     const simpleGreetings = ['hi', 'hello', 'hey', 'hii', 'namaste', 'hola', 'sup', 'hare krishna'];
-    if (simpleGreetings.includes(lowerText)) {
-        return true;
-    }
-    
+    if (simpleGreetings.includes(lowerText)) return true;
     return greetingRegex.test(lowerText);
 }
 
@@ -531,81 +666,52 @@ function isCapabilitiesQuery(text) {
 function isEmotionalExpression(text) {
     const lowerText = text.toLowerCase();
     const emotionalPatterns = [
-        // Stress/Anxiety
         /\b(stress|stressed|stressing|anxious|anxiety|tension|overwhelmed|pressure|worried|worrying)\b/i,
         /\b(i am in stress|i feel stressed|i'm stressed|i have stress|feeling stressed|under stress)\b/i,
         /\b(परेशान|तनाव|चिंता|घबराहट|दबाव|उलझन|मन परेशान|दिल परेशान|मन भारी)\b/,
-        
-        // Sadness/Depression
         /\b(sad|sadness|depressed|depression|unhappy|miserable|hopeless|down|low|sorrow|lonely)\b/i,
         /\b(i am sad|i feel sad|i'm sad|feeling down|feeling low|feeling lonely)\b/i,
         /\b(दुखी|उदास|निराश|हताश|दुख|उदासी|अकेला|अकेलापन|तन्हाई|मन उदास|दिल टूटा)\b/,
-        
-        // Life problems
         /\b(my life|married life|relationship|husband|wife|family|job|work|career).*(problem|issue|difficult|hard|trouble|disturb|bad)\b/i,
         /\b(जीवन|शादी|रिश्ता|पति|पत्नी|परिवार|नौकरी|काम).*(समस्या|परेशानी|मुश्किल|बुरा|खराब)\b/,
-        
-        // General distress
         /\b(not good|not well|feeling bad|going through|facing problem|having issue|i am struggling)\b/i,
         /\b(i can't handle|i can't cope|it's too much|too much pressure)\b/i,
         /\b(अच्छा नहीं|ठीक नहीं|बुरा लग|मुश्किल हो|परेशानी हो|संघर्ष कर|मुश्किल में|परेशानी में)\b/,
-        
-        // Hindi-specific emotional expressions
         /\b(मन भारी|दिल टूट|टेंशन|फिक्र|चिंतित|घबराया|निराशाजनक|तंग आ गया|हार मान ली)\b/,
         /\b(मेरा मन|मेरा दिल).*(परेशान|दुखी|उदास|भारी|टूट|बेचैन)\b/,
-        
-        // Confusion/Uncertainty
         /\b(confused|lost|uncertain|don't know|what to do|which way|कंफ्यूज|उलझन|पता नहीं|क्या करूं|रास्ता नहीं)\b/i
     ];
-    
     return emotionalPatterns.some(pattern => pattern.test(lowerText));
 }
 
 function isDeepQuestion(text) {
     const lowerText = text.toLowerCase();
-    
     const deepQuestionPatterns = [
-        // Moral/ethical questions
         /\b(is.*wrong|right.*wrong|moral|ethical|lie|cheat|steal|honest)\b/i,
         /\b(गलत|सही|नैतिक|झूठ|धोखा|ईमानदार)\b/,
-        
-        // Spiritual questions  
         /\b(krishna.*say|gita.*teach|spiritual|meditation|yoga|god)\b/i,
         /\b(कृष्ण.*कह|गीता.*सिख|आध्यात्मिक|ध्यान|योग|भगवान)\b/,
-        
-        // Life guidance
         /\b(how.*start|what.*do|why.*happen|when.*know)\b/i,
         /\b(कैसे.*शुरू|क्या.*करू|क्यों.*हो|कब.*पता)\b/,
-        
-        // Problem questions
         /\b(problem|issue|challenge|difficult|struggle|confused)\b/i,
         /\b(समस्या|मुश्किल|चुनौती|परेशान|उलझन)\b/
     ];
-    
     return deepQuestionPatterns.some(pattern => pattern.test(lowerText));
 }
 
 function isSmallTalk(text) {
     const lowerText = text.toLowerCase().trim();
-    
-    // DON'T classify these as small talk:
     const seriousIndicators = [
         'lie', 'cheat', 'wrong', 'moral', 'ethical', 'steal', 'dishonest',
         'झूठ', 'धोखा', 'गलत', 'नैतिक', 'चोरी', 'बेईमान',
         'how do i', 'what should', 'why is', 'can i',
         'कैसे', 'क्या', 'क्यों', 'करूं'
     ];
-    
-    if (seriousIndicators.some(indicator => lowerText.includes(indicator))) {
-        return false; // This is a serious question!
-    }
-    
-    // Only real small talk patterns
+    if (seriousIndicators.some(indicator => lowerText.includes(indicator))) return false;
     const genuineSmallTalk = [
         'thanks', 'thank you', 'ok', 'okay', 'good', 'nice', 'cool', 'great', 'awesome', 'fine', 'good job', 'well done',
         'शुक्रिया', 'धन्यवाद', 'ठीक', 'अच्छा', 'बढ़िया', 'बहुत अच्छा'
     ].some(pattern => lowerText === pattern);
-    
     return genuineSmallTalk;
 }
 
@@ -613,43 +719,19 @@ function detectEmotionAdvanced(text) {
     const lowerText = text.toLowerCase();
     let emotion = null;
     let confidence = 0;
-
     const emotionKeywords = {
-        moral_dilemma: {
-            keywords: ['lie', 'cheat', 'wrong', 'moral', 'ethical', 'steal', 'dishonest', 'झूठ', 'धोखा', 'गलत', 'नैतिक'],
-            weight: 1.3
-        },
-        purpose: { 
-            keywords: ['purpose', 'meaning', 'why am i here', 'what is my life', 'reason to live', 'उद्देश्य', 'मकसद', 'जीवन का मतलब'], 
-            weight: 1.2 
-        },
-        stressed: { 
-            keywords: ['stress', 'stressed', 'stressing', 'anxious', 'anxiety', 'tension', 'overwhelmed', 'worried', 'worrying', 'परेशान', 'तनाव', 'चिंता'], 
-            weight: 1.0 
-        },
-        sadness: { 
-            keywords: ['sad', 'depressed', 'unhappy', 'hopeless', 'sorrow', 'lonely', 'दुखी', 'उदास', 'निराश', 'हताश', 'अकेला'], 
-            weight: 1.0 
-        },
-        anger: {
-            keywords: ['angry', 'anger', 'frustrated', 'irritated', 'क्रोध', 'गुस्सा', 'नाराज'],
-            weight: 1.0
-        }
+        moral_dilemma: { keywords: ['lie', 'cheat', 'wrong', 'moral', 'ethical', 'steal', 'dishonest', 'झूठ', 'धोखा', 'गलत', 'नैतिक'], weight: 1.3 },
+        purpose: { keywords: ['purpose', 'meaning', 'why am i here', 'what is my life', 'reason to live', 'उद्देश्य', 'मकसद', 'जीवन का मतलब'], weight: 1.2 },
+        stressed: { keywords: ['stress', 'stressed', 'stressing', 'anxious', 'anxiety', 'tension', 'overwhelmed', 'worried', 'worrying', 'परेशान', 'तनाव', 'चिंता'], weight: 1.0 },
+        sadness: { keywords: ['sad', 'depressed', 'unhappy', 'hopeless', 'sorrow', 'lonely', 'दुखी', 'उदास', 'निराश', 'हताश', 'अकेला'], weight: 1.0 },
+        anger: { keywords: ['angry', 'anger', 'frustrated', 'irritated', 'क्रोध', 'गुस्सा', 'नाराज'], weight: 1.0 }
     };
-
-    // Enhanced patterns with better context
     const iAmPatterns = [
-        // Moral patterns
         { pattern: /\b(lie|cheat|wrong|moral|ethical|dishonest|झूठ|धोखा|गलत)\b/i, emotion: 'moral_dilemma', weight: 1.5 },
         { pattern: /\b(krishna.*deception|krishna.*cheat|कृष्ण.*छल)\b/i, emotion: 'moral_dilemma', weight: 1.5 },
-        
-        // Fear patterns
         { pattern: /\b(fear|afraid|scared|डर|डर लग)\b/i, emotion: 'stressed', weight: 1.3 },
-        
-        // Sadness patterns
         { pattern: /\b(sad|depressed|unhappy|दुखी|उदास)\b/i, emotion: 'sadness', weight: 1.2 }
     ];
-
     for (const situation of iAmPatterns) {
         if (situation.pattern.test(lowerText)) {
             emotion = situation.emotion;
@@ -657,7 +739,6 @@ function detectEmotionAdvanced(text) {
             break;
         }
     }
-
     if (!emotion) {
         for (const [emotionType, data] of Object.entries(emotionKeywords)) {
             for (const keyword of data.keywords) {
@@ -671,13 +752,11 @@ function detectEmotionAdvanced(text) {
             }
         }
     }
-
     return confidence > 0.3 ? { emotion, confidence } : null;
 }
 
 function detectUserSituation(text) {
   const lowerText = text.toLowerCase();
-  
   const situations = {
     moral: /(lie|cheat|wrong|moral|ethical|steal|dishonest|झूठ|धोखा|गलत|नैतिक)/.test(lowerText),
     work: /(job|work|office|career|boss|colleague|नौकरी|काम|कार्यालय|सहकर्मी)/.test(lowerText),
@@ -686,11 +765,45 @@ function detectUserSituation(text) {
     studies: /(study|exam|student|school|college|education|पढ़ाई|परीक्षा|विद्यार्थी|शिक्षा)/.test(lowerText),
     spiritual: /(god|prayer|meditation|yoga|spiritual|भगवान|प्रार्थना|ध्यान|योग|आध्यात्मिक)/.test(lowerText)
   };
-  
   return Object.keys(situations).find(situation => situations[situation]) || 'general';
 }
 
-/* ========== ENHANCED AI RESPONSE SYSTEM ========== */
+/* ---------------- Enhanced AI Response System with Caching & Retry ---------------- */
+async function getCachedAIResponse(phone, text, language, context) {
+    const cacheKey = `${phone}:${text.substring(0, 50)}:${language}`;
+    
+    if (responseCache.has(cacheKey)) {
+        console.log("✅ Using cached response");
+        return responseCache.get(cacheKey);
+    }
+    
+    const response = await getEnhancedAIResponseWithRetry(phone, text, language, context);
+    
+    // Cache for 5 minutes
+    responseCache.set(cacheKey, response);
+    setTimeout(() => responseCache.delete(cacheKey), 300000);
+    
+    return response;
+}
+
+async function getEnhancedAIResponseWithRetry(phone, text, language, context, retries = 2) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            return await getEnhancedAIResponse(phone, text, language, context);
+        } catch (error) {
+            console.error(`❌ OpenAI attempt ${attempt + 1} failed:`, error.message);
+            
+            if (attempt === retries) {
+                console.log("🔄 All retries exhausted, using fallback");
+                return await getContextualFallback(phone, text, language, context);
+            }
+            
+            // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
+        }
+    }
+}
+
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
   try {
     // Only use fallback if OpenAI is completely unavailable
@@ -748,11 +861,10 @@ NEVER leave the response incomplete - always end with complete sentences.`;
 
     console.log("📤 Sending to OpenAI with enhanced context");
 
-    // INCREASED TOKEN LIMIT for complete responses
     const body = { 
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 1200,  // Increased from 800 to 1200
+      max_tokens: 1200,
       temperature: 0.8,
       top_p: 0.9
     };
@@ -770,21 +882,20 @@ NEVER leave the response incomplete - always end with complete sentences.`;
     if (aiResponse && aiResponse.trim().length > 10) {
       console.log("✅ Enhanced OpenAI response received");
       
-      // ENHANCED COMPLETION DETECTION
       const completeResponse = ensureCompleteStructuredResponse(aiResponse, language);
-      const finalResponse = completeResponse.slice(0, MAX_REPLY_LENGTH);
       
-      await sendViaHeltar(phone, finalResponse, "enhanced_ai_response");
+      // Use layered response system instead of direct send
+      await sendLayeredResponse(phone, completeResponse, language, "enhanced_ai_response");
       
       // Update chat history with bot response
       const user = await getUserState(phone);
       const updatedHistory = [...(user.chat_history || []), { 
         role: 'assistant', 
-        content: finalResponse 
+        content: completeResponse 
       }];
       await updateUserState(phone, { 
         chat_history: updatedHistory,
-        last_message: finalResponse,
+        last_message: completeResponse,
         last_message_role: 'assistant'
       });
       
@@ -795,80 +906,37 @@ NEVER leave the response incomplete - always end with complete sentences.`;
 
   } catch (err) {
     console.error("❌ Enhanced AI response error:", err.message);
-    
     console.log("🔄 Falling back to contextual response due to OpenAI error");
     await getContextualFallback(phone, text, language, conversationContext);
   }
 }
 
-function buildContextSummary(messages, language) {
-  if (!messages || messages.length === 0) {
-    return language === "Hindi" ? "कोई पिछला संदर्भ नहीं" : "No previous context";
-  }
-  
-  const userMessages = messages.filter(msg => msg.role === 'user').slice(-2);
-  const botMessages = messages.filter(msg => msg.role === 'assistant').slice(-1);
-  
-  let summary = "";
-  
-  if (language === "Hindi") {
-    summary = "उपयोगकर्ता ने पहले चर्चा की: ";
-    userMessages.forEach(msg => {
-      summary += `"${msg.content.substring(0, 50)}...", `;
-    });
-    if (botMessages.length > 0) {
-      summary += `मैंने जवाब दिया: "${botMessages[0].content.substring(0, 30)}..."`;
-    }
-  } else {
-    summary = "User previously discussed: ";
-    userMessages.forEach(msg => {
-      summary += `"${msg.content.substring(0, 50)}...", `;
-    });
-    if (botMessages.length > 0) {
-      summary += `I responded: "${botMessages[0].content.substring(0, 30)}..."`;
-    }
-  }
-  
-  return summary;
-}
-
 // ENHANCED RESPONSE COMPLETION DETECTION
 function ensureCompleteStructuredResponse(response, language) {
     const trimmed = response.trim();
-    
-    // Check for common truncation patterns
     const isTruncated = 
-        // Ends mid-sentence without punctuation
         (!/[.!?।]\s*$/.test(trimmed)) ||
-        // Ends with incomplete word (cut off mid-word)
         (/\s[a-zA-Zअ-ज]{1,5}$/.test(trimmed)) ||
-        // Very short response for a complex question
         (trimmed.split(/[.!?।]/).length < 6);
     
     if (isTruncated) {
         console.log("⚠️ Detected truncated response, adding completion");
-        
         const completions = language === "Hindi" 
             ? [
                 "\n\nइस स्थिति में आपके लिए कुछ संरचित कदम:\n1. आज रात शांत बैठकर अपनी भावनाओं को लिखें\n2. कल सुबह एक भरोसेमंद सलाहकार से बात करने का समय निर्धारित करें\n3. सप्ताह के अंत तक एक छोटा सा कदम उठाने का लक्ष्य रखें\n\nआप इनमें से किस कदम पर पहले कार्य करना चाहेंगे?",
-                
                 "\n\nआगे बढ़ने के लिए तीन व्यावहारिक सुझाव:\n• इस सप्ताह के लिए एक छोटा सा निर्णय लें\n• अपने भाई से पहले गैर-व्यवसायिक विषय पर बात करें\n• एक मार्गदर्शक श्लोक को दैनिक पढ़ें\n\nक्या इनमें से कोई एक सुझाव आपको सही लगता है?"
               ]
             : [
                 "\n\nHere are some structured steps for your situation:\n1. Write down your feelings tonight when you're calm\n2. Schedule time tomorrow to speak with a trusted advisor\n3. Set a goal to take one small step by week's end\n\nWhich of these steps would you like to focus on first?",
-                
                 "\n\nThree practical suggestions to move forward:\n• Make one small decision for this week only\n• Talk to your brother about non-business topics first\n• Read one guiding verse daily for reflection\n\nDoes any of these suggestions resonate with you?"
               ];
-        
         return trimmed + completions[Math.floor(Math.random() * completions.length)];
     }
     
-    // Ensure the response ends with a question for engagement
     if (!/[?？]\s*$/.test(trimmed)) {
         const questions = language === "Hindi" 
             ? ["\n\nइस पर आपकी क्या प्रतिक्रिया है?", "\n\nआप क्या सोचते हैं?", "\n\nक्या यह सही दिशा में लगता है?"]
             : ["\n\nWhat are your thoughts on this?", "\n\nHow does this land with you?", "\n\nDoes this feel like the right direction?"];
-        
         return trimmed + questions[Math.floor(Math.random() * questions.length)];
     }
     
@@ -877,17 +945,14 @@ function ensureCompleteStructuredResponse(response, language) {
 
 async function getContextualFallback(phone, text, language, context) {
   console.log("🔄 Using contextual fallback");
-  
   const emotion = detectEmotionAdvanced(text)?.emotion || 'moral_dilemma';
   const wisdom = ENHANCED_GITA_WISDOM[emotion] || ENHANCED_GITA_WISDOM.moral_dilemma;
-  
   const responses = language === "Hindi" ? wisdom.teachings.hindi : wisdom.teachings.english;
   const selected = responses[Math.floor(Math.random() * responses.length)];
-  
-  await sendViaHeltar(phone, selected, "contextual_fallback");
+  await sendLayeredResponse(phone, selected, language, "contextual_fallback");
 }
 
-/* ========== ENHANCED STARTUP MENU SYSTEM ========== */
+/* ---------------- Enhanced Startup Menu System ---------------- */
 async function handleEnhancedStartupMenu(phone, language, user) {
     const menuMessage = language === "Hindi" 
         ? `🚩 *सारथी AI में आपका स्वागत है!* 🚩
@@ -918,7 +983,7 @@ Please choose 1-4 🙏`;
     });
 }
 
-/* ========== MENU CHOICE HANDLER ========== */
+/* ---------------- Menu Choice Handler ---------------- */
 async function handleEnhancedMenuChoice(phone, choice, language, user) {
   console.log(`📝 Menu choice received: ${choice}, language: ${language}`);
   
@@ -1008,7 +1073,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
   }
 }
 
-/* ========== DAILY WISDOM SYSTEM ========== */
+/* ---------------- Daily Wisdom System ---------------- */
 async function getDailyWisdom(language) {
   try {
     const now = new Date();
@@ -1094,11 +1159,10 @@ function getFallbackDailyWisdom(language, dayOfYear) {
     commentary: "Practice working with balanced mind amidst challenges.",
     reflection_question: "How can I maintain balance in my work today?"
   };
-  
   return formatDailyWisdom(fallbackLesson, language, dayOfYear);
 }
 
-/* ========== SIMPLE HANDLERS ========== */
+/* ---------------- Simple Handlers ---------------- */
 async function handleLanguageSwitch(phone, newLanguage) {
     const confirmationMessage = newLanguage === 'English' 
         ? "Sure! I'll speak in English. Remember, I provide Gita-based guidance with practical steps. How can I help you today? 😊" 
@@ -1132,48 +1196,38 @@ async function handleSmallTalk(phone, text, language) {
 
 function parseWebhookMessage(body) {
   console.log("📨 Raw webhook body:", JSON.stringify(body).substring(0, 200));
-  
   if (!body) return null;
-  
-  // Try different webhook formats
   if (body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
     const msg = body.entry[0].changes[0].value.messages[0];
     console.log("📱 Heltar format message:", msg);
     return msg;
   }
-  
   if (body?.messages?.[0]) {
     console.log("📱 Direct messages format:", body.messages[0]);
     return body.messages[0];
   }
-  
   if (body?.from && body?.text) {
     console.log("📱 Simple format message:", body);
     return body;
   }
-  
-  // Fix: Also check for Meta webhook format
   if (body?.object === 'whatsapp_business_account') {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
     const value = changes?.value;
     const message = value?.messages?.[0];
-    
     if (message) {
       console.log("📱 Meta WhatsApp format:", message);
       return message;
     }
   }
-  
   console.log("❓ Unknown webhook format");
   return null;
 }
 
-/* ========== MAIN WEBHOOK HANDLER ========== */
+/* ---------------- Main Webhook Handler ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
-
     const body = req.body || {};
     const msg = parseWebhookMessage(body);
     
@@ -1201,6 +1255,17 @@ app.post("/webhook", async (req, res) => {
     const isLanguageSwitch = languageResult.isSwitch;
 
     console.log(`🎯 Processing: language=${language}, stage=${user.conversation_stage}, is_switch=${isLanguageSwitch}`);
+
+    // Handle "More" command for layered responses
+    if (text.toLowerCase().trim() === 'more' && user.pending_followup) {
+        console.log("📖 Sending pending follow-up response");
+        await sendViaHeltar(phone, user.pending_followup, user.followup_type || "followup");
+        await updateUserState(phone, { 
+            pending_followup: null,
+            followup_type: null
+        });
+        return;
+    }
 
     // If it's a language switch command, send confirmation and STOP processing
     if (isLanguageSwitch) {
@@ -1256,7 +1321,7 @@ app.post("/webhook", async (req, res) => {
             isFollowUp: isFollowUp
         };
 
-        await getEnhancedAIResponse(phone, text, language, conversationContext);
+        await getCachedAIResponse(phone, text, language, conversationContext);
         return;
     }
 
@@ -1288,13 +1353,12 @@ app.post("/webhook", async (req, res) => {
         isFollowUp: isFollowUp
     };
     
-    await getEnhancedAIResponse(phone, text, language, conversationContext);
+    await getCachedAIResponse(phone, text, language, conversationContext);
 
   } catch (err) {
     console.error("❌ Webhook error:", err?.message || err);
   }
 });
-
 
 /* ---------------- Health check ---------------- */
 app.get("/health", (req, res) => {
@@ -1302,7 +1366,17 @@ app.get("/health", (req, res) => {
     status: "ok", 
     bot: BOT_NAME, 
     timestamp: new Date().toISOString(),
-    features: ["Working Greeting Menu", "Enhanced AI Responses", "Practical Guidance", "Context-Aware", "No Truncation"]
+    features: [
+      "Enhanced Layered Responses", 
+      "Response Caching", 
+      "Connection Pooling", 
+      "User Segmentation",
+      "Chat History Pruning",
+      "Retry Logic",
+      "WhatsApp Optimized"
+    ],
+    cacheSize: responseCache.size,
+    databasePool: dbPool.totalCount
   });
 });
 
@@ -1310,13 +1384,14 @@ app.get("/health", (req, res) => {
 app.listen(PORT, () => {
   validateEnvVariables();
   console.log(`\n🚀 ${BOT_NAME} Enhanced Version listening on port ${PORT}`);
-  console.log("✅ Critical Fixes Applied:");
-  console.log("   👋 Greeting menu preserved for 'Hi', 'Hello', etc.");
-  console.log("   🧠 Enhanced AI with nuanced, practical responses");
-  console.log("   📚 Varied scripture references beyond 2.47");
-  console.log("   💡 Real-world actionable advice");
-  console.log("   🔄 Context-aware conversations");
-  console.log("   🚫 NO TRUNCATION - Complete responses guaranteed");
+  console.log("✅ All Improvements Applied:");
+  console.log("   📱 Layered WhatsApp responses");
+  console.log("   💾 Response caching enabled");
+  console.log("   🗃️ Enhanced database pooling");
+  console.log("   🎯 User segmentation");
+  console.log("   🔄 Retry logic with exponential backoff");
+  console.log("   ✂️ Chat history pruning");
+  console.log("   📊 Enhanced analytics");
   setupDatabase().catch(console.error);
 });
 
