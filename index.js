@@ -108,7 +108,7 @@ Do you feel staying silent is better now, or would you like to take some action?
 
                 `🛡️ **आंतरिक सुरक्षा**
 
-गीता (18.63) कहती है: "तुम चिंतन करो, फिर जैसा तुम्हारा मन चाहे वैसा करो।" यह आपको आत्मविश्वास देता है。
+गीता (18.63) कहती है: "तुम चिंतन करो, फिर जैसा तुम्हारा मन चाहे वैसा करो।" यह आपको आत्मविश्वास देता है।
 
 **तत्काल क्रिया:**
 • सबसे बुरा परिणाम लिखें - फिर उसका समाधान सोचें
@@ -535,13 +535,13 @@ async function sendLayeredResponse(phone, fullResponse, language, type = "chat")
     }
 }
 
-/* ---------------- Enhanced Language Detection ---------------- */
+/* ---------------- FIXED Language Detection ---------------- */
 function detectLanguageFromText(text) {
     if (!text || typeof text !== "string") return "English";
     
     const cleanText = text.trim().toLowerCase();
     
-    // 1. Hindi characters (Devanagari Unicode range)
+    // 1. Hindi characters (Devanagari Unicode range) - STRONG SIGNAL
     if (/[\u0900-\u097F]/.test(text)) {
         return "Hindi";
     }
@@ -554,7 +554,7 @@ function detectLanguageFromText(text) {
         return "Hindi";
     }
     
-    // 3. English greetings
+    // 3. English greetings - FIXED: Simple greetings should stay English
     const englishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya', 'good morning', 'good afternoon', 'good evening'];
     if (englishGreetings.some(greeting => cleanText === greeting || cleanText.startsWith(greeting))) {
         return "English";
@@ -571,7 +571,7 @@ function detectLanguageFromText(text) {
         return "English";
     }
     
-    // 6. Romanized Hindi indicators
+    // 6. Romanized Hindi indicators - STRONGER SIGNAL REQUIRED
     const strongHindiIndicators = [
         'kyu', 'kya', 'kaise', 'karo', 'kiya', 'mera', 'tera', 'apna', 'hai', 'ho', 'hun',
         'main', 'tum', 'aap', 'ko', 'ka', 'ki', 'ke', 'se', 'mein', 'par', 'aur', 'lekin'
@@ -581,11 +581,12 @@ function detectLanguageFromText(text) {
         new RegExp(`\\b${word}\\b`).test(cleanText)
     ).length;
     
-    if (hindiWordCount >= 2) {
+    // Require at least 3 Hindi words to switch from English
+    if (hindiWordCount >= 3) {
         return "Hindi";
     }
     
-    // 7. Default to English for safety
+    // 7. Default to English for safety - FIXED: No aggressive switching
     return "English";
 }
 
@@ -619,13 +620,8 @@ async function determineUserLanguage(phone, text, user) {
         }
     }
     
-    // For new users or when detection strongly suggests a change
-    const isNewUser = (user.total_incoming || 0) <= 2;
-    
-    if (isNewUser && detectedLanguage === 'Hindi' && currentLanguage === 'English') {
-        currentLanguage = 'Hindi';
-        await updateUserState(phone, { language_preference: 'Hindi' });
-    }
+    // FIXED: Remove aggressive language switching for new users
+    // This was causing "Hi" to switch to Hindi incorrectly
     
     return { language: currentLanguage, isSwitch: false };
 }
@@ -697,9 +693,20 @@ function isFollowUpToPreviousDeepQuestion(currentText, user) {
 function isGreetingQuery(text) {
     if (!text || typeof text !== "string") return false;
     const lowerText = text.toLowerCase().trim();
-    const greetingRegex = /\b(hi|hello|hey|hii|hiya|good morning|good afternoon|good evening|how are you|what's up|how's it going|kaise ho|kaise hain aap|namaste|hare krishna|hola|sup)\b/i;
-    const simpleGreetings = ['hi', 'hello', 'hey', 'hii', 'namaste', 'hola', 'sup', 'hare krishna'];
-    if (simpleGreetings.includes(lowerText)) return true;
+    
+    // Explicit English greetings should stay in English
+    const englishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya', 'good morning', 'good afternoon', 'good evening'];
+    if (englishGreetings.includes(lowerText)) {
+        return true;
+    }
+    
+    // Hindi greetings in Roman script
+    const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe'];
+    if (hindiGreetings.includes(lowerText)) {
+        return true;
+    }
+    
+    const greetingRegex = /\b(hi|hello|hey|how are you|what's up|kaise ho|kaise hain aap|namaste|hare krishna)\b/i;
     return greetingRegex.test(lowerText);
 }
 
@@ -1313,7 +1320,7 @@ function parseWebhookMessage(body) {
   return null;
 }
 
-/* ---------------- Main Webhook Handler ---------------- */
+/* ---------------- FIXED: Main Webhook Handler with Critical Bug Fixes ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -1340,8 +1347,17 @@ app.post("/webhook", async (req, res) => {
     // Get user state and determine language
     const user = await getUserState(phone);
     const languageResult = await determineUserLanguage(phone, text, user);
-    const language = languageResult.language;
+    let language = languageResult.language;
     const isLanguageSwitch = languageResult.isSwitch;
+
+    // 🚨 CRITICAL FIX: Force English for simple English greetings
+    const simpleEnglishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya'];
+    if (simpleEnglishGreetings.includes(text.toLowerCase().trim())) {
+        language = 'English';
+        if (user.language_preference !== 'English') {
+            await updateUserState(phone, { language_preference: 'English' });
+        }
+    }
 
     console.log(`🎯 Processing: language=${language}, stage=${user.conversation_stage}, is_switch=${isLanguageSwitch}`);
 
@@ -1353,6 +1369,23 @@ app.post("/webhook", async (req, res) => {
             pending_followup: null,
             followup_type: null
         });
+        return;
+    }
+
+    // 🚨 CRITICAL FIX: Handle stage continuity for daily_wisdom
+    if (user.conversation_stage === "daily_wisdom" && text.toLowerCase().trim() !== 'more') {
+        console.log(`🔄 Continuing daily wisdom session`);
+        
+        const conversationContext = {
+            stage: "daily_wisdom",
+            emotion: null,
+            situation: "wisdom_continuation", 
+            previousMessages: user.chat_history?.slice(-4) || [],
+            language: language,
+            isFollowUp: true
+        };
+        
+        await getCachedAIResponse(phone, text, language, conversationContext);
         return;
     }
 
@@ -1484,7 +1517,9 @@ app.get("/health", (req, res) => {
       "Retry Logic",
       "WhatsApp Optimized",
       "Menu Stagnation Fix",
-      "Auto-Advance Conversations"
+      "Auto-Advance Conversations",
+      "FIXED: Language Detection",
+      "FIXED: Stage Continuity"
     ],
     cacheSize: responseCache.size,
     databasePool: dbPool.totalCount
@@ -1501,6 +1536,8 @@ app.listen(PORT, () => {
   console.log("   ⏰ 5-minute timeout for stuck users");
   console.log("   🔄 Better returning user handling");
   console.log("   💬 Direct conversation for non-menu inputs");
+  console.log("   🚨 FIXED: Language detection for English greetings");
+  console.log("   🚨 FIXED: Stage continuity for daily_wisdom sessions");
   setupDatabase().catch(console.error);
 });
 
