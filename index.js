@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Enhanced Version with All Improvements)
+// index.js — SarathiAI (Enhanced Version with Menu Stagnation Fix)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -108,7 +108,7 @@ Do you feel staying silent is better now, or would you like to take some action?
 
                 `🛡️ **आंतरिक सुरक्षा**
 
-गीता (18.63) कहती है: "तुम चिंतन करो, फिर जैसा तुम्हारा मन चाहे वैसा करो।" यह आपको आत्मविश्वास देता है।
+गीता (18.63) कहती है: "तुम चिंतन करो, फिर जैसा तुम्हारा मन चाहे वैसा करो।" यह आपको आत्मविश्वास देता है。
 
 **तत्काल क्रिया:**
 • सबसे बुरा परिणाम लिखें - फिर उसका समाधान सोचें
@@ -348,6 +348,52 @@ async function updateUserState(phone, updates) {
     } catch (err) {
         console.error("updateUserState failed:", err);
     }
+}
+
+/* ---------------- Enhanced Conversation Stage Management ---------------- */
+async function updateConversationStage(phone, userMessage, language) {
+    const user = await getUserState(phone);
+    
+    // If user sends substantive message after menu, move to chatting
+    const isSubstantiveMessage = userMessage && 
+        userMessage.length > 3 && 
+        !isGreetingQuery(userMessage) &&
+        !isSmallTalk(userMessage) &&
+        !/^[1-4\s,]+$/.test(userMessage); // Not just menu numbers
+    
+    if (user.conversation_stage === "awaiting_menu_choice" && isSubstantiveMessage) {
+        console.log(`🔄 Auto-advancing user from menu to chatting stage`);
+        await updateUserState(phone, { 
+            conversation_stage: "chatting",
+            last_response_type: "auto_advanced_chat"
+        });
+        return true;
+    }
+    
+    return false;
+}
+
+// Add auto-advance timeout for engaged users
+async function setupMenuAutoAdvance(phone) {
+    setTimeout(async () => {
+        const user = await getUserState(phone);
+        if (user.conversation_stage === "awaiting_menu_choice" && 
+            (user.total_incoming || 0) >= 2) {
+            
+            console.log(`⏰ Auto-advancing engaged user from menu`);
+            await updateUserState(phone, { 
+                conversation_stage: "chatting",
+                last_response_type: "timeout_advanced"
+            });
+            
+            const language = user.language_preference || 'English';
+            const message = language === "Hindi" 
+                ? "मैं देख रहा हूँ आप गहरी बातचीत में रुचि रखते हैं! अब आप सीधे बात कर सकते हैं। कृपया बताएं आप किस बारे में चर्चा करना चाहेंगे? 🙏"
+                : "I see you're interested in deeper conversation! You can now chat directly. What would you like to discuss? 🙏";
+            
+            await sendViaHeltar(phone, message, "auto_advance");
+        }
+    }, 300000); // 5 minutes
 }
 
 /* ---------------- Enhanced Analytics & User Segmentation ---------------- */
@@ -959,28 +1005,35 @@ async function handleEnhancedStartupMenu(phone, language, user) {
 
 मैं आपका निजी गीता साथी हूँ। कृपया चुनें:
 
-1️⃣ *तत्काल मार्गदर्शन* - वर्तमान चुनौती के लिए श्लोक
+1️⃣ *तत्काल मार्गदर्शन* - वर्तमान चुनौती के लिए
 2️⃣ *दैनिक ज्ञान* - आज की विशेष शिक्षा  
 3️⃣ *वार्तालाप* - अपनी भावनाओं को साझा करें
 4️⃣ *गीता ज्ञान* - विशिष्ट प्रश्न पूछें
+5️⃣ *सब कुछ जानें* - संपूर्ण मार्गदर्शन
+💬 *या बस लिखें* - सीधे बातचीत शुरू करें
 
-कृपया 1-4 का चयन करें 🙏`
+कृपया 1-5 का चयन करें या सीधे लिखें 🙏`
         : `🚩 *Welcome to Sarathi AI!* 🚩
 
 I'm your personal Gita companion. Please choose:
 
-1️⃣ *Immediate Guidance* - Verse for current challenge
+1️⃣ *Immediate Guidance* - For current challenge
 2️⃣ *Daily Wisdom* - Today's special teaching  
 3️⃣ *Have a Conversation* - Share your feelings
 4️⃣ *Gita Knowledge* - Ask specific questions
+5️⃣ *Know Everything* - Complete guidance
+💬 *Or Just Type* - Start conversation directly
 
-Please choose 1-4 🙏`;
+Please choose 1-5 or just type your thoughts 🙏`;
 
     await sendViaHeltar(phone, menuMessage, "enhanced_welcome");
     await updateUserState(phone, { 
         conversation_stage: "awaiting_menu_choice",
         last_menu_shown: new Date().toISOString()
     });
+    
+    // Setup auto-advance for this user
+    await setupMenuAutoAdvance(phone);
 }
 
 /* ---------------- Menu Choice Handler ---------------- */
@@ -1033,16 +1086,52 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
         prompt: "🎓 Gita Knowledge: The Bhagavad Gita is divided into 18 chapters, each illuminating different aspects of life. What specific topic would you like to know about?",
         action: "knowledge_seeker"
       }
+    },
+    "5": {
+      hindi: {
+        prompt: "🌈 संपूर्ण मार्गदर्शन: आइए आपकी वर्तमान स्थिति, आध्यात्मिक जिज्ञासा, और दैनिक चुनौतियों पर चर्चा करें। कृपया बताएं आप कहाँ से शुरू करना चाहेंगे?",
+        action: "comprehensive_guidance"
+      },
+      english: {
+        prompt: "🌈 Complete Guidance: Let's discuss your current situation, spiritual curiosity, and daily challenges. Please tell me where you'd like to start?",
+        action: "comprehensive_guidance"
+      }
     }
   };
 
+  // Handle "all options" or multiple choices
+  if (choice.includes(',') || choice === '1234' || choice === '12345' || choice.toLowerCase().includes('all')) {
+    const comprehensiveMessage = language === "Hindi" 
+        ? "🌈 आपने सभी विकल्प चुने हैं! आइए संपूर्ण मार्गदर्शन के साथ शुरू करें। कृपया बताएं:\n\n• आपकी वर्तमान चुनौती क्या है?\n• आप किस विषय में ज्ञान चाहते हैं?\n• आप कैसा महसूस कर रहे हैं?\n\nआप कहाँ से शुरू करना चाहेंगे? 🙏"
+        : "🌈 You've chosen all options! Let's start with comprehensive guidance. Please tell me:\n\n• What is your current challenge?\n• What knowledge are you seeking?\n• How are you feeling?\n\nWhere would you like to start? 🙏";
+    
+    await sendViaHeltar(phone, comprehensiveMessage, "comprehensive_start");
+    await updateUserState(phone, { 
+        conversation_stage: "comprehensive_guidance",
+        last_menu_choice: "all_options"
+    });
+    return;
+  }
+
   const selected = choices[choice];
   if (!selected) {
-    console.error(`❌ Invalid menu choice: ${choice}`);
-    const errorMessage = language === "Hindi" 
-      ? "कृपया 1, 2, 3 या 4 में से चुनें।"
-      : "Please choose 1, 2, 3, or 4.";
-    await sendViaHeltar(phone, errorMessage, "menu_error");
+    // If not a menu choice, treat as direct conversation
+    console.log(`🔄 Treating as direct conversation instead of menu choice`);
+    await updateUserState(phone, { 
+        conversation_stage: "chatting"
+    });
+    
+    // Process the message normally
+    const conversationContext = {
+        stage: "chatting",
+        emotion: detectEmotionAdvanced(choice)?.emotion,
+        situation: detectUserSituation(choice),
+        previousMessages: user.chat_history?.slice(-4) || [],
+        language: language,
+        isFollowUp: false
+    };
+    
+    await getCachedAIResponse(phone, choice, language, conversationContext);
     return;
   }
 
@@ -1067,8 +1156,8 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
   } catch (error) {
     console.error(`❌ Menu choice error for ${choice}:`, error);
     const fallbackMessage = language === "Hindi" 
-      ? "क्षमा करें, तकनीकी समस्या आई है। कृपया पुनः प्रयास करें।"
-      : "Sorry, there was a technical issue. Please try again.";
+      ? "क्षमा करें, तकनीकी समस्या आई है। कृपया सीधे अपनी बात लिखें।"
+      : "Sorry, there was a technical issue. Please type your message directly.";
     await sendViaHeltar(phone, fallbackMessage, "menu_error");
   }
 }
@@ -1291,18 +1380,38 @@ app.post("/webhook", async (req, res) => {
     user.last_message = text;
     user.last_message_role = 'user';
 
-    // 1. GREETINGS (Highest Priority) - KEEP THE MENU!
-    if (isGreetingQuery(lower)) {
-        console.log(`✅ Intent: Greeting - Showing Menu`);
+    // 1. GREETINGS (Updated to handle returning users better)
+    if (isGreetingQuery(lower) && (user.total_incoming || 0) <= 2) {
+        console.log(`✅ Intent: New User Greeting - Showing Menu`);
         await handleEnhancedStartupMenu(phone, language, user);
         return;
     }
 
-    // 2. MENU CHOICE HANDLING
-    if (user.conversation_stage === "awaiting_menu_choice" && /^[1-4]$/.test(text.trim())) {
+    // For returning users with greetings, don't show menu again
+    if (isGreetingQuery(lower) && (user.total_incoming || 0) > 2 && user.conversation_stage === "awaiting_menu_choice") {
+        console.log(`✅ Intent: Returning User Greeting - Continue conversation`);
+        const welcomeBack = language === "Hindi" 
+            ? "नमस्ते! फिर मिलकर अच्छा लगा। आप किस बारे में चर्चा करना चाहेंगे? 🙏"
+            : "Hello! Good to see you again. What would you like to discuss today? 🙏";
+        
+        await sendViaHeltar(phone, welcomeBack, "welcome_back");
+        await updateUserState(phone, { 
+            conversation_stage: "chatting"
+        });
+        return;
+    }
+
+    // 2. MENU CHOICE HANDLING (Enhanced to handle all options)
+    if (user.conversation_stage === "awaiting_menu_choice" && /^[1-5]|1234|12345|all$/i.test(text.trim())) {
         console.log(`✅ Intent: Menu Choice`);
         await handleEnhancedMenuChoice(phone, text.trim(), language, user);
         return;
+    }
+
+    // Update conversation stage if user is engaged but stuck at menu
+    const stageUpdated = await updateConversationStage(phone, text, language);
+    if (stageUpdated) {
+        console.log(`✅ Auto-advanced user from menu to chatting`);
     }
 
     // 3. EMOTIONAL EXPRESSIONS (Empathy first)
@@ -1373,7 +1482,9 @@ app.get("/health", (req, res) => {
       "User Segmentation",
       "Chat History Pruning",
       "Retry Logic",
-      "WhatsApp Optimized"
+      "WhatsApp Optimized",
+      "Menu Stagnation Fix",
+      "Auto-Advance Conversations"
     ],
     cacheSize: responseCache.size,
     databasePool: dbPool.totalCount
@@ -1383,15 +1494,13 @@ app.get("/health", (req, res) => {
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} Enhanced Version listening on port ${PORT}`);
-  console.log("✅ All Improvements Applied:");
-  console.log("   📱 Layered WhatsApp responses");
-  console.log("   💾 Response caching enabled");
-  console.log("   🗃️ Enhanced database pooling");
-  console.log("   🎯 User segmentation");
-  console.log("   🔄 Retry logic with exponential backoff");
-  console.log("   ✂️ Chat history pruning");
-  console.log("   📊 Enhanced analytics");
+  console.log(`\n🚀 ${BOT_NAME} Enhanced Version with Menu Fix listening on port ${PORT}`);
+  console.log("✅ Critical Fixes Applied:");
+  console.log("   🎯 Auto-advance from menu for engaged users");
+  console.log("   📝 Enhanced menu with 'All Options' choice");
+  console.log("   ⏰ 5-minute timeout for stuck users");
+  console.log("   🔄 Better returning user handling");
+  console.log("   💬 Direct conversation for non-menu inputs");
   setupDatabase().catch(console.error);
 });
 
