@@ -1320,7 +1320,7 @@ function parseWebhookMessage(body) {
   return null;
 }
 
-/* ---------------- FIXED: Main Webhook Handler with Critical Bug Fixes ---------------- */
+/* ---------------- COMPLETELY FIXED: Main Webhook Handler ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -1350,13 +1350,22 @@ app.post("/webhook", async (req, res) => {
     let language = languageResult.language;
     const isLanguageSwitch = languageResult.isSwitch;
 
-    // 🚨 CRITICAL FIX: Force English for simple English greetings
-    const simpleEnglishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya'];
+    // 🚨 CRITICAL FIX 1: Force language consistency for greetings
+    const simpleEnglishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya', 'good morning', 'good afternoon', 'good evening'];
+    const romanHindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe'];
+    
     if (simpleEnglishGreetings.includes(text.toLowerCase().trim())) {
         language = 'English';
         if (user.language_preference !== 'English') {
             await updateUserState(phone, { language_preference: 'English' });
         }
+        console.log(`🔧 FORCED English for greeting: "${text}"`);
+    } else if (romanHindiGreetings.includes(text.toLowerCase().trim())) {
+        language = 'Hindi';
+        if (user.language_preference !== 'Hindi') {
+            await updateUserState(phone, { language_preference: 'Hindi' });
+        }
+        console.log(`🔧 FORCED Hindi for Roman greeting: "${text}"`);
     }
 
     console.log(`🎯 Processing: language=${language}, stage=${user.conversation_stage}, is_switch=${isLanguageSwitch}`);
@@ -1372,7 +1381,7 @@ app.post("/webhook", async (req, res) => {
         return;
     }
 
-    // 🚨 CRITICAL FIX: Handle stage continuity for daily_wisdom
+    // 🚨 CRITICAL FIX 2: Handle stage continuity for daily_wisdom
     if (user.conversation_stage === "daily_wisdom" && text.toLowerCase().trim() !== 'more') {
         console.log(`🔄 Continuing daily wisdom session`);
         
@@ -1413,24 +1422,10 @@ app.post("/webhook", async (req, res) => {
     user.last_message = text;
     user.last_message_role = 'user';
 
-    // 1. GREETINGS (Updated to handle returning users better)
-    if (isGreetingQuery(lower) && (user.total_incoming || 0) <= 2) {
-        console.log(`✅ Intent: New User Greeting - Showing Menu`);
+    // 🚨 CRITICAL FIX 3: ALWAYS show menu for greetings (removed returning user skip logic)
+    if (isGreetingQuery(lower)) {
+        console.log(`✅ Intent: User Greeting - Showing Menu`);
         await handleEnhancedStartupMenu(phone, language, user);
-        return;
-    }
-
-    // For returning users with greetings, don't show menu again
-    if (isGreetingQuery(lower) && (user.total_incoming || 0) > 2 && user.conversation_stage === "awaiting_menu_choice") {
-        console.log(`✅ Intent: Returning User Greeting - Continue conversation`);
-        const welcomeBack = language === "Hindi" 
-            ? "नमस्ते! फिर मिलकर अच्छा लगा। आप किस बारे में चर्चा करना चाहेंगे? 🙏"
-            : "Hello! Good to see you again. What would you like to discuss today? 🙏";
-        
-        await sendViaHeltar(phone, welcomeBack, "welcome_back");
-        await updateUserState(phone, { 
-            conversation_stage: "chatting"
-        });
         return;
     }
 
@@ -1518,8 +1513,9 @@ app.get("/health", (req, res) => {
       "WhatsApp Optimized",
       "Menu Stagnation Fix",
       "Auto-Advance Conversations",
-      "FIXED: Language Detection",
-      "FIXED: Stage Continuity"
+      "🚨 FIXED: Language Detection for Greetings",
+      "🚨 FIXED: Menu Always Shows for Greetings",
+      "🚨 FIXED: Stage Continuity"
     ],
     cacheSize: responseCache.size,
     databasePool: dbPool.totalCount
@@ -1529,14 +1525,15 @@ app.get("/health", (req, res) => {
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} Enhanced Version with Menu Fix listening on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} Enhanced Version with COMPLETE FIXES listening on port ${PORT}`);
   console.log("✅ Critical Fixes Applied:");
   console.log("   🎯 Auto-advance from menu for engaged users");
   console.log("   📝 Enhanced menu with 'All Options' choice");
   console.log("   ⏰ 5-minute timeout for stuck users");
   console.log("   🔄 Better returning user handling");
   console.log("   💬 Direct conversation for non-menu inputs");
-  console.log("   🚨 FIXED: Language detection for English greetings");
+  console.log("   🚨 FIXED: Language consistency for ALL greetings");
+  console.log("   🚨 FIXED: Menu always shows for greetings (no skipping)");
   console.log("   🚨 FIXED: Stage continuity for daily_wisdom sessions");
   setupDatabase().catch(console.error);
 });
