@@ -1,4 +1,4 @@
-// index.js — SarathiAI (Enhanced Version with Menu Stagnation Fix)
+// index.js — SarathiAI (COMPLETE FIXED VERSION)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -350,203 +350,18 @@ async function updateUserState(phone, updates) {
     }
 }
 
-/* ---------------- Enhanced Conversation Stage Management ---------------- */
-async function updateConversationStage(phone, userMessage, language) {
-    const user = await getUserState(phone);
-    
-    // If user sends substantive message after menu, move to chatting
-    const isSubstantiveMessage = userMessage && 
-        userMessage.length > 3 && 
-        !isGreetingQuery(userMessage) &&
-        !isSmallTalk(userMessage) &&
-        !/^[1-4\s,]+$/.test(userMessage); // Not just menu numbers
-    
-    if (user.conversation_stage === "awaiting_menu_choice" && isSubstantiveMessage) {
-        console.log(`🔄 Auto-advancing user from menu to chatting stage`);
-        await updateUserState(phone, { 
-            conversation_stage: "chatting",
-            last_response_type: "auto_advanced_chat"
-        });
-        return true;
-    }
-    
-    return false;
-}
-
-// Add auto-advance timeout for engaged users
-async function setupMenuAutoAdvance(phone) {
-    setTimeout(async () => {
-        const user = await getUserState(phone);
-        if (user.conversation_stage === "awaiting_menu_choice" && 
-            (user.total_incoming || 0) >= 2) {
-            
-            console.log(`⏰ Auto-advancing engaged user from menu`);
-            await updateUserState(phone, { 
-                conversation_stage: "chatting",
-                last_response_type: "timeout_advanced"
-            });
-            
-            const language = user.language_preference || 'English';
-            const message = language === "Hindi" 
-                ? "मैं देख रहा हूँ आप गहरी बातचीत में रुचि रखते हैं! अब आप सीधे बात कर सकते हैं। कृपया बताएं आप किस बारे में चर्चा करना चाहेंगे? 🙏"
-                : "I see you're interested in deeper conversation! You can now chat directly. What would you like to discuss? 🙏";
-            
-            await sendViaHeltar(phone, message, "auto_advance");
-        }
-    }, 300000); // 5 minutes
-}
-
-/* ---------------- Enhanced Analytics & User Segmentation ---------------- */
-async function trackIncoming(phone, text) {
-    try {
-        const user = await getUserState(phone);
-        const now = new Date();
-        let addSession = false;
-        if (user.last_activity_ts) {
-            const last = new Date(user.last_activity_ts);
-            const diffHours = (now - last) / (1000 * 60 * 60);
-            if (diffHours > 12) addSession = true;
-        } else {
-            addSession = true;
-        }
-
-        const updates = {
-            last_activity_ts: now.toISOString(),
-            last_seen_date: now.toISOString().slice(0, 10),
-            last_message: text,
-            last_message_role: "user",
-            total_incoming: (user.total_incoming || 0) + 1
-        };
-        if (!user.first_seen_date) updates.first_seen_date = now.toISOString().slice(0, 10);
-        if (addSession) updates.total_sessions = (user.total_sessions || 0) + 1;
-
-        await updateUserState(phone, updates);
-        await updateUserSegment(phone); // Update segmentation
-    } catch (err) {
-        console.error("trackIncoming failed:", err);
-    }
-}
-
-async function updateUserSegment(phone) {
-    try {
-        const user = await getUserState(phone);
-        const totalMessages = (user.total_incoming || 0) + (user.total_outgoing || 0);
-        
-        let segment = 'new';
-        if (totalMessages > 50) segment = 'power_user';
-        else if (totalMessages > 10) segment = 'active';
-        else if (user.total_sessions > 1) segment = 'returning';
-        
-        if (segment !== user.user_segment) {
-            await updateUserState(phone, { user_segment: segment });
-        }
-        
-        return segment;
-    } catch (err) {
-        console.error("updateUserSegment failed:", err);
-        return 'new';
-    }
-}
-
-async function trackOutgoing(phone, reply, type = "chat") {
-    try {
-        const user = await getUserState(phone);
-        const updates = {
-            last_activity_ts: new Date().toISOString(),
-            last_message: reply,
-            last_message_role: "assistant",
-            last_response_type: type,
-            total_outgoing: (user.total_outgoing || 0) + 1
-        };
-        await updateUserState(phone, updates);
-    } catch (err) {
-        console.error("trackOutgoing failed:", err);
-    }
-}
-
-/* ---------------- Enhanced Heltar Sending with Layered Responses ---------------- */
-async function sendViaHeltar(phone, message, type = "chat") {
-    try {
-        const safeMessage = String(message || "").trim().slice(0, 4096);
-        if (!safeMessage) return;
-        if (!HELTAR_API_KEY) {
-            console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
-            await trackOutgoing(phone, safeMessage, type);
-            return { simulated: true, message: safeMessage };
-        }
-
-        const payload = { messages: [{ clientWaNumber: phone, message: safeMessage, messageType: "text" }] };
-        const resp = await axios.post("https://api.heltar.com/v1/messages/send", payload, {
-            headers: {
-                Authorization: `Bearer ${HELTAR_API_KEY}`,
-                "Content-Type": "application/json"
-            },
-            timeout: 20000
-        });
-
-        await trackOutgoing(phone, safeMessage, type);
-        return resp.data;
-    } catch (err) {
-        console.error("Heltar send error:", err?.response?.data || err?.message || err);
-        return null;
-    }
-}
-
-async function sendLayeredResponse(phone, fullResponse, language, type = "chat") {
-    const maxInitialLength = 400; // Optimal for WhatsApp
-    const sentences = fullResponse.split(/[.!?।]/).filter(s => s.trim().length > 0);
-    
-    // If response is short enough, send directly
-    if (fullResponse.length <= maxInitialLength) {
-        await sendViaHeltar(phone, fullResponse, type);
-        return;
-    }
-    
-    // Build initial response with first 2-3 sentences
-    let initialResponse = '';
-    let charCount = 0;
-    
-    for (let i = 0; i < Math.min(sentences.length, 3); i++) {
-        const sentence = sentences[i].trim() + (language === "Hindi" ? '। ' : '. ');
-        if (charCount + sentence.length <= maxInitialLength) {
-            initialResponse += sentence;
-            charCount += sentence.length;
-        } else {
-            break;
-        }
-    }
-    
-    // Add "Read more" prompt
-    const prompt = language === "Hindi" 
-        ? "\n\n*'More' टाइप करें पूरा जवाब पढ़ने के लिए* 📖"
-        : "\n\n*Type 'More' to read the complete response* 📖";
-    
-    initialResponse += prompt;
-    const remainingResponse = sentences.slice(initialResponse.split(/[.!?।]/).length - 1).join('. ');
-    
-    await sendViaHeltar(phone, initialResponse, type);
-    
-    // Store remaining response for "More" command
-    if (remainingResponse.trim().length > 0) {
-        await updateUserState(phone, { 
-            pending_followup: remainingResponse,
-            followup_type: type
-        });
-    }
-}
-
-/* ---------------- FIXED Language Detection ---------------- */
+/* ---------------- 🚨 CRITICAL FIX: Enhanced Language Detection with Preference Persistence ---------------- */
 function detectLanguageFromText(text) {
     if (!text || typeof text !== "string") return "English";
     
     const cleanText = text.trim().toLowerCase();
     
-    // 1. Hindi characters (Devanagari Unicode range) - STRONG SIGNAL
+    // 1. STRONG SIGNAL: Hindi characters (Devanagari Unicode range)
     if (/[\u0900-\u097F]/.test(text)) {
         return "Hindi";
     }
     
-    // 2. Explicit language commands
+    // 2. EXPLICIT language commands - HIGHEST PRIORITY
     if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
         return "English";
     }
@@ -554,7 +369,7 @@ function detectLanguageFromText(text) {
         return "Hindi";
     }
     
-    // 3. English greetings - FIXED: Simple greetings should stay English
+    // 3. FIXED: Simple English greetings should NEVER switch to Hindi
     const englishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya', 'good morning', 'good afternoon', 'good evening'];
     if (englishGreetings.some(greeting => cleanText === greeting || cleanText.startsWith(greeting))) {
         return "English";
@@ -586,7 +401,7 @@ function detectLanguageFromText(text) {
         return "Hindi";
     }
     
-    // 7. Default to English for safety - FIXED: No aggressive switching
+    // 7. Default to English for safety - NO aggressive switching
     return "English";
 }
 
@@ -595,7 +410,7 @@ async function determineUserLanguage(phone, text, user) {
     const detectedLanguage = detectLanguageFromText(text);
     const cleanText = text.toLowerCase().trim();
     
-    // Check for explicit language commands first
+    // 🚨 CRITICAL FIX: Check for explicit language commands first
     const isLanguageSwitchCommand = 
         cleanText.includes('english') || 
         cleanText.includes('hindi') ||
@@ -613,40 +428,268 @@ async function determineUserLanguage(phone, text, user) {
         
         if (newLanguage !== currentLanguage) {
             await updateUserState(phone, { 
-                language_preference: newLanguage,
-                conversation_stage: 'new_topic'
+                language_preference: newLanguage
             });
             return { language: newLanguage, isSwitch: true, switchTo: newLanguage };
         }
     }
     
-    // FIXED: Remove aggressive language switching for new users
-    // This was causing "Hi" to switch to Hindi incorrectly
-    
+    // 🚨 CRITICAL FIX: Remove aggressive language switching
+    // Respect user preference unless they explicitly change it
     return { language: currentLanguage, isSwitch: false };
 }
 
-/* ---------------- Enhanced Context Building ---------------- */
-function buildEnhancedContext(user, currentMessage) {
-    const recentMessages = user.chat_history?.slice(-6) || [];
-    const summary = recentMessages.map(msg => 
-        `${msg.role}: ${msg.content.substring(0, 80)}...`
-    ).join('\n');
+/* ---------------- 🚨 CRITICAL FIX: Enhanced Conversation Stage Management with Auto-Advance ---------------- */
+async function updateConversationStage(phone, userMessage, language) {
+    const user = await getUserState(phone);
     
-    return {
-        userProfile: {
-            primaryUseCase: user.primary_use_case,
-            languagePreference: user.language_preference,
-            userSegment: user.user_segment,
-            totalSessions: user.total_sessions
-        },
-        recentConversation: summary,
-        currentEmotion: detectEmotionAdvanced(currentMessage)?.emotion,
-        currentSituation: detectUserSituation(currentMessage),
-        isReturningUser: (user.total_sessions || 0) > 1
-    };
+    // 🚨 FIX: Auto-advance from menu on substantive messages
+    const isSubstantiveMessage = userMessage && 
+        userMessage.length > 3 && 
+        !isGreetingQuery(userMessage) &&
+        !isSmallTalk(userMessage) &&
+        !/^[1-5\s,]+$/.test(userMessage); // Not just menu numbers
+    
+    if (user.conversation_stage === "awaiting_menu_choice" && isSubstantiveMessage) {
+        console.log(`🔄 Auto-advancing user from menu to chatting stage`);
+        await updateUserState(phone, { 
+            conversation_stage: "chatting",
+            last_response_type: "auto_advanced_chat"
+        });
+        return true;
+    }
+    
+    return false;
 }
 
+// 🚨 NEW: Natural Language Menu Detection
+function detectNaturalLanguageMenuIntent(text) {
+    const cleanText = text.toLowerCase().trim();
+    
+    const intentMap = {
+        // Immediate Guidance
+        '1': 'immediate_guidance',
+        'verse': 'immediate_guidance',
+        'guidance': 'immediate_guidance',
+        'help': 'immediate_guidance',
+        'problem': 'immediate_guidance',
+        'challenge': 'immediate_guidance',
+        'मदद': 'immediate_guidance',
+        'समस्या': 'immediate_guidance',
+        'चुनौती': 'immediate_guidance',
+        
+        // Daily Wisdom
+        '2': 'daily_wisdom', 
+        'daily': 'daily_wisdom',
+        'wisdom': 'daily_wisdom',
+        'teaching': 'daily_wisdom',
+        'दैनिक': 'daily_wisdom',
+        'ज्ञान': 'daily_wisdom',
+        'शिक्षा': 'daily_wisdom',
+        
+        // Conversation
+        '3': 'conversation',
+        'chat': 'conversation',
+        'talk': 'conversation',
+        'feelings': 'conversation',
+        'वार्तालाप': 'conversation',
+        'बातचीत': 'conversation',
+        'भावनाएं': 'conversation',
+        
+        // Gita Knowledge
+        '4': 'knowledge_seeker',
+        'learn': 'knowledge_seeker',
+        'gita': 'knowledge_seeker',
+        'question': 'knowledge_seeker',
+        'जानना': 'knowledge_seeker',
+        'गीता': 'knowledge_seeker',
+        'प्रश्न': 'knowledge_seeker',
+        
+        // Comprehensive
+        '5': 'comprehensive_guidance',
+        'all': 'comprehensive_guidance',
+        'everything': 'comprehensive_guidance',
+        'complete': 'comprehensive_guidance',
+        'सब': 'comprehensive_guidance',
+        'संपूर्ण': 'comprehensive_guidance'
+    };
+    
+    return intentMap[cleanText] || intentMap[cleanText.substring(0, 10)];
+}
+
+// 🚨 NEW: Simplified Menu System
+async function handleSimplifiedMenu(phone, language, user) {
+    const menuMessage = language === "Hindi" 
+        ? `🚩 *सारथी AI में आपका स्वागत है!* 🚩
+
+मैं आपका निजी गीता साथी हूँ। आप चाहें तो:
+
+📖 *विशेष मार्गदर्शन* के लिए "मार्गदर्शन" लिखें
+💬 *सीधे बातचीत* शुरू करने के लिए अपनी बात लिखें
+🎯 *या 1-5 में से चुनें*:
+
+1. तत्काल मार्गदर्शन
+2. दैनिक ज्ञान  
+3. वार्तालाप
+4. गीता ज्ञान
+5. संपूर्ण मार्गदर्शन
+
+आप कैसे आगे बढ़ना चाहेंगे? 🙏`
+        : `🚩 *Welcome to Sarathi AI!* 🚩
+
+I'm your personal Gita companion. You can:
+
+📖 Type "guidance" for specific help
+💬 Start chatting directly by typing your thoughts  
+🎯 *Or choose 1-5*:
+
+1. Immediate Guidance
+2. Daily Wisdom
+3. Conversation
+4. Gita Knowledge
+5. Complete Guidance
+
+How would you like to proceed? 🙏`;
+
+    await sendViaHeltar(phone, menuMessage, "simplified_welcome");
+    await updateUserState(phone, { 
+        conversation_stage: "awaiting_menu_choice",
+        last_menu_shown: new Date().toISOString()
+    });
+    
+    // Setup auto-advance timeout
+    setTimeout(async () => {
+        const currentUser = await getUserState(phone);
+        if (currentUser.conversation_stage === "awaiting_menu_choice") {
+            console.log(`⏰ Auto-advancing user from menu after timeout`);
+            await updateUserState(phone, { 
+                conversation_stage: "chatting",
+                last_response_type: "timeout_advanced"
+            });
+            
+            const timeoutMessage = language === "Hindi" 
+                ? "मैं देख रहा हूँ आपको मेनू से मदद की ज़रूरत है! अब आप सीधे बात कर सकते हैं। कृपया बताएं मैं आपकी कैसे मदद कर सकता हूँ? 🙏"
+                : "I see you might need help with the menu! You can now chat directly. Please tell me how I can help you? 🙏";
+            
+            await sendViaHeltar(phone, timeoutMessage, "auto_advance");
+        }
+    }, 180000); // 3 minutes instead of 5
+}
+
+/* ---------------- Enhanced Analytics & User Segmentation ---------------- */
+async function trackIncoming(phone, text) {
+    try {
+        const user = await getUserState(phone);
+        const now = new Date();
+        let addSession = false;
+        if (user.last_activity_ts) {
+            const last = new Date(user.last_activity_ts);
+            const diffHours = (now - last) / (1000 * 60 * 60);
+            if (diffHours > 12) addSession = true;
+        } else {
+            addSession = true;
+        }
+
+        const updates = {
+            last_activity_ts: now.toISOString(),
+            last_seen_date: now.toISOString().slice(0, 10),
+            last_message: text,
+            last_message_role: "user",
+            total_incoming: (user.total_incoming || 0) + 1
+        };
+        if (!user.first_seen_date) updates.first_seen_date = now.toISOString().slice(0, 10);
+        if (addSession) updates.total_sessions = (user.total_sessions || 0) + 1;
+
+        await updateUserState(phone, updates);
+    } catch (err) {
+        console.error("trackIncoming failed:", err);
+    }
+}
+
+async function trackOutgoing(phone, reply, type = "chat") {
+    try {
+        const user = await getUserState(phone);
+        const updates = {
+            last_activity_ts: new Date().toISOString(),
+            last_message: reply,
+            last_message_role: "assistant",
+            last_response_type: type,
+            total_outgoing: (user.total_outgoing || 0) + 1
+        };
+        await updateUserState(phone, updates);
+    } catch (err) {
+        console.error("trackOutgoing failed:", err);
+    }
+}
+
+/* ---------------- Enhanced Heltar Sending ---------------- */
+async function sendViaHeltar(phone, message, type = "chat") {
+    try {
+        const safeMessage = String(message || "").trim().slice(0, 4096);
+        if (!safeMessage) return;
+        if (!HELTAR_API_KEY) {
+            console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
+            await trackOutgoing(phone, safeMessage, type);
+            return { simulated: true, message: safeMessage };
+        }
+
+        const payload = { messages: [{ clientWaNumber: phone, message: safeMessage, messageType: "text" }] };
+        const resp = await axios.post("https://api.heltar.com/v1/messages/send", payload, {
+            headers: {
+                Authorization: `Bearer ${HELTAR_API_KEY}`,
+                "Content-Type": "application/json"
+            },
+            timeout: 20000
+        });
+
+        await trackOutgoing(phone, safeMessage, type);
+        return resp.data;
+    } catch (err) {
+        console.error("Heltar send error:", err?.response?.data || err?.message || err);
+        return null;
+    }
+}
+
+async function sendLayeredResponse(phone, fullResponse, language, type = "chat") {
+    const maxInitialLength = 400;
+    const sentences = fullResponse.split(/[.!?।]/).filter(s => s.trim().length > 0);
+    
+    if (fullResponse.length <= maxInitialLength) {
+        await sendViaHeltar(phone, fullResponse, type);
+        return;
+    }
+    
+    let initialResponse = '';
+    let charCount = 0;
+    
+    for (let i = 0; i < Math.min(sentences.length, 3); i++) {
+        const sentence = sentences[i].trim() + (language === "Hindi" ? '। ' : '. ');
+        if (charCount + sentence.length <= maxInitialLength) {
+            initialResponse += sentence;
+            charCount += sentence.length;
+        } else {
+            break;
+        }
+    }
+    
+    const prompt = language === "Hindi" 
+        ? "\n\n*'More' टाइप करें पूरा जवाब पढ़ने के लिए* 📖"
+        : "\n\n*Type 'More' to read the complete response* 📖";
+    
+    initialResponse += prompt;
+    const remainingResponse = sentences.slice(initialResponse.split(/[.!?।]/).length - 1).join('. ');
+    
+    await sendViaHeltar(phone, initialResponse, type);
+    
+    if (remainingResponse.trim().length > 0) {
+        await updateUserState(phone, { 
+            pending_followup: remainingResponse,
+            followup_type: type
+        });
+    }
+}
+
+/* ---------------- Enhanced Context Building ---------------- */
 function buildContextSummary(messages, language) {
     if (!messages || messages.length === 0) {
         return language === "Hindi" ? "कोई पिछला संदर्भ नहीं" : "No previous context";
@@ -678,7 +721,7 @@ function buildContextSummary(messages, language) {
     return summary;
 }
 
-/* ---------------- Intent Classification (Existing) ---------------- */
+/* ---------------- Intent Classification ---------------- */
 function isFollowUpToPreviousDeepQuestion(currentText, user) {
     if (user.last_message_role !== 'assistant') return false;
     const lastBotMessage = user.last_message || '';
@@ -694,13 +737,11 @@ function isGreetingQuery(text) {
     if (!text || typeof text !== "string") return false;
     const lowerText = text.toLowerCase().trim();
     
-    // Explicit English greetings should stay in English
     const englishGreetings = ['hi', 'hello', 'hey', 'hii', 'hiya', 'good morning', 'good afternoon', 'good evening'];
     if (englishGreetings.includes(lowerText)) {
         return true;
     }
     
-    // Hindi greetings in Roman script
     const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe'];
     if (hindiGreetings.includes(lowerText)) {
         return true;
@@ -821,7 +862,7 @@ function detectUserSituation(text) {
   return Object.keys(situations).find(situation => situations[situation]) || 'general';
 }
 
-/* ---------------- Enhanced AI Response System with Caching & Retry ---------------- */
+/* ---------------- Enhanced AI Response System ---------------- */
 async function getCachedAIResponse(phone, text, language, context) {
     const cacheKey = `${phone}:${text.substring(0, 50)}:${language}`;
     
@@ -832,7 +873,6 @@ async function getCachedAIResponse(phone, text, language, context) {
     
     const response = await getEnhancedAIResponseWithRetry(phone, text, language, context);
     
-    // Cache for 5 minutes
     responseCache.set(cacheKey, response);
     setTimeout(() => responseCache.delete(cacheKey), 300000);
     
@@ -851,7 +891,6 @@ async function getEnhancedAIResponseWithRetry(phone, text, language, context, re
                 return await getContextualFallback(phone, text, language, context);
             }
             
-            // Exponential backoff
             await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
         }
     }
@@ -859,7 +898,6 @@ async function getEnhancedAIResponseWithRetry(phone, text, language, context, re
 
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
   try {
-    // Only use fallback if OpenAI is completely unavailable
     if (!OPENAI_KEY || OPENAI_KEY === '') {
       console.log("🔄 No OpenAI key, using fallback response");
       return await getContextualFallback(phone, text, language, conversationContext);
@@ -867,7 +905,6 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
 
     console.log("🤖 Using Enhanced OpenAI for nuanced response...");
 
-    // Build context from conversation history
     const recentHistory = conversationContext.previousMessages?.slice(-3) || [];
     const contextSummary = buildContextSummary(recentHistory, language);
     
@@ -937,10 +974,8 @@ NEVER leave the response incomplete - always end with complete sentences.`;
       
       const completeResponse = ensureCompleteStructuredResponse(aiResponse, language);
       
-      // Use layered response system instead of direct send
       await sendLayeredResponse(phone, completeResponse, language, "enhanced_ai_response");
       
-      // Update chat history with bot response
       const user = await getUserState(phone);
       const updatedHistory = [...(user.chat_history || []), { 
         role: 'assistant', 
@@ -964,7 +999,6 @@ NEVER leave the response incomplete - always end with complete sentences.`;
   }
 }
 
-// ENHANCED RESPONSE COMPLETION DETECTION
 function ensureCompleteStructuredResponse(response, language) {
     const trimmed = response.trim();
     const isTruncated = 
@@ -1005,48 +1039,17 @@ async function getContextualFallback(phone, text, language, context) {
   await sendLayeredResponse(phone, selected, language, "contextual_fallback");
 }
 
-/* ---------------- Enhanced Startup Menu System ---------------- */
-async function handleEnhancedStartupMenu(phone, language, user) {
-    const menuMessage = language === "Hindi" 
-        ? `🚩 *सारथी AI में आपका स्वागत है!* 🚩
-
-मैं आपका निजी गीता साथी हूँ। कृपया चुनें:
-
-1️⃣ *तत्काल मार्गदर्शन* - वर्तमान चुनौती के लिए
-2️⃣ *दैनिक ज्ञान* - आज की विशेष शिक्षा  
-3️⃣ *वार्तालाप* - अपनी भावनाओं को साझा करें
-4️⃣ *गीता ज्ञान* - विशिष्ट प्रश्न पूछें
-5️⃣ *सब कुछ जानें* - संपूर्ण मार्गदर्शन
-💬 *या बस लिखें* - सीधे बातचीत शुरू करें
-
-कृपया 1-5 का चयन करें या सीधे लिखें 🙏`
-        : `🚩 *Welcome to Sarathi AI!* 🚩
-
-I'm your personal Gita companion. Please choose:
-
-1️⃣ *Immediate Guidance* - For current challenge
-2️⃣ *Daily Wisdom* - Today's special teaching  
-3️⃣ *Have a Conversation* - Share your feelings
-4️⃣ *Gita Knowledge* - Ask specific questions
-5️⃣ *Know Everything* - Complete guidance
-💬 *Or Just Type* - Start conversation directly
-
-Please choose 1-5 or just type your thoughts 🙏`;
-
-    await sendViaHeltar(phone, menuMessage, "enhanced_welcome");
-    await updateUserState(phone, { 
-        conversation_stage: "awaiting_menu_choice",
-        last_menu_shown: new Date().toISOString()
-    });
-    
-    // Setup auto-advance for this user
-    await setupMenuAutoAdvance(phone);
-}
-
-/* ---------------- Menu Choice Handler ---------------- */
+/* ---------------- 🚨 CRITICAL FIX: Enhanced Menu Choice Handler with Natural Language ---------------- */
 async function handleEnhancedMenuChoice(phone, choice, language, user) {
   console.log(`📝 Menu choice received: ${choice}, language: ${language}`);
   
+  // 🚨 NEW: Natural language menu detection
+  const naturalIntent = detectNaturalLanguageMenuIntent(choice);
+  if (naturalIntent) {
+    console.log(`🎯 Natural language menu intent detected: ${naturalIntent}`);
+    choice = mapNaturalIntentToNumber(naturalIntent);
+  }
+
   const choices = {
     "1": {
       hindi: {
@@ -1128,7 +1131,6 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
         conversation_stage: "chatting"
     });
     
-    // Process the message normally
     const conversationContext = {
         stage: "chatting",
         emotion: detectEmotionAdvanced(choice)?.emotion,
@@ -1167,6 +1169,17 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
       : "Sorry, there was a technical issue. Please type your message directly.";
     await sendViaHeltar(phone, fallbackMessage, "menu_error");
   }
+}
+
+function mapNaturalIntentToNumber(intent) {
+    const mapping = {
+        'immediate_guidance': '1',
+        'daily_wisdom': '2', 
+        'conversation': '3',
+        'knowledge_seeker': '4',
+        'comprehensive_guidance': '5'
+    };
+    return mapping[intent] || intent;
 }
 
 /* ---------------- Daily Wisdom System ---------------- */
@@ -1320,7 +1333,7 @@ function parseWebhookMessage(body) {
   return null;
 }
 
-/* ---------------- COMPLETELY FIXED: Main Webhook Handler ---------------- */
+/* ---------------- 🚨 COMPLETELY FIXED: Main Webhook Handler ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -1425,18 +1438,21 @@ app.post("/webhook", async (req, res) => {
     // 🚨 CRITICAL FIX 3: ALWAYS show menu for greetings (removed returning user skip logic)
     if (isGreetingQuery(lower)) {
         console.log(`✅ Intent: User Greeting - Showing Menu`);
-        await handleEnhancedStartupMenu(phone, language, user);
+        await handleSimplifiedMenu(phone, language, user);
         return;
     }
 
-    // 2. MENU CHOICE HANDLING (Enhanced to handle all options)
-    if (user.conversation_stage === "awaiting_menu_choice" && /^[1-5]|1234|12345|all$/i.test(text.trim())) {
-        console.log(`✅ Intent: Menu Choice`);
-        await handleEnhancedMenuChoice(phone, text.trim(), language, user);
-        return;
+    // 🚨 CRITICAL FIX 4: Enhanced menu choice handling with natural language
+    if (user.conversation_stage === "awaiting_menu_choice") {
+        const naturalIntent = detectNaturalLanguageMenuIntent(text);
+        if (naturalIntent || /^[1-5]|1234|12345|all$/i.test(text.trim())) {
+            console.log(`✅ Intent: Menu Choice (natural: ${naturalIntent})`);
+            await handleEnhancedMenuChoice(phone, text.trim(), language, user);
+            return;
+        }
     }
 
-    // Update conversation stage if user is engaged but stuck at menu
+    // 🚨 CRITICAL FIX 5: Auto-advance from menu on substantive messages
     const stageUpdated = await updateConversationStage(phone, text, language);
     if (stageUpdated) {
         console.log(`✅ Auto-advanced user from menu to chatting`);
@@ -1511,10 +1527,11 @@ app.get("/health", (req, res) => {
       "Chat History Pruning",
       "Retry Logic",
       "WhatsApp Optimized",
-      "Menu Stagnation Fix",
-      "Auto-Advance Conversations",
       "🚨 FIXED: Language Detection for Greetings",
-      "🚨 FIXED: Menu Always Shows for Greetings",
+      "🚨 FIXED: Simplified Menu System", 
+      "🚨 FIXED: Natural Language Menu Detection",
+      "🚨 FIXED: Auto-Advance from Menu",
+      "🚨 FIXED: 3-Minute Timeout for Stuck Users",
       "🚨 FIXED: Stage Continuity"
     ],
     cacheSize: responseCache.size,
@@ -1525,16 +1542,16 @@ app.get("/health", (req, res) => {
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} Enhanced Version with COMPLETE FIXES listening on port ${PORT}`);
-  console.log("✅ Critical Fixes Applied:");
-  console.log("   🎯 Auto-advance from menu for engaged users");
-  console.log("   📝 Enhanced menu with 'All Options' choice");
-  console.log("   ⏰ 5-minute timeout for stuck users");
-  console.log("   🔄 Better returning user handling");
-  console.log("   💬 Direct conversation for non-menu inputs");
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE FIXED VERSION listening on port ${PORT}`);
+  console.log("✅ ALL CRITICAL FIXES APPLIED:");
+  console.log("   🎯 Language Detection Fixed - No more random switching");
+  console.log("   📝 Simplified Menu with Natural Language support");  
+  console.log("   ⏰ 3-minute auto-advance for stuck users");
+  console.log("   🔄 Natural language menu detection ('guidance', 'chat', etc)");
+  console.log("   💬 Auto-advance on substantive messages");
   console.log("   🚨 FIXED: Language consistency for ALL greetings");
-  console.log("   🚨 FIXED: Menu always shows for greetings (no skipping)");
-  console.log("   🚨 FIXED: Stage continuity for daily_wisdom sessions");
+  console.log("   🚨 FIXED: Simplified menu always shows for new users");
+  console.log("   🚨 FIXED: Stage continuity for all conversation types");
   setupDatabase().catch(console.error);
 });
 
