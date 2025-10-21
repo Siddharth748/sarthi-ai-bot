@@ -1,7 +1,13 @@
-const { Client } = require('pg');
-const axios = require('axios');
-const csv = require('csv-parser');
-const fs = require('fs');
+import pkg from 'pg';
+const { Client } = pkg;
+import axios from 'axios';
+import csv from 'csv-parser';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 class SarathiTestingScheduler {
     constructor() {
@@ -72,31 +78,61 @@ class SarathiTestingScheduler {
 
     async loadTestUsers() {
         return new Promise((resolve) => {
-            fs.createReadStream('test_users.csv')
-                .pipe(csv())
-                .on('data', (row) => {
-                    if (row.phone && row.language) {
-                        this.testUsers.push({
-                            phone: row.phone,
-                            language: row.language,
-                            name: row.name || ''
-                        });
+            // Try to load from users table first
+            this.loadUsersFromDatabase()
+                .then(() => resolve())
+                .catch(async () => {
+                    // Fallback to CSV
+                    try {
+                        const results = [];
+                        fs.createReadStream('test_users.csv')
+                            .pipe(csv())
+                            .on('data', (row) => {
+                                if (row.phone && row.language) {
+                                    results.push({
+                                        phone: row.phone,
+                                        language: row.language,
+                                        name: row.name || ''
+                                    });
+                                }
+                            })
+                            .on('end', () => {
+                                this.testUsers = results;
+                                console.log(`📊 Loaded ${this.testUsers.length} test users from CSV`);
+                                resolve();
+                            })
+                            .on('error', () => {
+                                // Final fallback to hardcoded users
+                                this.testUsers = [
+                                    { phone: '+91XXXXXXXXXX', language: 'english', name: 'Test User EN' },
+                                    { phone: '+91YYYYYYYYYY', language: 'hindi', name: 'Test User HI' }
+                                ];
+                                console.log('📋 Using default test users');
+                                resolve();
+                            });
+                    } catch (error) {
+                        console.log('📋 Using default test users due to error');
+                        this.testUsers = [];
+                        resolve();
                     }
-                })
-                .on('end', () => {
-                    console.log(`📊 Loaded ${this.testUsers.length} test users`);
-                    resolve();
-                })
-                .on('error', () => {
-                    // Fallback to default test users
-                    this.testUsers = [
-                        { phone: '+91XXXXXXXXXX', language: 'english', name: 'Test User EN' },
-                        { phone: '+91YYYYYYYYYY', language: 'hindi', name: 'Test User HI' }
-                    ];
-                    console.log('📋 Using default test users');
-                    resolve();
                 });
         });
+    }
+
+    async loadUsersFromDatabase() {
+        try {
+            const query = `
+                SELECT phone, language, name 
+                FROM users 
+                WHERE active = true 
+                AND phone IS NOT NULL
+            `;
+            const result = await this.dbClient.query(query);
+            this.testUsers = result.rows;
+            console.log(`📊 Loaded ${this.testUsers.length} active users from database`);
+        } catch (error) {
+            throw new Error('Database users table not available');
+        }
     }
 
     getCurrentDayTemplate() {
@@ -232,7 +268,12 @@ class SarathiTestingScheduler {
             user.language === currentTemplate.language
         );
 
-        console.log(`📤 Sending to ${usersToMessage.length} ${currentTemplate.language} users`);
+        if (usersToMessage.length === 0) {
+            console.log('⚠️  No users found for this language, sending to all users');
+            usersToMessage.push(...this.testUsers);
+        }
+
+        console.log(`📤 Sending to ${usersToMessage.length} users`);
 
         let sentCount = 0;
         for (const user of usersToMessage) {
@@ -253,43 +294,18 @@ class SarathiTestingScheduler {
             image: currentTemplate.image
         };
     }
-
-    async getWeeklyReport() {
-        const query = `
-            SELECT 
-                template_name,
-                language,
-                SUM(send_count) as total_sent,
-                SUM(delivery_count) as total_delivered,
-                SUM(reply_count) as total_replies,
-                ROUND((SUM(reply_count)::FLOAT / NULLIF(SUM(delivery_count), 0)) * 100, 2) as overall_reply_rate,
-                AVG(avg_engagement_score) as avg_engagement
-            FROM template_performance 
-            WHERE send_date >= CURRENT_DATE - INTERVAL '7 days'
-            GROUP BY template_name, language
-            ORDER BY overall_reply_rate DESC
-        `;
-        
-        const result = await this.dbClient.query(query);
-        return result.rows;
-    }
 }
 
-// Export singleton instance
-module.exports = new SarathiTestingScheduler();
+// Create and export instance
+const scheduler = new SarathiTestingScheduler();
+export default scheduler;
 
 // Auto-start if run directly
-if (require.main === module) {
-    const scheduler = new SarathiTestingScheduler();
-    
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
     scheduler.initialize().then(async () => {
         console.log('🚀 Starting daily message scheduling...');
         const result = await scheduler.scheduleDailyMessages();
         console.log('📊 Daily Result:', result);
-        
-        const report = await scheduler.getWeeklyReport();
-        console.log('📈 Weekly Report:', report);
-        
         process.exit(0);
     }).catch(error => {
         console.error('❌ Scheduler failed:', error);
