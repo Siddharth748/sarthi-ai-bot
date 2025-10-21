@@ -1,13 +1,6 @@
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
-import csv from 'csv-parser';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 class SarathiTestingScheduler {
     constructor() {
@@ -67,56 +60,23 @@ class SarathiTestingScheduler {
             }
         ];
 
-        this.testUsers = [];
+        // Hardcoded test users - UPDATE THESE WITH REAL NUMBERS
+        this.testUsers = [
+            { phone: '+911234567890', language: 'english', name: 'Test User EN' },
+            { phone: '+911234567891', language: 'hindi', name: 'Test User HI' }
+        ];
     }
 
     async initialize() {
-        await this.dbClient.connect();
-        await this.loadTestUsers();
-        console.log('✅ Sarathi Testing Scheduler Initialized');
-    }
-
-    async loadTestUsers() {
-        return new Promise((resolve) => {
-            // Try to load from users table first
-            this.loadUsersFromDatabase()
-                .then(() => resolve())
-                .catch(async () => {
-                    // Fallback to CSV
-                    try {
-                        const results = [];
-                        fs.createReadStream('test_users.csv')
-                            .pipe(csv())
-                            .on('data', (row) => {
-                                if (row.phone && row.language) {
-                                    results.push({
-                                        phone: row.phone,
-                                        language: row.language,
-                                        name: row.name || ''
-                                    });
-                                }
-                            })
-                            .on('end', () => {
-                                this.testUsers = results;
-                                console.log(`📊 Loaded ${this.testUsers.length} test users from CSV`);
-                                resolve();
-                            })
-                            .on('error', () => {
-                                // Final fallback to hardcoded users
-                                this.testUsers = [
-                                    { phone: '+91XXXXXXXXXX', language: 'english', name: 'Test User EN' },
-                                    { phone: '+91YYYYYYYYYY', language: 'hindi', name: 'Test User HI' }
-                                ];
-                                console.log('📋 Using default test users');
-                                resolve();
-                            });
-                    } catch (error) {
-                        console.log('📋 Using default test users due to error');
-                        this.testUsers = [];
-                        resolve();
-                    }
-                });
-        });
+        try {
+            await this.dbClient.connect();
+            console.log('✅ Sarathi Testing Scheduler Initialized');
+            
+            // Try to load users from database if table exists
+            await this.loadUsersFromDatabase();
+        } catch (error) {
+            console.log('⚠️  Using default test users (database not available)');
+        }
     }
 
     async loadUsersFromDatabase() {
@@ -126,12 +86,16 @@ class SarathiTestingScheduler {
                 FROM users 
                 WHERE active = true 
                 AND phone IS NOT NULL
+                LIMIT 10
             `;
             const result = await this.dbClient.query(query);
-            this.testUsers = result.rows;
-            console.log(`📊 Loaded ${this.testUsers.length} active users from database`);
+            
+            if (result.rows.length > 0) {
+                this.testUsers = result.rows;
+                console.log(`📊 Loaded ${this.testUsers.length} users from database`);
+            }
         } catch (error) {
-            throw new Error('Database users table not available');
+            console.log('📋 Using default test users');
         }
     }
 
@@ -144,6 +108,8 @@ class SarathiTestingScheduler {
         const messageId = `msg_${Date.now()}_${user.phone.replace('+', '')}`;
         
         try {
+            console.log(`📤 Attempting to send ${template.template} to ${user.phone}`);
+            
             // Send via WhatsApp API
             const response = await axios.post(
                 `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
@@ -195,67 +161,74 @@ class SarathiTestingScheduler {
     }
 
     async logMessageSent(messageId, phone, template, apiResponse = null, status = 'sent') {
-        const query = `
-            INSERT INTO morning_messages_sent 
-            (message_id, phone, template_id, template_name, sent_time, delivery_status, language, category)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        `;
-        
-        await this.dbClient.query(query, [
-            messageId,
-            phone,
-            template.id,
-            template.template,
-            new Date(),
-            status,
-            template.language,
-            template.category
-        ]);
-
-        // Update template performance
-        await this.updateTemplatePerformance(template, status === 'sent');
-    }
-
-    async updateTemplatePerformance(template, success) {
-        const today = new Date().toISOString().split('T')[0];
-        
-        const checkQuery = `
-            SELECT performance_id FROM template_performance 
-            WHERE template_id = $1 AND send_date = $2
-        `;
-        const result = await this.dbClient.query(checkQuery, [template.id, today]);
-
-        if (result.rows.length === 0) {
-            const insertQuery = `
-                INSERT INTO template_performance 
-                (performance_id, template_id, template_name, send_date, send_count, 
-                 delivery_count, language, category)
+        try {
+            const query = `
+                INSERT INTO morning_messages_sent 
+                (message_id, phone, template_id, template_name, sent_time, delivery_status, language, category)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             `;
-            await this.dbClient.query(insertQuery, [
-                `perf_${Date.now()}`,
+            
+            await this.dbClient.query(query, [
+                messageId,
+                phone,
                 template.id,
                 template.template,
-                today,
-                success ? 1 : 0,
-                success ? 1 : 0,
+                new Date(),
+                status,
                 template.language,
                 template.category
             ]);
-        } else {
-            const updateQuery = `
-                UPDATE template_performance 
-                SET send_count = send_count + $1,
-                    delivery_count = delivery_count + $2,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE template_id = $3 AND send_date = $4
+
+            await this.updateTemplatePerformance(template, status === 'sent');
+        } catch (error) {
+            console.log('⚠️  Could not log to database:', error.message);
+        }
+    }
+
+    async updateTemplatePerformance(template, success) {
+        try {
+            const today = new Date().toISOString().split('T')[0];
+            
+            const checkQuery = `
+                SELECT performance_id FROM template_performance 
+                WHERE template_id = $1 AND send_date = $2
             `;
-            await this.dbClient.query(updateQuery, [
-                success ? 1 : 0,
-                success ? 1 : 0,
-                template.id,
-                today
-            ]);
+            const result = await this.dbClient.query(checkQuery, [template.id, today]);
+
+            if (result.rows.length === 0) {
+                const insertQuery = `
+                    INSERT INTO template_performance 
+                    (performance_id, template_id, template_name, send_date, send_count, 
+                     delivery_count, language, category)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                `;
+                await this.dbClient.query(insertQuery, [
+                    `perf_${Date.now()}`,
+                    template.id,
+                    template.template,
+                    today,
+                    success ? 1 : 0,
+                    success ? 1 : 0,
+                    template.language,
+                    template.category
+                ]);
+            } else {
+                const updateQuery = `
+                    UPDATE template_performance 
+                    SET send_count = send_count + $1,
+                        delivery_count = delivery_count + $2,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE template_id = $3 AND send_date = $4
+                `;
+                await this.dbClient.query(updateQuery, [
+                    success ? 1 : 0,
+                    success ? 1 : 0,
+                    template.id,
+                    today
+                ]);
+            }
+        } catch (error) {
+            console.log('⚠️  Could not update template performance:', error.message);
         }
     }
 
@@ -301,7 +274,8 @@ const scheduler = new SarathiTestingScheduler();
 export default scheduler;
 
 // Auto-start if run directly
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const isMainModule = process.argv[1] && process.argv[1].includes('scheduler.js');
+if (isMainModule) {
     scheduler.initialize().then(async () => {
         console.log('🚀 Starting daily message scheduling...');
         const result = await scheduler.scheduleDailyMessages();
