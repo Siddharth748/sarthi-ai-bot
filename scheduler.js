@@ -1,6 +1,7 @@
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
+import cron from 'node-cron';
 
 class SarathiTestingScheduler {
     constructor() {
@@ -59,43 +60,29 @@ class SarathiTestingScheduler {
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj.png'
             }
         ];
-
-        // Hardcoded test users - UPDATE THESE WITH REAL NUMBERS
-        this.testUsers = [
-            { phone: '+911234567890', language: 'english', name: 'Test User EN' },
-            { phone: '+911234567891', language: 'hindi', name: 'Test User HI' }
-        ];
     }
 
     async initialize() {
-        try {
-            await this.dbClient.connect();
-            console.log('✅ Sarathi Testing Scheduler Initialized');
-            
-            // Try to load users from database if table exists
-            await this.loadUsersFromDatabase();
-        } catch (error) {
-            console.log('⚠️  Using default test users (database not available)');
-        }
+        await this.dbClient.connect();
+        console.log('✅ Sarathi Testing Scheduler Initialized');
     }
 
-    async loadUsersFromDatabase() {
+    async loadAllUsersFromDatabase() {
         try {
             const query = `
-                SELECT phone, language, name 
+                SELECT phone_number, language, name 
                 FROM users 
-                WHERE active = true 
-                AND phone IS NOT NULL
-                LIMIT 10
+                WHERE phone_number IS NOT NULL 
+                AND phone_number != ''
             `;
             const result = await this.dbClient.query(query);
             
-            if (result.rows.length > 0) {
-                this.testUsers = result.rows;
-                console.log(`📊 Loaded ${this.testUsers.length} users from database`);
-            }
+            console.log(`📊 Loaded ${result.rows.length} users from database`);
+            return result.rows;
+            
         } catch (error) {
-            console.log('📋 Using default test users');
+            console.error('❌ Failed to load users from database:', error.message);
+            return [];
         }
     }
 
@@ -105,17 +92,17 @@ class SarathiTestingScheduler {
     }
 
     async sendMorningMessage(user, template) {
-        const messageId = `msg_${Date.now()}_${user.phone.replace('+', '')}`;
+        const messageId = `msg_${Date.now()}_${user.phone_number.replace('+', '')}`;
         
         try {
-            console.log(`📤 Attempting to send ${template.template} to ${user.phone}`);
+            console.log(`📤 Attempting to send ${template.template} to ${user.phone_number}`);
             
             // Send via WhatsApp API
             const response = await axios.post(
                 `https://graph.facebook.com/v18.0/${process.env.PHONE_NUMBER_ID}/messages`,
                 {
                     messaging_product: "whatsapp",
-                    to: user.phone,
+                    to: user.phone_number,
                     type: "template",
                     template: {
                         name: template.template,
@@ -141,21 +128,21 @@ class SarathiTestingScheduler {
                 },
                 {
                     headers: {
-                        Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+                        Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
                         'Content-Type': 'application/json'
                     }
                 }
             );
 
             // Log message sent
-            await this.logMessageSent(messageId, user.phone, template, response.data);
+            await this.logMessageSent(messageId, user.phone_number, template, response.data);
 
-            console.log(`✅ Sent ${template.template} to ${user.phone}`);
+            console.log(`✅ Sent ${template.template} to ${user.phone_number}`);
             return true;
 
         } catch (error) {
-            console.error(`❌ Failed to send to ${user.phone}:`, error.response?.data || error.message);
-            await this.logMessageSent(messageId, user.phone, template, null, 'failed');
+            console.error(`❌ Failed to send to ${user.phone_number}:`, error.response?.data || error.message);
+            await this.logMessageSent(messageId, user.phone_number, template, null, 'failed');
             return false;
         }
     }
@@ -233,39 +220,80 @@ class SarathiTestingScheduler {
     }
 
     async scheduleDailyMessages() {
-        const currentTemplate = this.getCurrentDayTemplate();
-        console.log(`🎯 Day ${currentTemplate.day}: Using template ${currentTemplate.template}`);
-        console.log(`🖼️  Image: ${currentTemplate.image}`);
+        try {
+            const currentTemplate = this.getCurrentDayTemplate();
+            const allUsers = await this.loadAllUsersFromDatabase();
 
-        const usersToMessage = this.testUsers.filter(user => 
-            user.language === currentTemplate.language
-        );
+            console.log(`🎯 Day ${currentTemplate.day}: Using template ${currentTemplate.template}`);
+            console.log(`🖼️  Image: ${currentTemplate.image}`);
+            console.log(`👥 Total users in database: ${allUsers.length}`);
 
-        if (usersToMessage.length === 0) {
-            console.log('⚠️  No users found for this language, sending to all users');
-            usersToMessage.push(...this.testUsers);
+            if (allUsers.length === 0) {
+                console.log('❌ No users found in database. Skipping message sending.');
+                return { 
+                    template: currentTemplate.template, 
+                    day: currentTemplate.day,
+                    language: currentTemplate.language,
+                    sent: 0, 
+                    total: 0,
+                    error: 'No users found'
+                };
+            }
+
+            console.log(`📤 Sending to ALL ${allUsers.length} users`);
+
+            let sentCount = 0;
+            let failedCount = 0;
+
+            for (const user of allUsers) {
+                const success = await this.sendMorningMessage(user, currentTemplate);
+                if (success) {
+                    sentCount++;
+                } else {
+                    failedCount++;
+                }
+                
+                // Rate limiting - 1 message per second
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            console.log(`✅ Daily scheduling complete:`);
+            console.log(`   📨 Sent: ${sentCount}`);
+            console.log(`   ❌ Failed: ${failedCount}`);
+            console.log(`   📊 Total: ${allUsers.length}`);
+
+            return { 
+                template: currentTemplate.template, 
+                day: currentTemplate.day,
+                language: currentTemplate.language,
+                sent: sentCount, 
+                failed: failedCount,
+                total: allUsers.length,
+                image: currentTemplate.image
+            };
+        } catch (error) {
+            console.error('❌ Error in scheduleDailyMessages:', error);
+            throw error;
         }
+    }
 
-        console.log(`📤 Sending to ${usersToMessage.length} users`);
+    // Start the scheduler to run daily at 7:30 AM
+    startScheduler() {
+        console.log('⏰ Scheduling daily messages at 7:30 AM...');
+        
+        // Schedule for 7:30 AM every day
+        cron.schedule('30 7 * * *', async () => {
+            console.log('🕗 7:30 AM - Starting daily message sending...');
+            try {
+                await this.scheduleDailyMessages();
+                console.log('✅ Daily messages completed successfully');
+            } catch (error) {
+                console.error('❌ Daily messages failed:', error);
+            }
+        });
 
-        let sentCount = 0;
-        for (const user of usersToMessage) {
-            const success = await this.sendMorningMessage(user, currentTemplate);
-            if (success) sentCount++;
-            
-            // Rate limiting - 1 message per second
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-
-        console.log(`✅ Daily scheduling complete: ${sentCount}/${usersToMessage.length} sent successfully`);
-        return { 
-            template: currentTemplate.template, 
-            day: currentTemplate.day,
-            language: currentTemplate.language,
-            sent: sentCount, 
-            total: usersToMessage.length,
-            image: currentTemplate.image
-        };
+        console.log('✅ Scheduler started. Messages will send daily at 7:30 AM');
+        console.log('📅 Next run: Tomorrow 7:30 AM');
     }
 }
 
@@ -273,16 +301,18 @@ class SarathiTestingScheduler {
 const scheduler = new SarathiTestingScheduler();
 export default scheduler;
 
-// Auto-start if run directly
+// Auto-start if run directly, but only initialize (don't send messages immediately)
 const isMainModule = process.argv[1] && process.argv[1].includes('scheduler.js');
 if (isMainModule) {
     scheduler.initialize().then(async () => {
-        console.log('🚀 Starting daily message scheduling...');
-        const result = await scheduler.scheduleDailyMessages();
-        console.log('📊 Daily Result:', result);
-        process.exit(0);
+        console.log('🚀 Scheduler initialized successfully');
+        console.log('⏰ Starting scheduled service (will run daily at 7:30 AM)');
+        scheduler.startScheduler();
+        
+        // Keep the process alive
+        console.log('💤 Process running in background, waiting for scheduled tasks...');
     }).catch(error => {
-        console.error('❌ Scheduler failed:', error);
+        console.error('❌ Scheduler failed to initialize:', error);
         process.exit(1);
     });
 }
