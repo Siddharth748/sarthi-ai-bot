@@ -1,4 +1,4 @@
-// index.js — SarathiAI (COMPLETELY FIXED - Perfect Language Detection)
+// index.js — SarathiAI (OPTIMIZED FOR TEMPLATE BUTTONS + ENGAGEMENT)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -36,6 +36,262 @@ const dbPool = new Pool({
 
 /* ---------------- Response Cache ---------------- */
 const responseCache = new Map();
+
+/* =============== 🚨 TEMPLATE BUTTON RESPONSE SYSTEM =============== */
+
+const OPTIMIZED_TEMPLATE_RESPONSES = {
+    // PROBLEM SOLVER TEMPLATE BUTTONS
+    'work stress': {
+        english: `"It's tough when work pressure feels overwhelming, isn't it? 😔
+
+The Gita says: Perform duty without attachment to results.
+
+This moment will pass - Krishna's guidance brings inner calm. 🕉️
+
+Is there one particular thing that's weighing on you the most, or is it just the sheer volume of it all?"`,
+        
+        hindi: `"काम का तनाव वाकई बहुत भारी लग सकता है, है ना? 😔
+
+गीता कहती है: कर्म करो, फल की चिंता मत करो।
+
+यह समय भी बीत जाएगा - कृष्ण का मार्गदर्शन शांति लाता है। 🕉️
+
+क्या कोई एक खास बात है जो सबसे ज्यादा परेशान कर रही है, या बस सब कुछ एक साथ हो रहा है?"`
+    },
+    
+    'relationship issues': {
+        english: `"Relationship struggles can leave you feeling quite isolated and misunderstood... 💔
+
+The Gita teaches: See the divine in every being.
+
+This perspective can transform how you connect with others. 🌟
+
+If you're up for sharing, what's feeling like the heaviest part of it all right now?"`,
+        
+        hindi: `"रिश्तों की परेशानियाँ आपको अकेला और गलत समझा हुआ महसूस करा सकती हैं... 💔
+
+गीता सिखाती है: हर प्राणी में दिव्यता देखो।
+
+यह दृष्टिकोण आपके जुड़ाव को बदल सकता है। 🌟
+
+अगर आप बांटना चाहें, तो अभी सबसे ज्यादा कौन सी बात भारी लग रही है?"`
+    },
+    
+    'personal confusion': {
+        english: `"That feeling of being lost and uncertain about which path to take can be really draining... 🌀
+
+Gita wisdom: The soul is eternal and cannot be destroyed by confusion.
+
+Your inner clarity will emerge from this turbulence. ✨
+
+What aspect of your situation feels the most unclear or confusing to you right now?"`,
+        
+        hindi: `"कौन सा रास्ता चुनें, इस अनिश्चितता की भावना वाकई थका देने वाली हो सकती है... 🌀
+
+गीता ज्ञान: आत्मा अमर है और भ्रम से नष्ट नहीं हो सकती।
+
+इस उथल-पुथल से आपकी आंतरिक स्पष्टता प्रकट होगी। ✨
+
+आपकी स्थिति का कौन सा पहलू अभी सबसे ज्यादा अस्पष्ट या भ्रमित करने वाला लग रहा है?"`
+    },
+    
+    'anxiety': {
+        english: `"Anxiety can make everything feel like it's spinning out of control, can't it? 😰
+
+The Gita reminds: The mind may be restless, but the soul remains steady.
+
+This anxious wave will settle, revealing your inner strength. 🌊
+
+Are there specific thoughts that keep looping in your mind, or is it more of a general unease?"`,
+        
+        hindi: `"चिंता सब कुछ नियंत्रण से बाहर होने जैसा महसूस करा सकती है, है ना? 😰
+
+गीता याद दिलाती है: मन चंचल हो सकता है, पर आत्मा स्थिर रहती है।
+
+यह चिंता की लहर थमेगी, आपकी आंतरिक शक्ति को प्रकट करते हुए। 🌊
+
+क्या कोई खास विचार हैं जो दिमाग में घूम रहे हैं, या यह सामान्य बेचैनी है?"`
+    },
+    
+    'custom help': {
+        english: `"I understand you have a specific situation that needs personalized guidance... 🤔
+
+The Gita offers wisdom for every unique challenge life presents.
+
+Your specific circumstances deserve specific solutions. 💫
+
+Could you share what particular challenge you're facing right now?"`,
+        
+        hindi: `"मैं समझता हूँ आपकी कोई खास स्थिति है जिसे व्यक्तिगत मार्गदर्शन चाहिए... 🤔
+
+गीता जीवन की हर अनोखी चुनौती के लिए ज्ञान प्रदान करती है।
+
+आपकी विशेष परिस्थितियों के लिए विशेष समाधान चाहिए। 💫
+
+क्या आप बता सकते हैं कि आप अभी किस खास चुनौती का सामना कर रहे हैं?"`
+    },
+
+    // DAILY WISDOM TEMPLATE BUTTONS
+    'practice': {
+        english: `"Finding focus can feel impossible when the mind is restless... 🌀
+
+Take 2 minutes: Breathe deeply while repeating 'Hare Krishna'
+
+Feel the peace slowly returning with each breath. 🙏
+
+How does your mind feel now compared to 2 minutes ago? Is the 'volume' any lower?"`,
+        
+        hindi: `"ध्यान केंद्रित करना असंभव लग सकता है जब मन अशांत हो... 🌀
+
+2 मिनट लें: गहरी सांस लेते हुए 'हरे कृष्ण' दोहराएं
+
+हर सांस के साथ शांति धीरे-धीरे लौटती महसूस करें। 🙏
+
+2 मिनट पहले की तुलना में अब आपका मन कैसा महसूस कर रहा है? क्या 'शोर' कम हुआ है?"`
+    },
+
+    // EMOTIONAL CHECK-IN TEMPLATE BUTTONS  
+    'hare krishna': {
+        english: `"That heavy feeling is real, and many struggle to shake it off... 💭
+
+'The soul is eternal' - this temporary emotion doesn't define you.
+
+Krishna's love is constant, even in difficult moments. ❤️
+
+I'm here to listen. What's on your mind?"`,
+        
+        hindi: `"वह भारीपन वास्तविक है, और कई लोग इसे छुटकारा पाने के लिए संघर्ष करते हैं... 💭
+
+'आत्मा अमर है' - यह अस्थायी भावना आपको परिभाषित नहीं करती।
+
+कृष्ण का प्यार स्थिर है, मुश्किल समय में भी। ❤️
+
+मैं सुनने के लिए यहाँ हूँ। आपके मन में क्या चल रहा है?"`
+    }
+};
+
+// Button text mapping for detection
+const BUTTON_MAPPING = {
+    // English buttons
+    'work stress': 'work stress',
+    'relationship issues': 'relationship issues', 
+    'personal confusion': 'personal confusion',
+    'anxiety': 'anxiety',
+    'custom help': 'custom help',
+    'practice': 'practice',
+    'hare krishna': 'hare krishna',
+    
+    // Hindi buttons
+    'काम का तनाव': 'work stress',
+    'रिश्ते की परेशानी': 'relationship issues',
+    'व्यक्तिगत उलझन': 'personal confusion', 
+    'आपके अनुसार': 'custom help',
+    'अभ्यास': 'practice'
+};
+
+/* ---------------- Template Button Detection ---------------- */
+function isTemplateButtonResponse(text) {
+    const cleanText = text.toLowerCase().trim();
+    return Object.keys(BUTTON_MAPPING).some(button => 
+        cleanText === button.toLowerCase() || cleanText.includes(button.toLowerCase())
+    );
+}
+
+function getButtonType(text) {
+    const cleanText = text.toLowerCase().trim();
+    for (const [buttonText, buttonType] of Object.entries(BUTTON_MAPPING)) {
+        if (cleanText === buttonText.toLowerCase() || cleanText.includes(buttonText.toLowerCase())) {
+            return buttonType;
+        }
+    }
+    return null;
+}
+
+/* ---------------- Template Button Analytics ---------------- */
+async function trackTemplateButtonClick(phone, buttonType, buttonText, language, templateContext = {}) {
+    try {
+        const patternId = `pattern_${Date.now()}_${phone.replace('+', '')}`;
+        
+        // Track in user_response_patterns
+        await dbPool.query(`
+            INSERT INTO user_response_patterns 
+            (pattern_id, phone, template_id, first_response_text, first_response_time_seconds, 
+             response_sentiment, asked_for_help, emotional_state_detected, button_clicked)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `, [
+            patternId,
+            phone,
+            templateContext.template_id || 'unknown',
+            buttonText,
+            0, // immediate response
+            'question', // assuming they're asking for help
+            true,
+            'seeking_guidance',
+            buttonType
+        ]);
+
+        // Track in user_engagement
+        const sessionId = `sess_${Date.now()}_${phone.replace('+', '')}`;
+        await dbPool.query(`
+            INSERT INTO user_engagement 
+            (session_id, phone, morning_message_id, first_reply_time, buttons_clicked)
+            VALUES ($1, $2, $3, $4, $5)
+        `, [
+            sessionId,
+            phone,
+            templateContext.message_id || 'unknown',
+            new Date(),
+            [buttonType]
+        ]);
+
+        console.log(`📊 Button tracked: ${buttonType} by ${phone} in ${language}`);
+    } catch (error) {
+        console.error('Button tracking error:', error.message);
+    }
+}
+
+/* ---------------- Template Button Response Handler ---------------- */
+async function handleTemplateButtonResponse(phone, text, language, user) {
+    const buttonType = getButtonType(text);
+    
+    if (!buttonType) {
+        console.log(`❓ Unknown button text: "${text}"`);
+        return false;
+    }
+
+    console.log(`🎯 Processing template button: ${buttonType} in ${language}`);
+
+    // Track the button click
+    await trackTemplateButtonClick(phone, buttonType, text, language);
+
+    // Get optimized response
+    const responseTemplate = OPTIMIZED_TEMPLATE_RESPONSES[buttonType];
+    if (!responseTemplate) {
+        console.log(`❌ No response template for: ${buttonType}`);
+        return false;
+    }
+
+    const response = responseTemplate[language] || responseTemplate.english;
+    
+    // Send the optimized response
+    await sendViaHeltar(phone, response, `template_button_${buttonType}`);
+    
+    // Update user state to continue conversation
+    await updateUserState(phone, {
+        conversation_stage: 'template_followup',
+        last_menu_choice: buttonType,
+        pending_followup: 'awaiting_user_response',
+        last_activity_ts: new Date().toISOString()
+    });
+
+    // Track in analytics
+    await trackOutgoing(phone, response, `template_${buttonType}`);
+
+    console.log(`✅ Template button handled: ${buttonType} for ${phone}`);
+    return true;
+}
+
+/* =============== EXISTING CODE (Enhanced with Template Integration) =============== */
 
 /* ---------------- Enhanced Gita Wisdom Database ---------------- */
 const ENHANCED_GITA_WISDOM = {
@@ -100,7 +356,7 @@ Do you feel staying silent is better now, or would you like to take some action?
 आपका तनाव स्वाभाविक है। गीता (2.56) कहती है: "दुःखेषु अनुद्विग्नमनाः" - दुख में जिसका मन विचलित नहीं होता।
 
 **शांत रहने के उपाय:**
-1. 4-7-8 श्वास: 4 सेकंड साँस लें, 7 रोकें, 8 से छोड़ें
+1. 4-7-8 श्वास: 4 सेकंड साँस लें, 7 रोकें, 8 छोड़ें
 2. अपनी तैयारी पर ध्यान दें: तथ्य, दस्तावेज़, समर्थन
 3. छोटे-छोटे कदम सोचें - एक बार में एक ही काम
 
@@ -141,58 +397,6 @@ Gita (18.63) says: "Reflect fully, then act as you choose." This gives you confi
 What's one small step you could start with?`
             ]
         }
-    },
-    
-    sadness: {
-        verses: ["2.14", "2.38", "12.13"],
-        teachings: {
-            hindi: [
-                `😔 **उदासी का समय**
-
-उदासी एक प्राकृतिक भावना है। गीता (2.14) कहती है: "सुख-दुःख में समान भाव रखो।"
-
-**उपाय:**
-1. प्रकृति में समय बिताएं - पार्क में टहलें
-2. कृतज्ञता की डायरी बनाएं - रोज 3 अच्छी बातें लिखें
-3. सकारात्मक लोगों के साथ समय बिताएं
-
-याद रखें: यह समय भी बीतेगा, जैसे बादल छंट जाते हैं...`,
-
-                `🌈 **आशा की किरण**
-
-गीता (12.13) कहती है: "जो अप्रिय को सहन करता है, वह मुझे प्रिय है।"
-
-**क्रिया योजना:**
-• आज एक छोटा सा अच्छा काम करें
-• अपने पसंदीदा संगीत को सुनें
-• किसी से अपनी भावनाएं साझा करें
-
-क्या आज आप एक छोटी सी खुशी ढूंढ सकते हैं?`
-            ],
-            english: [
-                `😔 **Time of Sadness**
-
-Sadness is a natural emotion. Gita (2.14) says: "Maintain equanimity in pleasure and pain."
-
-**Remedies:**
-1. Spend time in nature - walk in a park
-2. Create gratitude journal - write 3 good things daily
-3. Spend time with positive people
-
-Remember: This time shall pass too, like clouds clearing...`,
-
-                `🌈 **Ray of Hope**
-
-Gita (12.13) says: "One who bears the unpleasant is dear to me."
-
-**Action Plan:**
-• Do one small good deed today
-• Listen to your favorite music
-• Share your feelings with someone
-
-Can you find one small joy today?`
-            ]
-        }
     }
 };
 
@@ -214,7 +418,7 @@ const ENHANCED_SYSTEM_PROMPT = {
 💡 **व्यावहारिक मार्गदर्शन:**
 • सैद्धांतिक सलाह न दें - ठोस कदम सुझाएं
 • "ध्यान करें" के बजाय "5 मिनट श्वास पर ध्यान दें" कहें
-• वास्तविक जीवन की रणनीतियाँ दें
+• वास्तविक जीवन की रण्नीतियाँ दें
 
 🎯 **संदर्भ जागरूकता:**
 • पिछली बातचीत को याद रखें और उसका संदर्भ दें
@@ -1278,7 +1482,7 @@ function parseWebhookMessage(body) {
   return null;
 }
 
-/* ---------------- Main Webhook Handler ---------------- */
+/* ---------------- 🚨 MAIN WEBHOOK HANDLER (UPDATED WITH TEMPLATE BUTTONS) ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -1301,6 +1505,20 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`📩 Incoming from ${phone}: "${text}"`);
     await trackIncoming(phone, text);
+
+    // 🚨 TEMPLATE BUTTON DETECTION - HIGHEST PRIORITY
+    if (isTemplateButtonResponse(text)) {
+        console.log(`🎯 Template button detected: "${text}"`);
+        const user = await getUserState(phone);
+        const languageResult = await determineUserLanguage(phone, text, user);
+        const language = languageResult.language;
+        
+        const handled = await handleTemplateButtonResponse(phone, text, language, user);
+        if (handled) {
+            console.log(`✅ Template button successfully handled for ${phone}`);
+            return;
+        }
+    }
 
     // Get user state and determine language
     const user = await getUserState(phone);
@@ -1408,15 +1626,17 @@ app.get("/health", (req, res) => {
     bot: BOT_NAME, 
     timestamp: new Date().toISOString(),
     features: [
+      "🚨 TEMPLATE BUTTON HANDLING - All 6 templates supported",
+      "🚨 OPTIMIZED 4-LINE RESPONSES - Psychological engagement",
+      "🚨 COMPLETE ANALYTICS TRACKING - Button clicks & engagement",
       "🚨 PERFECT Language Detection",
-      "🚨 COMPLETE RESPONSES - No More 'Type More'",
-      "🚨 FIXED: Stage Management", 
-      "🚨 FIXED: Menu System",
+      "🚨 COMPLETE RESPONSES - No More 'Type More'", 
       "Enhanced Gita Wisdom Database",
       "Daily Wisdom System",
       "Response Caching",
       "Connection Pooling"
     ],
+    templateButtons: Object.keys(OPTIMIZED_TEMPLATE_RESPONSES),
     cacheSize: responseCache.size,
     databasePool: dbPool.totalCount
   });
@@ -1448,13 +1668,13 @@ setInterval(cleanupStuckStages, 30 * 60 * 1000);
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETELY FIXED VERSION listening on port ${PORT}`);
-  console.log("✅ ALL CRITICAL ISSUES SOLVED:");
-  console.log("   🚨 PERFECT Language Detection - No more wrong language detection");
-  console.log("   🚨 NO MORE 'Type More' - Complete responses only");
-  console.log("   🚨 FIXED Stage Management - No more getting stuck");
-  console.log("   🚨 FIXED Menu System - All 5 options work perfectly");
-  console.log("   🚨 Enhanced Gita Wisdom Database");
+  console.log(`\n🚀 ${BOT_NAME} TEMPLATE-OPTIMIZED VERSION listening on port ${PORT}`);
+  console.log("✅ ALL TEMPLATE BUTTONS READY:");
+  console.log("   🚨 PROBLEM SOLVER: work stress, relationship issues, personal confusion, anxiety, custom help");
+  console.log("   🚨 DAILY WISDOM: Practice / अभ्यास");
+  console.log("   🚨 EMOTIONAL CHECK-IN: Hare Krishna");
+  console.log("   🚨 OPTIMIZED 4-LINE RESPONSES with psychological engagement");
+  console.log("   🚨 COMPLETE ANALYTICS TRACKING for all button clicks");
   console.log("   🚨 Auto-cleanup for stuck users every 30 minutes");
   setupDatabase().catch(console.error);
 });
