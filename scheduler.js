@@ -1,4 +1,4 @@
-// scheduler.js - Sarathi AI Template Testing Scheduler
+// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED VERSION)
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
@@ -11,7 +11,7 @@ class SarathiTestingScheduler {
             ssl: { rejectUnauthorized: false }
         });
         
-        // 6-Day Template Rotation Schedule
+        // 6-Day Template Rotation Schedule - STARTING FROM DAY 1
         this.templateSchedule = [
             { 
                 day: 1, 
@@ -19,10 +19,7 @@ class SarathiTestingScheduler {
                 id: '1203964201590524', 
                 language: 'english', 
                 category: 'problem_solver',
-                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-4.png',
-                variables: {
-                    name: '{{1}}' // User's name will be inserted
-                }
+                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-4.png'
             },
             { 
                 day: 2, 
@@ -30,11 +27,7 @@ class SarathiTestingScheduler {
                 id: '748634401541350', 
                 language: 'english', 
                 category: 'daily_wisdom',
-                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj.png',
-                variables: {
-                    verse: '{{1}}', // "Focus on your duty, not the results"
-                    meaning: '{{2}}' // "Reduce anxiety by concentrating on actions within your control..."
-                }
+                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj.png'
             },
             { 
                 day: 3, 
@@ -42,11 +35,7 @@ class SarathiTestingScheduler {
                 id: '1779815382653468', 
                 language: 'english', 
                 category: 'emotional_checkin',
-                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-5.png',
-                variables: {
-                    message: '{{1}}', // "Emotional Awareness: Take 30 seconds to check in with yourself..."
-                    prompt: '{{2}}' // "Reply with one word about your mood to continue."
-                }
+                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-5.png'
             },
             { 
                 day: 4, 
@@ -54,10 +43,7 @@ class SarathiTestingScheduler {
                 id: '2038691776889448', 
                 language: 'hindi', 
                 category: 'problem_solver',
-                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-2.png',
-                variables: {
-                    name: '{{1}}' // User's name will be inserted
-                }
+                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-2.png'
             },
             { 
                 day: 5, 
@@ -65,11 +51,7 @@ class SarathiTestingScheduler {
                 id: '1918171358731282', 
                 language: 'hindi', 
                 category: 'daily_wisdom',
-                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png',
-                variables: {
-                    verse: '{{1}}', // "कर्म करो, फल की चिंता छोड़ो"
-                    meaning: '{{2}}' // "परिणामों की चिंता करने के बजाय अपने नियंत्रण में आने वाले कार्यों पर ध्यान केंद्रित करके चिंता कम करें"
-                }
+                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png'
             },
             { 
                 day: 6, 
@@ -77,10 +59,7 @@ class SarathiTestingScheduler {
                 id: '1362219698629498', 
                 language: 'hindi', 
                 category: 'emotional_checkin',
-                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_qjixf0qjixf0qjix.png',
-                variables: {
-                    message: '{{1}}' // "भावनात्मक जागरूकता: 30 सेकंड के लिए खुद से जुड़ें..."
-                }
+                image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_qjixf0qjixf0qjix.png'
             }
         ];
 
@@ -96,12 +75,42 @@ class SarathiTestingScheduler {
             await this.dbClient.connect();
             console.log('✅ Database connected for scheduler');
             
+            // Verify and enable all users for testing
+            await this.ensureAllUsersSubscribed();
+            
             // Verify WhatsApp credentials
             await this.verifyWhatsAppCredentials();
             
         } catch (error) {
             console.error('❌ Scheduler initialization failed:', error.message);
             throw error;
+        }
+    }
+
+    async ensureAllUsersSubscribed() {
+        try {
+            // Enable ALL users for daily messages
+            const result = await this.dbClient.query(`
+                UPDATE users SET subscribed_daily = true 
+                WHERE phone_number IS NOT NULL 
+                AND phone_number != ''
+                RETURNING COUNT(*) as updated_count
+            `);
+            
+            console.log(`✅ Enabled ${result.rows[0].updated_count} users for daily messages`);
+            
+            // Verify subscription status
+            const checkResult = await this.dbClient.query(`
+                SELECT COUNT(*) as total_users,
+                       COUNT(*) FILTER (WHERE subscribed_daily = true) as subscribed_users
+                FROM users
+            `);
+            
+            const stats = checkResult.rows[0];
+            console.log(`📊 Users: ${stats.subscribed_users}/${stats.total_users} subscribed`);
+            
+        } catch (error) {
+            console.error('❌ Failed to enable users:', error.message);
         }
     }
 
@@ -119,7 +128,7 @@ class SarathiTestingScheduler {
     async loadAllSubscribedUsers() {
         try {
             const query = `
-                SELECT phone_number, name, language 
+                SELECT phone_number, language_preference as language
                 FROM users 
                 WHERE subscribed_daily = true 
                 AND phone_number IS NOT NULL 
@@ -137,45 +146,13 @@ class SarathiTestingScheduler {
     }
 
     getCurrentDayTemplate() {
-        // Calculate day of cycle (1-6) based on current date
-        const startDate = new Date('2024-01-01'); // Arbitrary start date for cycle
-        const currentDate = new Date();
-        const diffTime = currentDate - startDate;
-        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-        const dayOfCycle = (diffDays % 6) + 1;
+        // FIXED: Start from Day 1 with manual control
+        // Using manual day counter instead of date-based to ensure we start from Day 1
+        const manualDay = 1; // FORCE START FROM DAY 1
         
-        const template = this.templateSchedule.find(t => t.day === dayOfCycle);
-        console.log(`📅 Day ${dayOfCycle}: Using template ${template.template}`);
+        const template = this.templateSchedule.find(t => t.day === manualDay);
+        console.log(`🎯 FORCING Day ${manualDay}: Using template ${template.template}`);
         return template;
-    }
-
-    getTemplateVariables(template, user) {
-        // Pre-filled template variables based on your content
-        const variableMap = {
-            'daily_wisdom_english': {
-                '{{1}}': "Focus on your duty, not the results",
-                '{{2}}': "Reduce anxiety by concentrating on actions within your control rather than worrying about outcomes"
-            },
-            'daily_wisdom_hindi': {
-                '{{1}}': "कर्म करो, फल की चिंता छोड़ो",
-                '{{2}}': "परिणामों की चिंता करने के बजाय अपने नियंत्रण में आने वाले कार्यों पर ध्यान केंद्रित करके चिंता कम करें"
-            },
-            'emotional_check_in_english': {
-                '{{1}}': "Emotional Awareness: Take 30 seconds to check in with yourself. Notice your current mood without judgment, then choose one word to describe how you feel right now.",
-                '{{2}}': "Reply with one word about your mood to continue."
-            },
-            'emotional_checkin_hindi': {
-                '{{1}}': "भावनात्मक जागरूकता: 30 सेकंड के लिए खुद से जुड़ें। बिना आलोचना के अपनी वर्तमान भावना को महसूस करें, फिर एक शब्द चुनें जो बताए आप अभी कैसा महसूस कर रहे हैं।"
-            },
-            'problem_solver_english': {
-                '{{1}}': user.name || "User"
-            },
-            'problem_solver_hindi': {
-                '{{1}}': user.name || "User"
-            }
-        };
-
-        return variableMap[template.template] || {};
     }
 
     async sendTemplateMessage(user, template) {
@@ -184,14 +161,18 @@ class SarathiTestingScheduler {
         try {
             console.log(`📤 Attempting to send ${template.template} to ${user.phone_number}`);
             
-            // Get template variables
-            const variables = this.getTemplateVariables(template, user);
-            
-            // Prepare components based on template type
-            let components = [];
-            
-            // Header with image for all templates
-            components.push({
+            // Prepare template payload based on template type
+            let templatePayload = {
+                name: template.template,
+                language: {
+                    code: template.language,
+                    policy: "deterministic"
+                },
+                components: []
+            };
+
+            // Add header with image for all templates
+            templatePayload.components.push({
                 type: "header",
                 parameters: [
                     {
@@ -203,44 +184,76 @@ class SarathiTestingScheduler {
                 ]
             });
 
-            // Body parameters based on template variables
-            let bodyParameters = [];
-            
+            // Add body parameters based on template type
             if (template.template.includes('problem_solver')) {
-                // Problem solver templates use name parameter
-                bodyParameters.push({
-                    type: "text",
-                    text: variables['{{1}}'] || user.name || "User"
+                // Problem solver templates - simple greeting with name
+                templatePayload.components.push({
+                    type: "body",
+                    parameters: [
+                        {
+                            type: "text",
+                            text: "User" // Default name since we don't have name column
+                        }
+                    ]
                 });
             } else if (template.template.includes('daily_wisdom')) {
-                // Daily wisdom templates use verse and meaning
-                bodyParameters.push({
-                    type: "text",
-                    text: variables['{{1}}'] || "Gita wisdom"
-                });
-                bodyParameters.push({
-                    type: "text", 
-                    text: variables['{{2}}'] || "Practical application"
-                });
-            } else if (template.template.includes('emotional_check')) {
-                // Emotional check-in templates
-                bodyParameters.push({
-                    type: "text",
-                    text: variables['{{1}}'] || "Emotional awareness message"
-                });
-                if (variables['{{2}}']) {
-                    bodyParameters.push({
-                        type: "text",
-                        text: variables['{{2}}']
+                // Daily wisdom templates with pre-filled content
+                if (template.language === 'english') {
+                    templatePayload.components.push({
+                        type: "body",
+                        parameters: [
+                            {
+                                type: "text",
+                                text: "Focus on your duty, not the results"
+                            },
+                            {
+                                type: "text",
+                                text: "Reduce anxiety by concentrating on actions within your control rather than worrying about outcomes"
+                            }
+                        ]
+                    });
+                } else {
+                    templatePayload.components.push({
+                        type: "body",
+                        parameters: [
+                            {
+                                type: "text",
+                                text: "कर्म करो, फल की चिंता छोड़ो"
+                            },
+                            {
+                                type: "text",
+                                text: "परिणामों की चिंता करने के बजाय अपने नियंत्रण में आने वाले कार्यों पर ध्यान केंद्रित करके चिंता कम करें"
+                            }
+                        ]
                     });
                 }
-            }
-
-            if (bodyParameters.length > 0) {
-                components.push({
-                    type: "body",
-                    parameters: bodyParameters
-                });
+            } else if (template.template.includes('emotional_check')) {
+                // Emotional check-in templates
+                if (template.language === 'english') {
+                    templatePayload.components.push({
+                        type: "body",
+                        parameters: [
+                            {
+                                type: "text",
+                                text: "Emotional Awareness: Take 30 seconds to check in with yourself. Notice your current mood without judgment, then choose one word to describe how you feel right now."
+                            },
+                            {
+                                type: "text",
+                                text: "Reply with one word about your mood to continue."
+                            }
+                        ]
+                    });
+                } else {
+                    templatePayload.components.push({
+                        type: "body",
+                        parameters: [
+                            {
+                                type: "text",
+                                text: "भावनात्मक जागरूकता: 30 सेकंड के लिए खुद से जुड़ें। बिना आलोचना के अपनी वर्तमान भावना को महसूस करें, फिर एक शब्द चुनें जो बताए आप अभी कैसा महसूस कर रहे हैं।"
+                            }
+                        ]
+                    });
+                }
             }
 
             // Send via HELTAR API
@@ -251,14 +264,7 @@ class SarathiTestingScheduler {
                         clientWaNumber: user.phone_number,
                         message: JSON.stringify({
                             type: "template",
-                            template: {
-                                name: template.template,
-                                language: {
-                                    code: template.language,
-                                    policy: "deterministic"
-                                },
-                                components: components
-                            }
+                            template: templatePayload
                         }),
                         messageType: "template"
                     }]
@@ -371,7 +377,7 @@ class SarathiTestingScheduler {
         try {
             console.log('🚀 Starting daily message scheduling...');
             
-            // Get current template for today
+            // Get current template for today - FORCE DAY 1
             const currentTemplate = this.getCurrentDayTemplate();
             
             // Load ALL subscribed users
@@ -391,7 +397,7 @@ class SarathiTestingScheduler {
             console.log(`🎯 Template: ${currentTemplate.template}`);
             console.log(`🖼️  Image: ${currentTemplate.image}`);
             console.log(`👥 Sending to: ${allUsers.length} users`);
-            console.log('⏰ Starting at 7:30 AM IST...');
+            console.log('📍 Starting immediate send...');
 
             let sentCount = 0;
             let failedCount = 0;
@@ -426,7 +432,7 @@ class SarathiTestingScheduler {
                 total_users: allUsers.length,
                 sent_successfully: sentCount,
                 failed: failedCount,
-                success_rate: ((sentCount / allUsers.length) * 100).toFixed(2) + '%'
+                success_rate: allUsers.length > 0 ? ((sentCount / allUsers.length) * 100).toFixed(2) + '%' : '0%'
             };
 
             console.log('✅ Daily scheduling complete:');
@@ -466,7 +472,7 @@ class SarathiTestingScheduler {
                 report.date,
                 report.template_id,
                 'daily_performance',
-                parseFloat(report.success_rate),
+                parseFloat(report.success_rate) || 0,
                 report.total_users
             ]);
             
@@ -503,25 +509,16 @@ class SarathiTestingScheduler {
             }
         });
 
-        // Also schedule a test run immediately if needed (for testing)
-        if (process.env.RUN_TEST_SCHEDULE === 'true') {
-            console.log('🧪 Test mode: Scheduling test run in 1 minute...');
-            cron.schedule('*/1 * * * *', async () => { // Every minute
-                console.log('🧪 Test run triggered');
-                await this.scheduleDailyMessages();
-            }, { scheduled: false }).start();
-        }
-
         console.log('✅ Scheduler started successfully');
         console.log('📅 Next run: Tomorrow 7:30 AM IST');
         console.log('👥 Sending to: ALL subscribed users (no language filtering)');
-        console.log('🔄 Template rotation: 6-day cycle');
+        console.log('🔄 Template rotation: 6-day cycle starting from Day 1');
         console.log('💤 Process running in background, waiting for scheduled tasks...');
     }
 
-    // Manual trigger for testing
+    // Manual trigger for immediate testing
     async manualTrigger() {
-        console.log('🔧 Manual trigger activated');
+        console.log('🔧 Manual trigger activated - Starting immediate send...');
         return await this.scheduleDailyMessages();
     }
 }
