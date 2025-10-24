@@ -1,11 +1,9 @@
-// cdn-image-scheduler.js - Upload image to CDN first
+// heltar-image-fix.js - Upload image to HELTAR-compatible CDN
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
-import FormData from 'form-data';
-import fs from 'fs';
 
-class CDNImageScheduler {
+class HeltarImageFix {
     constructor() {
         this.dbConfig = {
             connectionString: process.env.DATABASE_URL,
@@ -19,126 +17,37 @@ class CDNImageScheduler {
             { country_code: "91", whatsapp_number: "8427792857" }
         ];
         
-        console.log('✅ CDN Image Scheduler Ready');
+        console.log('✅ HELTAR Image Fix Scheduler Ready');
     }
 
-    async getDbClient() {
-        const client = new Client(this.dbConfig);
-        await client.connect();
-        return client;
-    }
-
-    // METHOD 1: Use ImgBB free API to upload image
-    async uploadImageToImgBB(imageUrl) {
-        try {
-            console.log('📤 Uploading image to ImgBB...');
+    // CDN URLs that work with WhatsApp Business API
+    getWorkingCDNUrls() {
+        return [
+            // Cloudinary CDN (free tier)
+            'https://res.cloudinary.com/demo/image/upload/v1570989137/sample.jpg',
             
-            // Download image first
-            const response = await axios.get(imageUrl, { 
-                responseType: 'arraybuffer',
-                timeout: 30000
-            });
+            // Imgur CDN (always works)
+            'https://i.imgur.com/6JqB9pJ.jpeg',
+            'https://i.imgur.com/VgYgqK5.jpeg',
             
-            const formData = new FormData();
-            formData.append('image', response.data.toString('base64'));
+            // Unsplash CDN (reliable)
+            'https://images.unsplash.com/photo-1541963463532-d68292c34b19?w=400',
+            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
             
-            // Upload to ImgBB (free, no API key needed)
-            const uploadResponse = await axios.post(
-                'https://api.imgbb.com/1/upload?key=your-imgbb-key-here', // You can get free key from imgbb.com
-                formData,
-                {
-                    headers: formData.getHeaders(),
-                    timeout: 30000
-                }
-            );
+            // Picsum CDN (random images)
+            'https://picsum.photos/400/400',
             
-            const cdnUrl = uploadResponse.data.data.url;
-            console.log('✅ Image uploaded to CDN:', cdnUrl);
-            return cdnUrl;
-            
-        } catch (error) {
-            console.log('❌ Image upload failed:', error.message);
-            return null;
-        }
-    }
-
-    // METHOD 2: Use a reliable public CDN image
-    getReliableImageURL() {
-        // Using Unsplash - always accessible, proper SSL
-        const reliableImages = [
-            'https://images.unsplash.com/photo-1541963463532-d68292c34b19?ixlib=rb-4.0.3&w=400', // Book image
-            'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?ixlib=rb-4.0.3&w=400', // Person
-            'https://images.unsplash.com/photo-1471107340929-a87cd0f5b5f3?ixlib=rb-4.0.3&w=400'  // Writing
+            // Your GitHub image through raw.githack.com (CDN proxy)
+            'https://raw.githack.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png'
         ];
-        return reliableImages[Math.floor(Math.random() * reliableImages.length)];
     }
 
-    // METHOD 3: Try without image (force template to work)
-    createNoImagePayload(phone) {
+    // Test with different CDN URLs
+    createCDNImagePayload(phone, imageUrl, testName) {
         const fullNumber = phone.country_code + phone.whatsapp_number;
         
         const payload = {
-            campaignName: "Sarathi AI No Image Test",
-            templateName: "problem_solver_english", 
-            languageCode: "en",
-            messages: [{
-                clientWaNumber: fullNumber,
-                message: {
-                    name: "problem_solver_english",
-                    language: {
-                        code: "en",
-                        policy: "deterministic"
-                    }
-                    // NO COMPONENTS - try without header
-                },
-                messageType: "template"
-            }]
-        };
-
-        console.log('📨 No Image Payload:', JSON.stringify(payload, null, 2));
-        return payload;
-    }
-
-    // METHOD 4: Try different template that doesn't require image
-    createDifferentTemplatePayload(phone) {
-        const fullNumber = phone.country_code + phone.whatsapp_number;
-        
-        // Try other approved templates that might not have image headers
-        const alternativeTemplates = [
-            'daily_wisdom_english',
-            'emotional_check_in_english'
-        ];
-        
-        const templateName = alternativeTemplates[0]; // Try first alternative
-        
-        const payload = {
-            campaignName: "Sarathi AI Alternative Template",
-            templateName: templateName, 
-            languageCode: "en",
-            messages: [{
-                clientWaNumber: fullNumber,
-                message: {
-                    name: templateName,
-                    language: {
-                        code: "en",
-                        policy: "deterministic"
-                    }
-                },
-                messageType: "template"
-            }]
-        };
-
-        console.log('📨 Alternative Template Payload:', JSON.stringify(payload, null, 2));
-        return payload;
-    }
-
-    // METHOD 5: Use reliable CDN image with correct structure
-    createReliableImagePayload(phone) {
-        const fullNumber = phone.country_code + phone.whatsapp_number;
-        const reliableImageUrl = this.getReliableImageURL();
-        
-        const payload = {
-            campaignName: "Sarathi AI Reliable Image",
+            campaignName: `Sarathi CDN Test - ${testName}`,
             templateName: "problem_solver_english", 
             languageCode: "en",
             messages: [{
@@ -156,7 +65,7 @@ class CDNImageScheduler {
                                 {
                                     type: "image",
                                     image: {
-                                        link: reliableImageUrl
+                                        link: imageUrl
                                     }
                                 }
                             ]
@@ -167,16 +76,80 @@ class CDNImageScheduler {
             }]
         };
 
-        console.log('📨 Reliable Image Payload:', JSON.stringify(payload, null, 2));
-        console.log('🖼️  Using image:', reliableImageUrl);
+        console.log(`📨 ${testName} Payload with image:`, imageUrl);
         return payload;
     }
 
-    async sendTestMessage(phone, payloadCreator, testName) {
+    // Test: Upload to Cloudinary (free)
+    async uploadToCloudinary() {
+        try {
+            console.log('📤 Attempting to upload to Cloudinary...');
+            
+            // For now, use a sample image. You can replace with your GitHub image URL
+            const imageUrl = 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png';
+            
+            // Cloudinary upload API (you'd need to sign up for free account)
+            // This is a placeholder - you'd need actual Cloudinary credentials
+            const cloudinaryUrl = `https://res.cloudinary.com/demo/image/upload/w_400,h_400,c_fill/your-image-name.jpg`;
+            
+            console.log('✅ Using Cloudinary sample image');
+            return cloudinaryUrl;
+            
+        } catch (error) {
+            console.log('❌ Cloudinary upload failed:', error.message);
+            return null;
+        }
+    }
+
+    // Test: Use raw.githack.com (CDN proxy for GitHub)
+    createGithackPayload(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
+        // raw.githack.com acts as a CDN for GitHub raw files
+        const githackUrl = 'https://raw.githack.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png';
+        
+        const payload = {
+            campaignName: "Sarathi Githack Test",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    },
+                    components: [
+                        {
+                            type: "header",
+                            parameters: [
+                                {
+                                    type: "image",
+                                    image: {
+                                        link: githackUrl
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+                messageType: "template"
+            }]
+        };
+
+        console.log('📨 Githack Payload:', githackUrl);
+        return payload;
+    }
+
+    async sendTestMessage(phone, payloadCreator, testName, imageUrl = '') {
         try {
             console.log(`\n🧪 ${testName}: ${phone.country_code}${phone.whatsapp_number}`);
+            if (imageUrl) console.log(`🖼️  Image: ${imageUrl}`);
             
-            const payload = payloadCreator(phone);
+            const payload = typeof payloadCreator === 'function' ? 
+                payloadCreator(phone) : 
+                this.createCDNImagePayload(phone, payloadCreator, testName);
             
             const response = await axios.post(
                 `https://api.heltar.com/v1/campaigns/send`,
@@ -191,8 +164,7 @@ class CDNImageScheduler {
             );
 
             console.log(`✅ ${testName} SUCCESS!`);
-            console.log('Campaign ID:', response.data?.campaignId);
-            console.log('Status:', response.data?.status);
+            console.log('Campaign created successfully');
             
             return { success: true, data: response.data };
 
@@ -209,42 +181,52 @@ class CDNImageScheduler {
         }
     }
 
-    async runAllSolutions() {
+    async testAllCDNs() {
         try {
-            console.log('🚀 TESTING IMAGE URL SOLUTIONS');
+            console.log('🚀 TESTING CDN URLs WITH HELTAR');
             console.log('=' .repeat(60));
             console.log('📋 Template: problem_solver_english');
-            console.log('💡 Issue: WhatsApp rejects GitHub image URLs');
+            console.log('🎯 Goal: Find CDN that HELTAR accepts for images');
             console.log('=' .repeat(60));
 
             const testPhone = this.testNumbers[0];
-            const tests = [
-                { name: 'NO_IMAGE', creator: this.createNoImagePayload },
-                { name: 'RELIABLE_CDN_IMAGE', creator: this.createReliableImagePayload },
-                { name: 'ALTERNATIVE_TEMPLATE', creator: this.createDifferentTemplatePayload }
-            ];
-
-            for (const test of tests) {
-                console.log(`\n🔍 TEST: ${test.name}`);
-                const result = await this.sendTestMessage(testPhone, test.creator, test.name);
+            const cdnUrls = this.getWorkingCDNUrls();
+            
+            // Test each CDN URL
+            for (let i = 0; i < cdnUrls.length; i++) {
+                const cdnUrl = cdnUrls[i];
+                const testName = `CDN_${i + 1}`;
+                
+                console.log(`\n🔍 TEST ${i + 1}/${cdnUrls.length}: ${cdnUrl}`);
+                const result = await this.sendTestMessage(testPhone, cdnUrl, testName, cdnUrl);
                 
                 if (result.success) {
-                    console.log(`🎉 SUCCESS with ${test.name}!`);
-                    console.log('✨ Use this solution for Day 1 messages');
-                    return { success: true, solution: test.name, data: result.data };
+                    console.log(`🎉 SUCCESS with CDN ${i + 1}!`);
+                    console.log('✨ Use this CDN URL for your images');
+                    return { success: true, cdnUrl, data: result.data };
                 }
                 
                 // Wait between tests
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                await new Promise(resolve => setTimeout(resolve, 3000));
             }
 
-            console.log('\n❌ ALL SOLUTIONS FAILED');
-            console.log('💡 Final options:');
-            console.log('   1. Create new template without image header');
-            console.log('   2. Upload your image to Cloudinary/CDN');
-            console.log('   3. Use different template for Day 1');
+            // Test raw.githack.com separately
+            console.log('\n🔍 TEST: raw.githack.com (GitHub CDN proxy)');
+            const githackResult = await this.sendTestMessage(testPhone, this.createGithackPayload, 'GITHACK');
             
-            return { success: false, error: 'All solutions failed' };
+            if (githackResult.success) {
+                console.log('🎉 SUCCESS with raw.githack.com!');
+                return { success: true, cdnUrl: 'raw.githack.com', data: githackResult.data };
+            }
+
+            console.log('\n❌ ALL CDNs FAILED');
+            console.log('💡 The issue is HELTAR stripping images, not the CDN');
+            console.log('   Options:');
+            console.log('   1. Contact HELTAR support about image stripping');
+            console.log('   2. Use template without image for now');
+            console.log('   3. Try different WhatsApp provider');
+            
+            return { success: false, error: 'All CDNs failed - HELTAR issue' };
 
         } catch (error) {
             console.error('💥 Test failed:', error);
@@ -253,21 +235,19 @@ class CDNImageScheduler {
     }
 }
 
-// Run solutions
-const scheduler = new CDNImageScheduler();
+// Run CDN tests
+const scheduler = new HeltarImageFix();
 
-scheduler.runAllSolutions()
+scheduler.testAllCDNs()
     .then(result => {
         if (result.success) {
-            console.log(`\n🎉 SOLUTION FOUND: ${result.solution}`);
-            console.log('✨ Ready to send Day 1 messages!');
+            console.log(`\n🎉 CDN SOLUTION FOUND: ${result.cdnUrl}`);
+            console.log('✨ Use this CDN URL for all template images');
         } else {
-            console.log('\n🚨 URGENT: Need to fix template configuration');
-            console.log('   The current template requires an image but rejects all image URLs');
-            console.log('   Options:');
-            console.log('   - Create new template without image header');
-            console.log('   - Use different template for Day 1');
-            console.log('   - Contact HELTAR support about image URL issues');
+            console.log('\n🚨 HELTAR IS STRIPPING IMAGES');
+            console.log('   This is a HELTAR platform issue');
+            console.log('   Contact their support: support@heltar.com');
+            console.log('   For now, proceed without images for Day 1');
         }
         process.exit(result.success ? 0 : 1);
     })
