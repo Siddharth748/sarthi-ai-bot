@@ -1,4 +1,4 @@
-// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED VERSION)
+// scheduler.js - Sarathi AI Template Testing Scheduler (HELTAR FIXED)
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
@@ -147,7 +147,6 @@ class SarathiTestingScheduler {
 
     getCurrentDayTemplate() {
         // FIXED: Start from Day 1 with manual control
-        // Using manual day counter instead of date-based to ensure we start from Day 1
         const manualDay = 1; // FORCE START FROM DAY 1
         
         const template = this.templateSchedule.find(t => t.day === manualDay);
@@ -161,8 +160,8 @@ class SarathiTestingScheduler {
         try {
             console.log(`📤 Attempting to send ${template.template} to ${user.phone_number}`);
             
-            // Prepare template payload based on template type
-            let templatePayload = {
+            // CORRECT HELTAR TEMPLATE PAYLOAD STRUCTURE
+            const templatePayload = {
                 name: template.template,
                 language: {
                     code: template.language,
@@ -186,18 +185,18 @@ class SarathiTestingScheduler {
 
             // Add body parameters based on template type
             if (template.template.includes('problem_solver')) {
-                // Problem solver templates - simple greeting with name
+                // Problem solver templates
                 templatePayload.components.push({
                     type: "body",
                     parameters: [
                         {
                             type: "text",
-                            text: "User" // Default name since we don't have name column
+                            text: "User" // Default name
                         }
                     ]
                 });
             } else if (template.template.includes('daily_wisdom')) {
-                // Daily wisdom templates with pre-filled content
+                // Daily wisdom templates
                 if (template.language === 'english') {
                     templatePayload.components.push({
                         type: "body",
@@ -256,19 +255,21 @@ class SarathiTestingScheduler {
                 }
             }
 
+            // CORRECT HELTAR API PAYLOAD STRUCTURE
+            const heltarPayload = {
+                messages: [{
+                    clientWaNumber: user.phone_number,
+                    message: templatePayload, // Direct object, not stringified
+                    messageType: "template"
+                }]
+            };
+
+            console.log('📤 Sending to HELTAR:', JSON.stringify(heltarPayload, null, 2));
+
             // Send via HELTAR API
             const response = await axios.post(
                 `https://api.heltar.com/v1/messages/send`,
-                {
-                    messages: [{
-                        clientWaNumber: user.phone_number,
-                        message: JSON.stringify({
-                            type: "template",
-                            template: templatePayload
-                        }),
-                        messageType: "template"
-                    }]
-                },
+                heltarPayload,
                 {
                     headers: {
                         'Authorization': `Bearer ${this.heltarApiKey}`,
@@ -526,7 +527,28 @@ class SarathiTestingScheduler {
 // Create and export instance
 const scheduler = new SarathiTestingScheduler();
 export default scheduler;
-
+// =============== IMMEDIATE MANUAL TRIGGER ===============
+// Force send today's messages immediately
+console.log('🚨 MANUAL TRIGGER: Sending Day 1 messages NOW...');
+scheduler.initialize().then(async () => {
+    console.log('🎯 Starting immediate send of Day 1 template...');
+    const result = await scheduler.scheduleDailyMessages();
+    console.log('📋 IMMEDIATE RESULT:', result);
+    
+    if (result.sent_successfully > 0) {
+        console.log('🎉 SUCCESS! Messages sent successfully');
+        console.log(`📨 Sent: ${result.sent_successfully} messages`);
+        console.log(`❌ Failed: ${result.failed} messages`);
+        console.log(`📊 Success Rate: ${result.success_rate}`);
+    } else {
+        console.log('❌ FAILED: No messages sent');
+    }
+    
+    process.exit(0);
+}).catch(error => {
+    console.error('❌ Manual trigger failed:', error);
+    process.exit(1);
+});
 // Auto-start if run directly
 const isMainModule = process.argv[1] && process.argv[1].includes('scheduler.js');
 if (isMainModule) {
