@@ -1,4 +1,4 @@
-// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED CONNECTION)
+// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED - No Client Reuse)
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
@@ -6,8 +6,11 @@ import cron from 'node-cron';
 
 class SarathiTestingScheduler {
     constructor() {
-        // Create new client instance each time to avoid reuse issues
-        this.dbClient = null;
+        // Create new client instance each time
+        this.dbConfig = {
+            connectionString: process.env.DATABASE_URL,
+            ssl: { rejectUnauthorized: false }
+        };
         
         // 6-Day Template Rotation Schedule - STARTING FROM DAY 1
         this.templateSchedule = [
@@ -63,28 +66,21 @@ class SarathiTestingScheduler {
 
         this.heltarApiKey = process.env.HELTAR_API_KEY;
         this.heltarPhoneId = process.env.HELTAR_PHONE_ID;
-        this.isInitialized = false;
         
         console.log('✅ Sarathi Testing Scheduler Initialized');
         console.log('📅 6-Day Template Rotation Ready');
     }
 
-    async initialize() {
-        // Prevent multiple initializations
-        if (this.isInitialized) {
-            console.log('⚠️ Scheduler already initialized');
-            return;
-        }
+    async getDbClient() {
+        // Create fresh client for each operation
+        const client = new Client(this.dbConfig);
+        await client.connect();
+        return client;
+    }
 
+    async initialize() {
         try {
-            // Create new client instance
-            this.dbClient = new Client({
-                connectionString: process.env.DATABASE_URL,
-                ssl: { rejectUnauthorized: false }
-            });
-            
-            await this.dbClient.connect();
-            console.log('✅ Database connected for scheduler');
+            console.log('✅ Database connection initialized');
             
             // Verify and enable all users for testing
             await this.ensureAllUsersSubscribed();
@@ -92,32 +88,17 @@ class SarathiTestingScheduler {
             // Verify WhatsApp credentials
             await this.verifyWhatsAppCredentials();
             
-            this.isInitialized = true;
-            
         } catch (error) {
             console.error('❌ Scheduler initialization failed:', error.message);
-            // Clean up on failure
-            if (this.dbClient) {
-                await this.dbClient.end().catch(() => {});
-                this.dbClient = null;
-            }
             throw error;
         }
     }
 
-    async cleanup() {
-        if (this.dbClient) {
-            await this.dbClient.end().catch(() => {});
-            this.dbClient = null;
-        }
-        this.isInitialized = false;
-        console.log('🧹 Scheduler cleanup completed');
-    }
-
     async ensureAllUsersSubscribed() {
+        const client = await this.getDbClient();
         try {
             // Enable ALL users for daily messages
-            const result = await this.dbClient.query(`
+            const result = await client.query(`
                 UPDATE users SET subscribed_daily = true 
                 WHERE phone_number IS NOT NULL 
                 AND phone_number != ''
@@ -127,7 +108,7 @@ class SarathiTestingScheduler {
             console.log(`✅ Enabled ${result.rows[0].updated_count} users for daily messages`);
             
             // Verify subscription status
-            const checkResult = await this.dbClient.query(`
+            const checkResult = await client.query(`
                 SELECT COUNT(*) as total_users,
                        COUNT(*) FILTER (WHERE subscribed_daily = true) as subscribed_users
                 FROM users
@@ -138,7 +119,8 @@ class SarathiTestingScheduler {
             
         } catch (error) {
             console.error('❌ Failed to enable users:', error.message);
-            throw error;
+        } finally {
+            await client.end();
         }
     }
 
@@ -154,6 +136,7 @@ class SarathiTestingScheduler {
     }
 
     async loadAllSubscribedUsers() {
+        const client = await this.getDbClient();
         try {
             const query = `
                 SELECT phone_number, language_preference as language
@@ -163,19 +146,21 @@ class SarathiTestingScheduler {
                 AND phone_number != ''
             `;
             
-            const result = await this.dbClient.query(query);
+            const result = await client.query(query);
             console.log(`📊 Loaded ${result.rows.length} subscribed users from database`);
             return result.rows;
             
         } catch (error) {
             console.error('❌ Failed to load users:', error.message);
             return [];
+        } finally {
+            await client.end();
         }
     }
 
     getCurrentDayTemplate() {
         // Calculate day based on actual date to maintain consistency
-        const startDate = new Date('2024-01-22'); // Starting from today
+        const startDate = new Date('2024-10-22'); // Starting from today
         const currentDate = new Date();
         const diffTime = currentDate - startDate;
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
@@ -217,18 +202,16 @@ class SarathiTestingScheduler {
 
             // Add body parameters based on template type
             if (template.template.includes('problem_solver')) {
-                // Problem solver templates
                 templatePayload.components.push({
                     type: "body",
                     parameters: [
                         {
                             type: "text",
-                            text: "User" // Default name
+                            text: "User"
                         }
                     ]
                 });
             } else if (template.template.includes('daily_wisdom')) {
-                // Daily wisdom templates
                 if (template.language === 'english') {
                     templatePayload.components.push({
                         type: "body",
@@ -259,7 +242,6 @@ class SarathiTestingScheduler {
                     });
                 }
             } else if (template.template.includes('emotional_check')) {
-                // Emotional check-in templates
                 if (template.language === 'english') {
                     templatePayload.components.push({
                         type: "body",
@@ -291,7 +273,7 @@ class SarathiTestingScheduler {
             const heltarPayload = {
                 messages: [{
                     clientWaNumber: user.phone_number,
-                    message: templatePayload, // Direct object, not stringified
+                    message: templatePayload,
                     messageType: "template"
                 }]
             };
@@ -326,6 +308,7 @@ class SarathiTestingScheduler {
     }
 
     async logMessageSent(messageId, phone, template, apiResponse = null, status = 'sent') {
+        const client = await this.getDbClient();
         try {
             const query = `
                 INSERT INTO morning_messages_sent 
@@ -333,7 +316,7 @@ class SarathiTestingScheduler {
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             `;
             
-            await this.dbClient.query(query, [
+            await client.query(query, [
                 messageId,
                 phone,
                 template.id,
@@ -351,10 +334,13 @@ class SarathiTestingScheduler {
 
         } catch (error) {
             console.error('❌ Failed to log message:', error.message);
+        } finally {
+            await client.end();
         }
     }
 
     async updateTemplatePerformance(template, success) {
+        const client = await this.getDbClient();
         try {
             const today = new Date().toISOString().split('T')[0];
             
@@ -363,17 +349,16 @@ class SarathiTestingScheduler {
                 SELECT performance_id FROM template_performance 
                 WHERE template_id = $1 AND send_date = $2
             `;
-            const result = await this.dbClient.query(checkQuery, [template.id, today]);
+            const result = await client.query(checkQuery, [template.id, today]);
 
             if (result.rows.length === 0) {
-                // Create new record
                 const insertQuery = `
                     INSERT INTO template_performance 
                     (performance_id, template_id, template_name, send_date, send_count, 
                      delivery_count, language, category)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 `;
-                await this.dbClient.query(insertQuery, [
+                await client.query(insertQuery, [
                     `perf_${Date.now()}`,
                     template.id,
                     template.template,
@@ -384,7 +369,6 @@ class SarathiTestingScheduler {
                     template.category
                 ]);
             } else {
-                // Update existing record
                 const updateQuery = `
                     UPDATE template_performance 
                     SET send_count = send_count + $1,
@@ -392,7 +376,7 @@ class SarathiTestingScheduler {
                         updated_at = CURRENT_TIMESTAMP
                     WHERE template_id = $3 AND send_date = $4
                 `;
-                await this.dbClient.query(updateQuery, [
+                await client.query(updateQuery, [
                     success ? 1 : 0,
                     success ? 1 : 0,
                     template.id,
@@ -401,14 +385,12 @@ class SarathiTestingScheduler {
             }
         } catch (error) {
             console.error('❌ Failed to update template performance:', error.message);
+        } finally {
+            await client.end();
         }
     }
 
     async scheduleDailyMessages() {
-        if (!this.isInitialized) {
-            await this.initialize();
-        }
-
         try {
             console.log('🚀 Starting daily message scheduling...');
             
@@ -495,6 +477,7 @@ class SarathiTestingScheduler {
     }
 
     async logDailyReport(report) {
+        const client = await this.getDbClient();
         try {
             const query = `
                 INSERT INTO ab_test_results 
@@ -502,7 +485,7 @@ class SarathiTestingScheduler {
                 VALUES ($1, $2, $3, $4, $5, $6)
             `;
             
-            await this.dbClient.query(query, [
+            await client.query(query, [
                 `test_${Date.now()}`,
                 report.date,
                 report.template_id,
@@ -514,6 +497,8 @@ class SarathiTestingScheduler {
             console.log('📊 Daily report logged to analytics');
         } catch (error) {
             console.error('❌ Failed to log daily report:', error.message);
+        } finally {
+            await client.end();
         }
     }
 
@@ -524,11 +509,7 @@ class SarathiTestingScheduler {
     }
 
     // Start the scheduler to run daily at 7:30 AM IST
-    async startScheduler() {
-        if (!this.isInitialized) {
-            await this.initialize();
-        }
-
+    startScheduler() {
         const istCronTime = this.getISTCronTime();
         
         console.log('⏰ Scheduling daily messages at 7:30 AM IST...');
@@ -558,61 +539,37 @@ class SarathiTestingScheduler {
     // Manual trigger for immediate testing
     async manualTrigger() {
         console.log('🔧 Manual trigger activated - Starting immediate send...');
-        const result = await this.scheduleDailyMessages();
-        
-        // Clean up after manual trigger
-        await this.cleanup();
-        
-        return result;
+        return await this.scheduleDailyMessages();
     }
 }
 
-// Create and export instance
+// Create fresh instance
 const scheduler = new SarathiTestingScheduler();
-export default scheduler;
 
-// =============== IMMEDIATE MANUAL TRIGGER ===============
-// This will run when the file is executed directly
+// Auto-start if run directly
 const isMainModule = process.argv[1] && process.argv[1].includes('scheduler.js');
 if (isMainModule) {
-    console.log('🚀 Starting Sarathi Scheduler...');
-    
     // Check if manual trigger is requested
     if (process.argv.includes('--manual') || process.argv.includes('--test')) {
-        console.log('🔧 MANUAL TRIGGER: Sending Day 1 messages NOW...');
-        
+        console.log('🔧 Running manual trigger...');
         scheduler.initialize().then(async () => {
-            try {
-                const result = await scheduler.manualTrigger();
-                console.log('📋 MANUAL TRIGGER RESULT:', result);
-                
-                if (result.sent_successfully > 0) {
-                    console.log('🎉 SUCCESS! Messages sent successfully');
-                    console.log(`📨 Sent: ${result.sent_successfully} messages`);
-                    console.log(`❌ Failed: ${result.failed} messages`);
-                    console.log(`📊 Success Rate: ${result.success_rate}`);
-                } else {
-                    console.log('❌ FAILED: No messages sent');
-                }
-            } catch (error) {
-                console.error('❌ Manual trigger failed:', error);
-            } finally {
-                await scheduler.cleanup();
-                process.exit(0);
-            }
+            const result = await scheduler.manualTrigger();
+            console.log('📋 Manual trigger result:', result);
+            process.exit(0);
         }).catch(error => {
-            console.error('❌ Scheduler initialization failed:', error);
+            console.error('❌ Manual trigger failed:', error);
             process.exit(1);
         });
     } else {
-        // Start the scheduled service (for normal operation)
-        scheduler.initialize().then(async () => {
-            console.log('✅ Scheduler initialized successfully');
-            await scheduler.startScheduler();
+        // Start the scheduled service
+        scheduler.initialize().then(() => {
+            scheduler.startScheduler();
             console.log('💤 Process running in background...');
         }).catch(error => {
-            console.error('❌ Scheduler failed to initialize:', error);
+            console.error('❌ Scheduler failed to start:', error);
             process.exit(1);
         });
     }
 }
+
+export default scheduler;
