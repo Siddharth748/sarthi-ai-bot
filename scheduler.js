@@ -1,4 +1,4 @@
-// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED - No Client Reuse)
+// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED - WhatsApp API Structure)
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
@@ -18,7 +18,7 @@ class SarathiTestingScheduler {
                 day: 1, 
                 template: 'problem_solver_english', 
                 id: '1203964201590524', 
-                language: 'english', 
+                language: 'en', 
                 category: 'problem_solver',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-4.png'
             },
@@ -26,7 +26,7 @@ class SarathiTestingScheduler {
                 day: 2, 
                 template: 'daily_wisdom_english', 
                 id: '748634401541350', 
-                language: 'english', 
+                language: 'en', 
                 category: 'daily_wisdom',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj.png'
             },
@@ -34,7 +34,7 @@ class SarathiTestingScheduler {
                 day: 3, 
                 template: 'emotional_check_in_english', 
                 id: '1779815382653468', 
-                language: 'english', 
+                language: 'en', 
                 category: 'emotional_checkin',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-5.png'
             },
@@ -42,7 +42,7 @@ class SarathiTestingScheduler {
                 day: 4, 
                 template: 'problem_solver_hindi', 
                 id: '2038691776889448', 
-                language: 'hindi', 
+                language: 'hi', 
                 category: 'problem_solver',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-2.png'
             },
@@ -50,7 +50,7 @@ class SarathiTestingScheduler {
                 day: 5, 
                 template: 'daily_wisdom_hindi', 
                 id: '1918171358731282', 
-                language: 'hindi', 
+                language: 'hi', 
                 category: 'daily_wisdom',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png'
             },
@@ -58,7 +58,7 @@ class SarathiTestingScheduler {
                 day: 6, 
                 template: 'emotional_checkin_hindi', 
                 id: '1362219698629498', 
-                language: 'hindi', 
+                language: 'hi', 
                 category: 'emotional_checkin',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_qjixf0qjixf0qjix.png'
             }
@@ -171,117 +171,51 @@ class SarathiTestingScheduler {
         return template;
     }
 
+    getTemplateForDay(day) {
+        return this.templateSchedule.find(t => t.day === day) || this.templateSchedule[0];
+    }
+
+    // FIXED: Correct WhatsApp Business API Template Structure
+    createWhatsAppTemplatePayload(user, template) {
+        // Clean phone number
+        const cleanPhone = user.phone_number.replace(/\D/g, '');
+        
+        // Base template structure
+        const payload = {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: cleanPhone,
+            type: "template",
+            template: {
+                name: template.template,
+                language: {
+                    code: template.language
+                }
+            }
+        };
+
+        return payload;
+    }
+
     async sendTemplateMessage(user, template) {
         const messageId = `msg_${Date.now()}_${user.phone_number.replace('+', '')}`;
         
         try {
             console.log(`📤 Attempting to send ${template.template} to ${user.phone_number}`);
             
-            // CORRECT HELTAR TEMPLATE PAYLOAD STRUCTURE
-            const templatePayload = {
-                name: template.template,
-                language: {
-                    code: template.language,
-                    policy: "deterministic"
-                },
-                components: []
-            };
-
-            // Add header with image for all templates
-            templatePayload.components.push({
-                type: "header",
-                parameters: [
-                    {
-                        type: "image",
-                        image: { 
-                            link: template.image 
-                        }
-                    }
-                ]
-            });
-
-            // Add body parameters based on template type
-            if (template.template.includes('problem_solver')) {
-                templatePayload.components.push({
-                    type: "body",
-                    parameters: [
-                        {
-                            type: "text",
-                            text: "User"
-                        }
-                    ]
-                });
-            } else if (template.template.includes('daily_wisdom')) {
-                if (template.language === 'english') {
-                    templatePayload.components.push({
-                        type: "body",
-                        parameters: [
-                            {
-                                type: "text",
-                                text: "Focus on your duty, not the results"
-                            },
-                            {
-                                type: "text",
-                                text: "Reduce anxiety by concentrating on actions within your control rather than worrying about outcomes"
-                            }
-                        ]
-                    });
-                } else {
-                    templatePayload.components.push({
-                        type: "body",
-                        parameters: [
-                            {
-                                type: "text",
-                                text: "कर्म करो, फल की चिंता छोड़ो"
-                            },
-                            {
-                                type: "text",
-                                text: "परिणामों की चिंता करने के बजाय अपने नियंत्रण में आने वाले कार्यों पर ध्यान केंद्रित करके चिंता कम करें"
-                            }
-                        ]
-                    });
-                }
-            } else if (template.template.includes('emotional_check')) {
-                if (template.language === 'english') {
-                    templatePayload.components.push({
-                        type: "body",
-                        parameters: [
-                            {
-                                type: "text",
-                                text: "Emotional Awareness: Take 30 seconds to check in with yourself. Notice your current mood without judgment, then choose one word to describe how you feel right now."
-                            },
-                            {
-                                type: "text",
-                                text: "Reply with one word about your mood to continue."
-                            }
-                        ]
-                    });
-                } else {
-                    templatePayload.components.push({
-                        type: "body",
-                        parameters: [
-                            {
-                                type: "text",
-                                text: "भावनात्मक जागरूकता: 30 सेकंड के लिए खुद से जुड़ें। बिना आलोचना के अपनी वर्तमान भावना को महसूस करें, फिर एक शब्द चुनें जो बताए आप अभी कैसा महसूस कर रहे हैं।"
-                            }
-                        ]
-                    });
-                }
-            }
-
-            // CORRECT HELTAR API PAYLOAD STRUCTURE
-            const heltarPayload = {
-                messages: [{
-                    clientWaNumber: user.phone_number,
-                    message: templatePayload,
-                    messageType: "template"
-                }]
-            };
-
-            // Send via HELTAR API
+            // Create CORRECT WhatsApp API payload
+            const whatsappPayload = this.createWhatsAppTemplatePayload(user, template);
+            
+            // Send via HELTAR API with CORRECT endpoint structure
             const response = await axios.post(
                 `https://api.heltar.com/v1/messages/send`,
-                heltarPayload,
+                {
+                    messages: [{
+                        clientWaNumber: user.phone_number,
+                        message: whatsappPayload,
+                        messageType: "template"
+                    }]
+                },
                 {
                     headers: {
                         'Authorization': `Bearer ${this.heltarApiKey}`,
@@ -298,7 +232,11 @@ class SarathiTestingScheduler {
             return { success: true, messageId };
 
         } catch (error) {
-            console.error(`❌ Failed to send to ${user.phone_number}:`, error.response?.data || error.message);
+            console.error(`❌ Failed to send to ${user.phone_number}:`, {
+                errorType: error.response?.data?.error?.type || 'Unknown',
+                errorMessage: error.response?.data?.error?.message || error.message,
+                errorDetails: error.response?.data
+            });
             
             // Log failed message
             await this.logMessageSent(messageId, user.phone_number, template, null, 'failed');
@@ -390,12 +328,12 @@ class SarathiTestingScheduler {
         }
     }
 
-    async scheduleDailyMessages() {
+    async scheduleDailyMessages(manualDay = null) {
         try {
             console.log('🚀 Starting daily message scheduling...');
             
-            // Get current template for today
-            const currentTemplate = this.getCurrentDayTemplate();
+            // Get current template for today or manual day
+            const currentTemplate = manualDay ? this.getTemplateForDay(manualDay) : this.getCurrentDayTemplate();
             
             // Load ALL subscribed users
             const allUsers = await this.loadAllSubscribedUsers();
@@ -412,7 +350,7 @@ class SarathiTestingScheduler {
             }
 
             console.log(`🎯 Template: ${currentTemplate.template}`);
-            console.log(`🖼️  Image: ${currentTemplate.image}`);
+            console.log(`🌐 Language: ${currentTemplate.language}`);
             console.log(`👥 Sending to: ${allUsers.length} users`);
             console.log('📍 Starting immediate send...');
 
@@ -537,9 +475,9 @@ class SarathiTestingScheduler {
     }
 
     // Manual trigger for immediate testing
-    async manualTrigger() {
+    async manualTrigger(day = null) {
         console.log('🔧 Manual trigger activated - Starting immediate send...');
-        return await this.scheduleDailyMessages();
+        return await this.scheduleDailyMessages(day);
     }
 }
 
@@ -550,10 +488,11 @@ const scheduler = new SarathiTestingScheduler();
 const isMainModule = process.argv[1] && process.argv[1].includes('scheduler.js');
 if (isMainModule) {
     // Check if manual trigger is requested
-    if (process.argv.includes('--manual') || process.argv.includes('--test')) {
+    if (process.argv.includes('--manual')) {
         console.log('🔧 Running manual trigger...');
+        const manualDay = process.argv.find(arg => arg.startsWith('--day='))?.split('=')[1];
         scheduler.initialize().then(async () => {
-            const result = await scheduler.manualTrigger();
+            const result = await scheduler.manualTrigger(manualDay ? parseInt(manualDay) : null);
             console.log('📋 Manual trigger result:', result);
             process.exit(0);
         }).catch(error => {
