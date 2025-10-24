@@ -1,9 +1,9 @@
-// simple-template-test.js - Send without header first
+// exact-image-header.js - Correct Image Header Structure
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
 
-class SimpleTemplateScheduler {
+class ExactImageScheduler {
     constructor() {
         this.dbConfig = {
             connectionString: process.env.DATABASE_URL,
@@ -15,11 +15,10 @@ class SimpleTemplateScheduler {
         
         // Test numbers
         this.testNumbers = [
-            { country_code: "91", whatsapp_number: "8427792857" },
-            { country_code: "91", whatsapp_number: "7018122128" }
+            { country_code: "91", whatsapp_number: "8427792857" }
         ];
         
-        console.log('✅ Simple Template Scheduler Ready');
+        console.log('✅ Exact Image Header Scheduler Ready');
     }
 
     async getDbClient() {
@@ -28,38 +27,12 @@ class SimpleTemplateScheduler {
         return client;
     }
 
-    // SIMPLE: No header, no components
-    createSimplePayload(phone) {
+    // CORRECT: WhatsApp Business API exact image header structure
+    createExactImagePayload(phone) {
         const fullNumber = phone.country_code + phone.whatsapp_number;
         
         const payload = {
-            campaignName: "Sarathi AI Day 1 Test",
-            templateName: "problem_solver_english", 
-            languageCode: "en",
-            messages: [{
-                clientWaNumber: fullNumber,
-                message: {
-                    name: "problem_solver_english",
-                    language: {
-                        code: "en",
-                        policy: "deterministic"
-                    }
-                    // NO COMPONENTS - header is optional
-                },
-                messageType: "template"
-            }]
-        };
-
-        console.log('📨 Simple Payload (no header):', JSON.stringify(payload, null, 2));
-        return payload;
-    }
-
-    // WITH BODY: Only body parameters if template needs them
-    createWithBodyPayload(phone) {
-        const fullNumber = phone.country_code + phone.whatsapp_number;
-        
-        const payload = {
-            campaignName: "Sarathi AI Day 1 Test",
+            campaignName: "Sarathi AI Test",
             templateName: "problem_solver_english", 
             languageCode: "en",
             messages: [{
@@ -72,11 +45,13 @@ class SimpleTemplateScheduler {
                     },
                     components: [
                         {
-                            type: "body",
+                            type: "header",
                             parameters: [
                                 {
-                                    type: "text",
-                                    text: "User" // Common placeholder for user name
+                                    type: "image",
+                                    image: {
+                                        link: "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png"
+                                    }
                                 }
                             ]
                         }
@@ -86,14 +61,136 @@ class SimpleTemplateScheduler {
             }]
         };
 
-        console.log('📨 With Body Payload:', JSON.stringify(payload, null, 2));
+        console.log('📨 Exact Image Payload:', JSON.stringify(payload, null, 2));
+        return payload;
+    }
+
+    // TEST: Try with hosted image (GitHub raw might not be accessible)
+    createHostedImagePayload(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
+        const payload = {
+            campaignName: "Sarathi AI Test",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    },
+                    components: [
+                        {
+                            type: "header",
+                            parameters: [
+                                {
+                                    type: "image",
+                                    image: {
+                                        // Use a publicly accessible image from a CDN
+                                        link: "https://i.imgur.com/6JqB9pJ.jpeg"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+                messageType: "template"
+            }]
+        };
+
+        console.log('📨 Hosted Image Payload:', JSON.stringify(payload, null, 2));
+        return payload;
+    }
+
+    // TEST: Try different image structure (direct URL without nested image object)
+    createDirectImagePayload(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
+        const payload = {
+            campaignName: "Sarathi AI Test",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    },
+                    components: [
+                        {
+                            type: "header",
+                            parameters: [
+                                {
+                                    type: "image",
+                                    image: {
+                                        // Direct link without additional nesting
+                                        link: "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png"
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            type: "body",
+                            parameters: [] // Empty body parameters
+                        }
+                    ]
+                },
+                messageType: "template"
+            }]
+        };
+
+        console.log('📨 Direct Image + Body Payload:', JSON.stringify(payload, null, 2));
+        return payload;
+    }
+
+    // TEST: Try with base64 encoded image (bypass URL issues)
+    createBase64ImagePayload(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
+        // Small base64 encoded test image (1x1 pixel red dot)
+        const base64Image = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCwAADn/9k=";
+        
+        const payload = {
+            campaignName: "Sarathi AI Test",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    },
+                    components: [
+                        {
+                            type: "header",
+                            parameters: [
+                                {
+                                    type: "image",
+                                    image: {
+                                        link: base64Image
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+                messageType: "template"
+            }]
+        };
+
+        console.log('📨 Base64 Image Payload:', JSON.stringify(payload, null, 2));
         return payload;
     }
 
     async sendTestMessage(phone, payloadCreator, testName) {
         try {
-            console.log(`\n🎯 SENDING TO: ${phone.country_code}${phone.whatsapp_number}`);
-            console.log(`🧪 Test: ${testName}`);
+            console.log(`\n🧪 ${testName}: ${phone.country_code}${phone.whatsapp_number}`);
             
             const payload = payloadCreator(phone);
             
@@ -109,153 +206,91 @@ class SimpleTemplateScheduler {
                 }
             );
 
-            console.log(`✅ SUCCESS! Message sent to ${phone.country_code}${phone.whatsapp_number}`);
-            console.log('📱 Message ID:', response.data?.campaignId);
-            
-            await this.logMessage(
-                `success_${Date.now()}_${phone.whatsapp_number}`,
-                `${phone.country_code}${phone.whatsapp_number}`,
-                'problem_solver_english',
-                response.data
-            );
+            console.log(`✅ ${testName} SUCCESS!`);
+            console.log('Campaign ID:', response.data?.campaignId);
             
             return { success: true, data: response.data };
 
         } catch (error) {
-            console.log(`❌ FAILED to send to ${phone.country_code}${phone.whatsapp_number}`);
+            console.log(`❌ ${testName} FAILED:`);
             console.log('Error:', error.response?.data?.error?.message);
             console.log('Details:', error.response?.data?.error?.error_data?.details);
-            
-            await this.logMessage(
-                `failed_${Date.now()}_${phone.whatsapp_number}`,
-                `${phone.country_code}${phone.whatsapp_number}`,
-                'problem_solver_english',
-                null,
-                'failed'
-            );
+            console.log('Code:', error.response?.data?.error?.code);
             
             return { 
                 success: false, 
                 error: error.response?.data?.error?.message,
-                details: error.response?.data?.error?.error_data?.details
+                details: error.response?.data?.error?.error_data?.details,
+                code: error.response?.data?.error?.code
             };
         }
     }
 
-    async sendToAllUsers() {
+    async runImageTests() {
         try {
-            console.log('🚀 STARTING DAY 1 MESSAGE SEND');
-            console.log('=' .repeat(50));
+            console.log('🚀 TESTING IMAGE HEADER SOLUTIONS');
+            console.log('=' .repeat(60));
             console.log('📋 Template: problem_solver_english');
-            console.log('👥 Users: 2 test numbers');
-            console.log('🎯 Strategy: No header (optional)');
-            console.log('=' .repeat(50));
+            console.log('🖼️  Issue: Header requires IMAGE but gets UNKNOWN');
+            console.log('=' .repeat(60));
 
-            let successCount = 0;
-            let failedCount = 0;
-            const results = [];
+            const testPhone = this.testNumbers[0];
+            const tests = [
+                { name: 'EXACT_STRUCTURE', creator: this.createExactImagePayload },
+                { name: 'HOSTED_IMAGE', creator: this.createHostedImagePayload },
+                { name: 'DIRECT_IMAGE_BODY', creator: this.createDirectImagePayload },
+                { name: 'BASE64_IMAGE', creator: this.createBase64ImagePayload }
+            ];
 
-            // Try SIMPLE first (no components)
-            console.log('\n1️⃣  ATTEMPT 1: Simple template (no components)');
-            for (const phone of this.testNumbers) {
-                const result = await this.sendTestMessage(phone, this.createSimplePayload, 'SIMPLE_NO_HEADER');
-                results.push({
-                    phone: `${phone.country_code}${phone.whatsapp_number}`,
-                    success: result.success,
-                    attempt: 'simple'
-                });
-
+            for (const test of tests) {
+                console.log(`\n🔍 TEST: ${test.name}`);
+                const result = await this.sendTestMessage(testPhone, test.creator, test.name);
+                
                 if (result.success) {
-                    successCount++;
-                } else {
-                    failedCount++;
-                    // If simple fails, try with body parameters
-                    console.log('\n2️⃣  ATTEMPT 2: With body parameters');
-                    const resultWithBody = await this.sendTestMessage(phone, this.createWithBodyPayload, 'WITH_BODY');
-                    results.push({
-                        phone: `${phone.country_code}${phone.whatsapp_number}`,
-                        success: resultWithBody.success,
-                        attempt: 'with_body'
-                    });
-
-                    if (resultWithBody.success) {
-                        successCount++;
-                        failedCount--; // Adjust counts
-                    }
+                    console.log(`🎉 SUCCESS with ${test.name}!`);
+                    console.log('✨ Use this exact structure for all messages');
+                    return { success: true, solution: test.name, data: result.data };
                 }
-
-                // Wait between sends
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                
+                // Wait between tests
+                await new Promise(resolve => setTimeout(resolve, 3000));
             }
 
-            // Summary
-            console.log('\n📊 SEND SUMMARY:');
-            console.log('=' .repeat(50));
-            console.log(`   ✅ Successful: ${successCount}`);
-            console.log(`   ❌ Failed: ${failedCount}`);
-            console.log(`   📊 Total: ${this.testNumbers.length}`);
+            console.log('\n❌ ALL IMAGE SOLUTIONS FAILED');
+            console.log('💡 The issue might be:');
+            console.log('   1. Image URL not accessible by WhatsApp servers');
+            console.log('   2. Template requires specific image format/size');
+            console.log('   3. HELTAR API has different image structure');
             
-            results.forEach(result => {
-                console.log(`   ${result.success ? '✅' : '❌'} ${result.phone} (${result.attempt})`);
-            });
-
-            return {
-                success: successCount > 0,
-                sent: successCount,
-                failed: failedCount,
-                total: this.testNumbers.length,
-                results
-            };
+            return { success: false, error: 'All image solutions failed' };
 
         } catch (error) {
-            console.error('💥 Send failed:', error);
+            console.error('💥 Test failed:', error);
             return { success: false, error: error.message };
-        }
-    }
-
-    async logMessage(messageId, phone, template, apiResponse = null, status = 'sent') {
-        const client = await this.getDbClient();
-        try {
-            await client.query(`
-                INSERT INTO morning_messages_sent 
-                (message_id, phone, template_id, template_name, sent_time, delivery_status, language, category)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            `, [
-                messageId,
-                phone,
-                '1203964201590524',
-                template,
-                new Date(),
-                status,
-                'english',
-                'problem_solver'
-            ]);
-            console.log('📊 Message logged to database');
-        } catch (error) {
-            console.error('❌ Failed to log message:', error.message);
-        } finally {
-            await client.end();
         }
     }
 }
 
-// Run immediately
-const scheduler = new SimpleTemplateScheduler();
+// Run tests
+const scheduler = new ExactImageScheduler();
 
-scheduler.sendToAllUsers()
+scheduler.runImageTests()
     .then(result => {
         if (result.success) {
-            console.log('\n🎉 DAY 1 MESSAGES SENT SUCCESSFULLY!');
-            console.log('✨ Ready to deploy for all 693 users tomorrow');
+            console.log(`\n🎉 IMAGE HEADER ISSUE SOLVED with: ${result.solution}`);
+            console.log('✨ Template messages will now work!');
         } else {
-            console.log('\n🔧 Debugging needed:');
-            console.log('1. Check template exact name in Meta Business Suite');
-            console.log('2. Verify template is approved and active');
-            console.log('3. Check if template requires specific body parameters');
+            console.log('\n🔧 Next steps:');
+            console.log('1. Upload image to a proper CDN (not GitHub raw)');
+            console.log('2. Check image meets WhatsApp requirements:');
+            console.log('   - Format: JPG, PNG, WEBP');
+            console.log('   - Size: < 5MB');
+            console.log('   - Dimensions: Recommended 1080x1080');
+            console.log('3. Try different image URL');
         }
         process.exit(result.success ? 0 : 1);
     })
     .catch(error => {
-        console.error('💥 Scheduler crashed:', error);
+        console.error('💥 Test crashed:', error);
         process.exit(1);
     });
