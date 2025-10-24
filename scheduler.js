@@ -1,9 +1,9 @@
-// fixed-scheduler.js - Correct HELTAR Structure
+// correct-scheduler.js - Exact HELTAR Structure from Zod Error
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
 
-class FixedScheduler {
+class CorrectScheduler {
     constructor() {
         this.dbConfig = {
             connectionString: process.env.DATABASE_URL,
@@ -19,7 +19,7 @@ class FixedScheduler {
             { country_code: "91", whatsapp_number: "7018122128" }
         ];
         
-        console.log('✅ Fixed Scheduler Ready');
+        console.log('✅ Correct Scheduler Ready');
     }
 
     async getDbClient() {
@@ -28,62 +28,66 @@ class FixedScheduler {
         return client;
     }
 
-    // CORRECT HELTAR STRUCTURE - Based on common required fields
+    // EXACT STRUCTURE FROM ZOD ERROR
     createHeltarPayload(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
         const payload = {
-            campaign_name: "Sarathi AI Test Campaign", // Required field
-            contacts: [{
-                country_code: phone.country_code,
-                phone_number: phone.whatsapp_number  // Might be phone_number instead of whatsapp_number
-            }],
-            template_name: "problem_solver_english",  // Required field
-            language_code: "en",                      // Required field
-            parameters: {}                            // Empty parameters object (required)
+            campaignName: "Sarathi AI Test Campaign", // camelCase
+            templateName: "problem_solver_english",   // camelCase  
+            languageCode: "en",                       // camelCase
+            messages: [{                              // array, not contacts
+                clientWaNumber: fullNumber,           // full number without +
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    }
+                },
+                messageType: "template"
+            }]
         };
 
-        console.log('📨 HELTAR Payload:', JSON.stringify(payload, null, 2));
+        console.log('📨 EXACT HELTAR Payload:', JSON.stringify(payload, null, 2));
         return payload;
     }
 
-    // ALTERNATIVE: Try with header image if needed
+    // ALTERNATIVE: With header image
     createHeltarPayloadWithImage(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
         const payload = {
-            campaign_name: "Sarathi AI Test Campaign",
-            contacts: [{
-                country_code: phone.country_code,
-                phone_number: phone.whatsapp_number
-            }],
-            template_name: "problem_solver_english",
-            language_code: "en",
-            parameters: {
-                header: {
-                    type: "image",
-                    image: {
-                        link: "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png"
-                    }
+            campaignName: "Sarathi AI Test Campaign",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    },
+                    components: [
+                        {
+                            type: "header",
+                            parameters: [
+                                {
+                                    type: "image", 
+                                    image: {
+                                        link: "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
                 },
-                body: []  // Empty body parameters
-            }
+                messageType: "template"
+            }]
         };
 
         console.log('📨 HELTAR Payload (with image):', JSON.stringify(payload, null, 2));
-        return payload;
-    }
-
-    // SIMPLEST: Try without any parameters first
-    createHeltarSimplePayload(phone) {
-        const payload = {
-            campaign_name: "Sarathi AI Test Campaign",
-            contacts: [{
-                country_code: phone.country_code,
-                phone_number: phone.whatsapp_number
-            }],
-            template_name: "problem_solver_english",
-            language_code: "en"
-            // No parameters at all
-        };
-
-        console.log('📨 HELTAR Simple Payload:', JSON.stringify(payload, null, 2));
         return payload;
     }
 
@@ -108,10 +112,26 @@ class FixedScheduler {
             console.log(`✅ ${testName} SUCCESS!`);
             console.log('Response:', JSON.stringify(response.data, null, 2));
             
+            await this.logMessage(
+                `success_${Date.now()}_${phone.whatsapp_number}`,
+                `${phone.country_code}${phone.whatsapp_number}`,
+                'problem_solver_english',
+                response.data
+            );
+            
             return { success: true, data: response.data };
 
         } catch (error) {
             console.log(`❌ ${testName} FAILED:`, error.response?.data || error.message);
+            
+            await this.logMessage(
+                `failed_${Date.now()}_${phone.whatsapp_number}`,
+                `${phone.country_code}${phone.whatsapp_number}`,
+                'problem_solver_english',
+                null,
+                'failed'
+            );
+            
             return { 
                 success: false, 
                 error: error.message,
@@ -120,64 +140,53 @@ class FixedScheduler {
         }
     }
 
-    async runAllTests() {
+    async runTests() {
         try {
-            console.log('🚀 TESTING DIFFERENT HELTAR PAYLOAD STRUCTURES');
+            console.log('🚀 TESTING EXACT HELTAR STRUCTURE');
             console.log('=' .repeat(60));
-
-            const testPhone = this.testNumbers[0]; // Test with first number only
-            
-            console.log(`📞 Testing with: ${testPhone.country_code}${testPhone.whatsapp_number}`);
+            console.log('📞 Test Numbers:', this.testNumbers.map(p => `${p.country_code}${p.whatsapp_number}`).join(', '));
             console.log('📋 Template: problem_solver_english');
             console.log('=' .repeat(60));
 
-            // TEST 1: Simple structure (no parameters)
-            console.log('\n1️⃣  TEST 1: Simple structure (no parameters)');
+            const testPhone = this.testNumbers[0];
+            
+            // TEST 1: Basic structure (camelCase fields + messages array)
+            console.log('\n1️⃣  TEST 1: Basic structure (camelCase + messages array)');
             const test1 = await this.sendTestMessage(
                 testPhone, 
-                this.createHeltarSimplePayload, 
-                'SIMPLE'
+                this.createHeltarPayload, 
+                'BASIC_STRUCTURE'
             );
 
             if (test1.success) {
-                console.log('🎉 SUCCESS with simple structure!');
+                console.log('🎉 SUCCESS with basic structure!');
+                
+                // Send to second number if first worked
+                console.log('\n📍 Sending to second number...');
+                const testPhone2 = this.testNumbers[1];
+                await this.sendTestMessage(testPhone2, this.createHeltarPayload, 'SECOND_NUMBER');
+                
                 return test1;
             }
 
-            // TEST 2: With empty parameters
-            console.log('\n2️⃣  TEST 2: With empty parameters object');
+            // TEST 2: With header image
+            console.log('\n2️⃣  TEST 2: With header image components');
             await new Promise(resolve => setTimeout(resolve, 2000));
             const test2 = await this.sendTestMessage(
-                testPhone, 
-                this.createHeltarPayload, 
-                'EMPTY_PARAMS'
-            );
-
-            if (test2.success) {
-                console.log('🎉 SUCCESS with empty parameters!');
-                return test2;
-            }
-
-            // TEST 3: With header image
-            console.log('\n3️⃣  TEST 3: With header image parameters');
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            const test3 = await this.sendTestMessage(
                 testPhone, 
                 this.createHeltarPayloadWithImage, 
                 'WITH_IMAGE'
             );
 
-            if (test3.success) {
+            if (test2.success) {
                 console.log('🎉 SUCCESS with header image!');
-                return test3;
+                return test2;
             }
 
-            // If all tests failed, show the exact error details
-            console.log('\n❌ ALL TESTS FAILED');
-            console.log('=' .repeat(60));
-            console.log('Last error details:', JSON.stringify(test3.data, null, 2));
+            console.log('\n❌ BOTH TESTS FAILED');
+            console.log('Last error details:', JSON.stringify(test2.data, null, 2));
             
-            return { success: false, error: 'All structure tests failed' };
+            return { success: false, error: 'Both structure tests failed' };
 
         } catch (error) {
             console.error('💥 Test failed:', error);
@@ -212,18 +221,18 @@ class FixedScheduler {
 }
 
 // Run tests
-const scheduler = new FixedScheduler();
+const scheduler = new CorrectScheduler();
 
-scheduler.runAllTests()
+scheduler.runTests()
     .then(result => {
         if (result.success) {
-            console.log('\n🎉 FOUND WORKING STRUCTURE!');
-            console.log('✨ You can now use this payload structure for all messages');
+            console.log('\n🎉 HELTAR INTEGRATION SUCCESSFUL!');
+            console.log('✨ You can now use this exact structure for all messages');
         } else {
-            console.log('\n💡 Next steps:');
-            console.log('1. Check HELTAR API documentation for exact payload structure');
-            console.log('2. Verify template name is exactly correct');
-            console.log('3. Check if template needs specific parameters');
+            console.log('\n💡 Check:');
+            console.log('1. Verify template name exactly matches in WhatsApp Business Manager');
+            console.log('2. Check if template needs specific body parameters');
+            console.log('3. Confirm WhatsApp Business Account is active');
         }
         process.exit(result.success ? 0 : 1);
     })
