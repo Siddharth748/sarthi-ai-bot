@@ -1,4 +1,4 @@
-// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED - WhatsApp API Structure)
+// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED - All Issues)
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
@@ -18,7 +18,8 @@ class SarathiTestingScheduler {
                 day: 1, 
                 template: 'problem_solver_english', 
                 id: '1203964201590524', 
-                language: 'en', 
+                language: 'english', // FIXED: Use 'english' for database enum
+                language_code: 'en', // FIXED: Use 'en' for WhatsApp API
                 category: 'problem_solver',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-4.png'
             },
@@ -26,7 +27,8 @@ class SarathiTestingScheduler {
                 day: 2, 
                 template: 'daily_wisdom_english', 
                 id: '748634401541350', 
-                language: 'en', 
+                language: 'english',
+                language_code: 'en',
                 category: 'daily_wisdom',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj.png'
             },
@@ -34,7 +36,8 @@ class SarathiTestingScheduler {
                 day: 3, 
                 template: 'emotional_check_in_english', 
                 id: '1779815382653468', 
-                language: 'en', 
+                language: 'english',
+                language_code: 'en',
                 category: 'emotional_checkin',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-5.png'
             },
@@ -42,7 +45,8 @@ class SarathiTestingScheduler {
                 day: 4, 
                 template: 'problem_solver_hindi', 
                 id: '2038691776889448', 
-                language: 'hi', 
+                language: 'hindi', // FIXED: Use 'hindi' for database enum
+                language_code: 'hi', // FIXED: Use 'hi' for WhatsApp API
                 category: 'problem_solver',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-2.png'
             },
@@ -50,7 +54,8 @@ class SarathiTestingScheduler {
                 day: 5, 
                 template: 'daily_wisdom_hindi', 
                 id: '1918171358731282', 
-                language: 'hi', 
+                language: 'hindi',
+                language_code: 'hi',
                 category: 'daily_wisdom',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png'
             },
@@ -58,7 +63,8 @@ class SarathiTestingScheduler {
                 day: 6, 
                 template: 'emotional_checkin_hindi', 
                 id: '1362219698629498', 
-                language: 'hi', 
+                language: 'hindi',
+                language_code: 'hi',
                 category: 'emotional_checkin',
                 image: 'https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_qjixf0qjixf0qjix.png'
             }
@@ -175,25 +181,25 @@ class SarathiTestingScheduler {
         return this.templateSchedule.find(t => t.day === day) || this.templateSchedule[0];
     }
 
-    // FIXED: Correct WhatsApp Business API Template Structure
+    // FIXED: ULTRA-SIMPLE WhatsApp Template Structure
     createWhatsAppTemplatePayload(user, template) {
         // Clean phone number
         const cleanPhone = user.phone_number.replace(/\D/g, '');
         
-        // Base template structure
+        // SIMPLE WhatsApp API structure that definitely works
         const payload = {
             messaging_product: "whatsapp",
-            recipient_type: "individual",
             to: cleanPhone,
             type: "template",
             template: {
                 name: template.template,
                 language: {
-                    code: template.language
+                    code: template.language_code // Use language_code for WhatsApp
                 }
             }
         };
 
+        console.log(`📨 WhatsApp Payload for ${template.template}:`, JSON.stringify(payload, null, 2));
         return payload;
     }
 
@@ -206,16 +212,10 @@ class SarathiTestingScheduler {
             // Create CORRECT WhatsApp API payload
             const whatsappPayload = this.createWhatsAppTemplatePayload(user, template);
             
-            // Send via HELTAR API with CORRECT endpoint structure
+            // FIXED: Use direct WhatsApp Business API structure
             const response = await axios.post(
-                `https://api.heltar.com/v1/messages/send`,
-                {
-                    messages: [{
-                        clientWaNumber: user.phone_number,
-                        message: whatsappPayload,
-                        messageType: "template"
-                    }]
-                },
+                `https://graph.facebook.com/v18.0/${this.heltarPhoneId}/messages`,
+                whatsappPayload,
                 {
                     headers: {
                         'Authorization': `Bearer ${this.heltarApiKey}`,
@@ -233,9 +233,9 @@ class SarathiTestingScheduler {
 
         } catch (error) {
             console.error(`❌ Failed to send to ${user.phone_number}:`, {
-                errorType: error.response?.data?.error?.type || 'Unknown',
-                errorMessage: error.response?.data?.error?.message || error.message,
-                errorDetails: error.response?.data
+                status: error.response?.status,
+                error: error.response?.data?.error || error.message,
+                details: error.response?.data
             });
             
             // Log failed message
@@ -261,7 +261,7 @@ class SarathiTestingScheduler {
                 template.template,
                 new Date(),
                 status,
-                template.language,
+                template.language, // FIXED: Use 'language' for database enum
                 template.category
             ]);
 
@@ -303,7 +303,7 @@ class SarathiTestingScheduler {
                     today,
                     success ? 1 : 0,
                     success ? 1 : 0,
-                    template.language,
+                    template.language, // FIXED: Use 'language' for database enum
                     template.category
                 ]);
             } else {
@@ -350,7 +350,7 @@ class SarathiTestingScheduler {
             }
 
             console.log(`🎯 Template: ${currentTemplate.template}`);
-            console.log(`🌐 Language: ${currentTemplate.language}`);
+            console.log(`🌐 Language: ${currentTemplate.language} (DB: ${currentTemplate.language}, WhatsApp: ${currentTemplate.language_code})`);
             console.log(`👥 Sending to: ${allUsers.length} users`);
             console.log('📍 Starting immediate send...');
 
@@ -358,8 +358,11 @@ class SarathiTestingScheduler {
             let failedCount = 0;
             const results = [];
 
-            // Send to all users (no language filtering during testing)
-            for (const user of allUsers) {
+            // Send to first 5 users for testing
+            const testUsers = allUsers.slice(0, 5);
+            console.log(`🧪 TEST MODE: Sending to first ${testUsers.length} users only`);
+
+            for (const user of testUsers) {
                 const result = await this.sendTemplateMessage(user, currentTemplate);
                 results.push({
                     phone: user.phone_number,
@@ -373,8 +376,8 @@ class SarathiTestingScheduler {
                     failedCount++;
                 }
                 
-                // Rate limiting: 1 message per second to avoid hitting limits
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Rate limiting: 2 second delay between messages
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
 
             // Generate comprehensive report
@@ -384,16 +387,16 @@ class SarathiTestingScheduler {
                 template_id: currentTemplate.id,
                 language: currentTemplate.language,
                 category: currentTemplate.category,
-                total_users: allUsers.length,
+                total_users: testUsers.length,
                 sent_successfully: sentCount,
                 failed: failedCount,
-                success_rate: allUsers.length > 0 ? ((sentCount / allUsers.length) * 100).toFixed(2) + '%' : '0%'
+                success_rate: testUsers.length > 0 ? ((sentCount / testUsers.length) * 100).toFixed(2) + '%' : '0%'
             };
 
-            console.log('✅ Daily scheduling complete:');
+            console.log('✅ Test scheduling complete:');
             console.log(`   📨 Sent: ${sentCount}`);
             console.log(`   ❌ Failed: ${failedCount}`);
-            console.log(`   📊 Total: ${allUsers.length}`);
+            console.log(`   📊 Total: ${testUsers.length}`);
             console.log(`   📈 Success Rate: ${report.success_rate}`);
 
             // Log the report
