@@ -1,9 +1,9 @@
-// scheduler.js - FIXED TEMPLATE STRUCTURE
+// simple-scheduler.js - Exact HELTAR Structure
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
 
-class SarathiTestScheduler {
+class SimpleScheduler {
     constructor() {
         this.dbConfig = {
             connectionString: process.env.DATABASE_URL,
@@ -12,91 +12,59 @@ class SarathiTestScheduler {
 
         this.heltarApiKey = process.env.HELTAR_API_KEY;
         this.heltarPhoneId = process.env.HELTAR_PHONE_ID;
-        this.testNumber = '918427792857';
         
-        console.log('✅ Test Scheduler Ready');
-        console.log(`🎯 Testing with: ${this.testNumber}`);
+        // Test numbers in HELTAR format
+        this.testNumbers = [
+            { country_code: "91", whatsapp_number: "8427792857" },
+            { country_code: "91", whatsapp_number: "7018122128" }
+        ];
+        
+        console.log('✅ Simple Scheduler Ready');
+        console.log('📞 Test Numbers:', this.testNumbers.map(n => `${n.country_code}${n.whatsapp_number}`).join(', '));
     }
 
-    // CORRECT HELTAR TEMPLATE STRUCTURES
-    createTemplatePayload(templateName) {
-        const cleanPhone = this.testNumber.replace(/\D/g, '');
+    async getDbClient() {
+        const client = new Client(this.dbConfig);
+        await client.connect();
+        return client;
+    }
+
+    // EXACT HELTAR STRUCTURE WITH CAMPAIGN AND HEADER IMAGE
+    createHeltarCampaignPayload(phone) {
+        // Combine country code and number
+        const fullNumber = phone.country_code + phone.whatsapp_number;
         
-        // DIFFERENT STRUCTURES FOR DIFFERENT TEMPLATES
-        const templateStructures = {
-            'problem_solver_english': {
+        const payload = {
+            campaign: {
+                name: "Sarathi AI Test Campaign", // Campaign name (required)
+                description: "Testing problem_solver_english template" // Campaign description (optional)
+            },
+            contacts: [{
+                country_code: phone.country_code,
+                whatsapp_number: phone.whatsapp_number
+            }],
+            template: {
                 name: "problem_solver_english",
-                language: { code: "en", policy: "deterministic" },
-                components: [
-                    {
-                        type: "body",
-                        parameters: [
-                            { type: "text", text: "User" }
-                        ]
-                    }
-                ]
-            },
-            'daily_wisdom_english': {
-                name: "daily_wisdom_english", 
-                language: { code: "en", policy: "deterministic" },
-                components: [
-                    {
-                        type: "body", 
-                        parameters: [
-                            { type: "text", text: "Focus on your duty, not the results" },
-                            { type: "text", text: "Reduce anxiety by concentrating on actions within your control" }
-                        ]
-                    }
-                ]
-            },
-            'emotional_check_in_english': {
-                name: "emotional_check_in_english",
-                language: { code: "en", policy: "deterministic" },
-                components: [
-                    {
-                        type: "body",
-                        parameters: [
-                            { type: "text", text: "Emotional Awareness: Take 30 seconds to check in with yourself." },
-                            { type: "text", text: "Notice your current mood without judgment." }
-                        ]
-                    }
-                ]
+                language_code: "en",
+                header_image: "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png",
+                header_type: "image"
             }
         };
 
-        const template = templateStructures[templateName] || templateStructures['problem_solver_english'];
-        
-        return {
-            messages: [{
-                clientWaNumber: cleanPhone,
-                message: template,
-                messageType: "template"
-            }]
-        };
+        console.log('📨 HELTAR Campaign Payload:', JSON.stringify(payload, null, 2));
+        return payload;
     }
 
-    async sendTestMessage() {
+    async sendCampaignMessage(phone) {
         try {
-            console.log(`\n🎯 SENDING TO: ${this.testNumber}`);
+            console.log(`\n🎯 SENDING TO: ${phone.country_code}${phone.whatsapp_number}`);
             
-            // TEST 1: Try SIMPLE structure first
-            console.log('\n🧪 TEST 1: Simple Template Structure');
-            const simplePayload = {
-                messages: [{
-                    clientWaNumber: this.testNumber.replace(/\D/g, ''),
-                    message: {
-                        name: "problem_solver_english",
-                        language: { code: "en" }
-                    },
-                    messageType: "template"
-                }]
-            };
+            const campaignPayload = this.createHeltarCampaignPayload(phone);
             
-            console.log('📨 Simple Payload:', JSON.stringify(simplePayload, null, 2));
-            
-            const simpleResponse = await axios.post(
-                `https://api.heltar.com/v1/messages/send`,
-                simplePayload,
+            // Use HELTAR campaign endpoint
+            const response = await axios.post(
+                `https://api.heltar.com/v1/campaigns/send`,
+                campaignPayload,
                 {
                     headers: {
                         'Authorization': `Bearer ${this.heltarApiKey}`,
@@ -106,127 +74,137 @@ class SarathiTestScheduler {
                 }
             );
 
-            console.log('✅ SIMPLE SUCCESS! Response:', JSON.stringify(simpleResponse.data, null, 2));
-            return { success: true, type: 'simple', data: simpleResponse.data };
+            console.log('✅ CAMPAIGN SUCCESS! Response:', JSON.stringify(response.data, null, 2));
+            
+            // Log to database
+            await this.logMessage(
+                `campaign_${Date.now()}_${phone.whatsapp_number}`,
+                `${phone.country_code}${phone.whatsapp_number}`,
+                'problem_solver_english',
+                response.data
+            );
+            
+            return { success: true, data: response.data };
 
         } catch (error) {
-            console.log('❌ SIMPLE FAILED:', error.response?.data || error.message);
+            console.error('❌ CAMPAIGN FAILED:');
+            console.error('Status:', error.response?.status);
+            console.error('Error Data:', error.response?.data);
+            console.error('Error Message:', error.message);
             
-            // TEST 2: Try with components
-            try {
-                console.log('\n🧪 TEST 2: With Components Structure');
-                const componentsPayload = {
-                    messages: [{
-                        clientWaNumber: this.testNumber.replace(/\D/g, ''),
-                        message: {
-                            name: "problem_solver_english",
-                            language: { code: "en", policy: "deterministic" },
-                            components: [
-                                {
-                                    type: "body",
-                                    parameters: [
-                                        { type: "text", text: "User" }
-                                    ]
-                                }
-                            ]
-                        },
-                        messageType: "template"
-                    }]
-                };
-                
-                console.log('📨 Components Payload:', JSON.stringify(componentsPayload, null, 2));
-                
-                const componentsResponse = await axios.post(
-                    `https://api.heltar.com/v1/messages/send`,
-                    componentsPayload,
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${this.heltarApiKey}`,
-                            'Content-Type': 'application/json'
-                        },
-                        timeout: 30000
-                    }
-                );
+            // Log failure
+            await this.logMessage(
+                `failed_${Date.now()}_${phone.whatsapp_number}`,
+                `${phone.country_code}${phone.whatsapp_number}`,
+                'problem_solver_english',
+                null,
+                'failed'
+            );
+            
+            return { 
+                success: false, 
+                error: error.message,
+                status: error.response?.status,
+                data: error.response?.data
+            };
+        }
+    }
 
-                console.log('✅ COMPONENTS SUCCESS! Response:', JSON.stringify(componentsResponse.data, null, 2));
-                return { success: true, type: 'components', data: componentsResponse.data };
-
-            } catch (error2) {
-                console.log('❌ COMPONENTS FAILED:', error2.response?.data || error2.message);
-                
-                // TEST 3: Try ULTRA SIMPLE
-                try {
-                    console.log('\n🧪 TEST 3: Ultra Simple Structure');
-                    const ultraSimplePayload = {
-                        messaging_product: "whatsapp",
-                        to: this.testNumber.replace(/\D/g, ''),
-                        type: "template",
-                        template: {
-                            name: "problem_solver_english",
-                            language: { code: "en" }
-                        }
-                    };
-                    
-                    console.log('📨 Ultra Simple (Direct WhatsApp):', JSON.stringify(ultraSimplePayload, null, 2));
-                    
-                    const ultraResponse = await axios.post(
-                        `https://graph.facebook.com/v18.0/${this.heltarPhoneId}/messages`,
-                        ultraSimplePayload,
-                        {
-                            headers: {
-                                'Authorization': `Bearer ${this.heltarApiKey}`,
-                                'Content-Type': 'application/json'
-                            },
-                            timeout: 30000
-                        }
-                    );
-
-                    console.log('✅ ULTRA SIMPLE SUCCESS! Response:', JSON.stringify(ultraResponse.data, null, 2));
-                    return { success: true, type: 'ultra_simple', data: ultraResponse.data };
-
-                } catch (error3) {
-                    console.log('❌ ULTRA SIMPLE FAILED:', error3.response?.data || error3.message);
-                    return { success: false, error: 'All tests failed' };
-                }
-            }
+    async logMessage(messageId, phone, template, apiResponse = null, status = 'sent') {
+        const client = await this.getDbClient();
+        try {
+            await client.query(`
+                INSERT INTO morning_messages_sent 
+                (message_id, phone, template_id, template_name, sent_time, delivery_status, language, category)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            `, [
+                messageId,
+                phone,
+                '1203964201590524',
+                template,
+                new Date(),
+                status,
+                'english',
+                'problem_solver'
+            ]);
+            console.log('📊 Message logged to database');
+        } catch (error) {
+            console.error('❌ Failed to log message:', error.message);
+        } finally {
+            await client.end();
         }
     }
 
     async runTest() {
         try {
-            console.log('🚀 STARTING TEMPLATE STRUCTURE TESTS...');
-            console.log('='.repeat(60));
-            
-            const result = await this.sendTestMessage();
-            
-            console.log('\n📋 FINAL TEST RESULT:');
-            console.log('='.repeat(60));
-            if (result.success) {
-                console.log(`🎉 SUCCESS with ${result.type} structure!`);
-                console.log('📊 Message ID:', result.data?.messages?.[0]?.id);
-            } else {
-                console.log('❌ ALL TEMPLATE STRUCTURES FAILED');
-                console.log('💡 Check: Template name, approval status, or API credentials');
+            console.log('🚀 STARTING HELTAR CAMPAIGN TEST');
+            console.log('=' .repeat(50));
+            console.log('📋 Template: problem_solver_english');
+            console.log('🖼️  Image: Gemini_Generated_Image_yccjv2yccjv2yccj-6.png');
+            console.log('👥 Contacts: 2 test numbers');
+            console.log('=' .repeat(50));
+
+            let successCount = 0;
+            let failedCount = 0;
+            const results = [];
+
+            // Send to both test numbers
+            for (const phone of this.testNumbers) {
+                console.log(`\n📍 Processing: ${phone.country_code}${phone.whatsapp_number}`);
+                
+                const result = await this.sendCampaignMessage(phone);
+                results.push({
+                    phone: `${phone.country_code}${phone.whatsapp_number}`,
+                    success: result.success
+                });
+
+                if (result.success) {
+                    successCount++;
+                    console.log(`✅ SUCCESS: Sent to ${phone.country_code}${phone.whatsapp_number}`);
+                } else {
+                    failedCount++;
+                    console.log(`❌ FAILED: ${phone.country_code}${phone.whatsapp_number}`);
+                }
+
+                // Wait 2 seconds between sends
+                await new Promise(resolve => setTimeout(resolve, 2000));
             }
+
+            // Summary
+            console.log('\n📊 TEST SUMMARY:');
+            console.log('=' .repeat(50));
+            console.log(`   ✅ Successful: ${successCount}`);
+            console.log(`   ❌ Failed: ${failedCount}`);
+            console.log(`   📊 Total: ${this.testNumbers.length}`);
             
-            return result;
+            results.forEach(result => {
+                console.log(`   ${result.success ? '✅' : '❌'} ${result.phone}`);
+            });
+
+            return {
+                success: successCount > 0,
+                sent: successCount,
+                failed: failedCount,
+                total: this.testNumbers.length,
+                results
+            };
 
         } catch (error) {
-            console.error('💥 Test crashed:', error);
+            console.error('💥 Test failed:', error);
             return { success: false, error: error.message };
         }
     }
 }
 
 // Run immediately
-const testScheduler = new SarathiTestScheduler();
+const scheduler = new SimpleScheduler();
 
-testScheduler.runTest()
+scheduler.runTest()
     .then(result => {
-        console.log('\n✨ Test session completed');
+        console.log('\n✨ Test completed');
         process.exit(result.success ? 0 : 1);
     })
     .catch(error => {
-        console.error('💥 Test session crashed:', error);
+        console.error('💥 Test crashed:', error);
         process.exit(1);
     });
