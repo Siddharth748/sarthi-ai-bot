@@ -1,4 +1,4 @@
-// scheduler.js - Sarathi AI Template Testing Scheduler (HELTAR FIXED)
+// scheduler.js - Sarathi AI Template Testing Scheduler (FIXED CONNECTION)
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
@@ -6,10 +6,8 @@ import cron from 'node-cron';
 
 class SarathiTestingScheduler {
     constructor() {
-        this.dbClient = new Client({
-            connectionString: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false }
-        });
+        // Create new client instance each time to avoid reuse issues
+        this.dbClient = null;
         
         // 6-Day Template Rotation Schedule - STARTING FROM DAY 1
         this.templateSchedule = [
@@ -65,13 +63,26 @@ class SarathiTestingScheduler {
 
         this.heltarApiKey = process.env.HELTAR_API_KEY;
         this.heltarPhoneId = process.env.HELTAR_PHONE_ID;
+        this.isInitialized = false;
         
         console.log('✅ Sarathi Testing Scheduler Initialized');
         console.log('📅 6-Day Template Rotation Ready');
     }
 
     async initialize() {
+        // Prevent multiple initializations
+        if (this.isInitialized) {
+            console.log('⚠️ Scheduler already initialized');
+            return;
+        }
+
         try {
+            // Create new client instance
+            this.dbClient = new Client({
+                connectionString: process.env.DATABASE_URL,
+                ssl: { rejectUnauthorized: false }
+            });
+            
             await this.dbClient.connect();
             console.log('✅ Database connected for scheduler');
             
@@ -81,10 +92,26 @@ class SarathiTestingScheduler {
             // Verify WhatsApp credentials
             await this.verifyWhatsAppCredentials();
             
+            this.isInitialized = true;
+            
         } catch (error) {
             console.error('❌ Scheduler initialization failed:', error.message);
+            // Clean up on failure
+            if (this.dbClient) {
+                await this.dbClient.end().catch(() => {});
+                this.dbClient = null;
+            }
             throw error;
         }
+    }
+
+    async cleanup() {
+        if (this.dbClient) {
+            await this.dbClient.end().catch(() => {});
+            this.dbClient = null;
+        }
+        this.isInitialized = false;
+        console.log('🧹 Scheduler cleanup completed');
     }
 
     async ensureAllUsersSubscribed() {
@@ -111,6 +138,7 @@ class SarathiTestingScheduler {
             
         } catch (error) {
             console.error('❌ Failed to enable users:', error.message);
+            throw error;
         }
     }
 
@@ -146,11 +174,15 @@ class SarathiTestingScheduler {
     }
 
     getCurrentDayTemplate() {
-        // FIXED: Start from Day 1 with manual control
-        const manualDay = 1; // FORCE START FROM DAY 1
+        // Calculate day based on actual date to maintain consistency
+        const startDate = new Date('2024-01-22'); // Starting from today
+        const currentDate = new Date();
+        const diffTime = currentDate - startDate;
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        const dayOfCycle = (diffDays % 6) + 1;
         
-        const template = this.templateSchedule.find(t => t.day === manualDay);
-        console.log(`🎯 FORCING Day ${manualDay}: Using template ${template.template}`);
+        const template = this.templateSchedule.find(t => t.day === dayOfCycle);
+        console.log(`📅 Day ${dayOfCycle}: Using template ${template.template}`);
         return template;
     }
 
@@ -264,8 +296,6 @@ class SarathiTestingScheduler {
                 }]
             };
 
-            console.log('📤 Sending to HELTAR:', JSON.stringify(heltarPayload, null, 2));
-
             // Send via HELTAR API
             const response = await axios.post(
                 `https://api.heltar.com/v1/messages/send`,
@@ -375,10 +405,14 @@ class SarathiTestingScheduler {
     }
 
     async scheduleDailyMessages() {
+        if (!this.isInitialized) {
+            await this.initialize();
+        }
+
         try {
             console.log('🚀 Starting daily message scheduling...');
             
-            // Get current template for today - FORCE DAY 1
+            // Get current template for today
             const currentTemplate = this.getCurrentDayTemplate();
             
             // Load ALL subscribed users
@@ -490,7 +524,11 @@ class SarathiTestingScheduler {
     }
 
     // Start the scheduler to run daily at 7:30 AM IST
-    startScheduler() {
+    async startScheduler() {
+        if (!this.isInitialized) {
+            await this.initialize();
+        }
+
         const istCronTime = this.getISTCronTime();
         
         console.log('⏰ Scheduling daily messages at 7:30 AM IST...');
@@ -513,62 +551,68 @@ class SarathiTestingScheduler {
         console.log('✅ Scheduler started successfully');
         console.log('📅 Next run: Tomorrow 7:30 AM IST');
         console.log('👥 Sending to: ALL subscribed users (no language filtering)');
-        console.log('🔄 Template rotation: 6-day cycle starting from Day 1');
+        console.log('🔄 Template rotation: 6-day cycle');
         console.log('💤 Process running in background, waiting for scheduled tasks...');
     }
 
     // Manual trigger for immediate testing
     async manualTrigger() {
         console.log('🔧 Manual trigger activated - Starting immediate send...');
-        return await this.scheduleDailyMessages();
+        const result = await this.scheduleDailyMessages();
+        
+        // Clean up after manual trigger
+        await this.cleanup();
+        
+        return result;
     }
 }
 
 // Create and export instance
 const scheduler = new SarathiTestingScheduler();
 export default scheduler;
+
 // =============== IMMEDIATE MANUAL TRIGGER ===============
-// Force send today's messages immediately
-console.log('🚨 MANUAL TRIGGER: Sending Day 1 messages NOW...');
-scheduler.initialize().then(async () => {
-    console.log('🎯 Starting immediate send of Day 1 template...');
-    const result = await scheduler.scheduleDailyMessages();
-    console.log('📋 IMMEDIATE RESULT:', result);
-    
-    if (result.sent_successfully > 0) {
-        console.log('🎉 SUCCESS! Messages sent successfully');
-        console.log(`📨 Sent: ${result.sent_successfully} messages`);
-        console.log(`❌ Failed: ${result.failed} messages`);
-        console.log(`📊 Success Rate: ${result.success_rate}`);
-    } else {
-        console.log('❌ FAILED: No messages sent');
-    }
-    
-    process.exit(0);
-}).catch(error => {
-    console.error('❌ Manual trigger failed:', error);
-    process.exit(1);
-});
-// Auto-start if run directly
+// This will run when the file is executed directly
 const isMainModule = process.argv[1] && process.argv[1].includes('scheduler.js');
 if (isMainModule) {
-    scheduler.initialize().then(async () => {
-        console.log('🚀 Scheduler initialized successfully');
+    console.log('🚀 Starting Sarathi Scheduler...');
+    
+    // Check if manual trigger is requested
+    if (process.argv.includes('--manual') || process.argv.includes('--test')) {
+        console.log('🔧 MANUAL TRIGGER: Sending Day 1 messages NOW...');
         
-        // Check if manual trigger is requested
-        if (process.argv.includes('--manual') || process.argv.includes('--test')) {
-            console.log('🔧 Running manual test...');
-            const result = await scheduler.manualTrigger();
-            console.log('📋 Manual test result:', result);
-            process.exit(0);
-        } else {
-            // Start the scheduled service
-            scheduler.startScheduler();
+        scheduler.initialize().then(async () => {
+            try {
+                const result = await scheduler.manualTrigger();
+                console.log('📋 MANUAL TRIGGER RESULT:', result);
+                
+                if (result.sent_successfully > 0) {
+                    console.log('🎉 SUCCESS! Messages sent successfully');
+                    console.log(`📨 Sent: ${result.sent_successfully} messages`);
+                    console.log(`❌ Failed: ${result.failed} messages`);
+                    console.log(`📊 Success Rate: ${result.success_rate}`);
+                } else {
+                    console.log('❌ FAILED: No messages sent');
+                }
+            } catch (error) {
+                console.error('❌ Manual trigger failed:', error);
+            } finally {
+                await scheduler.cleanup();
+                process.exit(0);
+            }
+        }).catch(error => {
+            console.error('❌ Scheduler initialization failed:', error);
+            process.exit(1);
+        });
+    } else {
+        // Start the scheduled service (for normal operation)
+        scheduler.initialize().then(async () => {
+            console.log('✅ Scheduler initialized successfully');
+            await scheduler.startScheduler();
             console.log('💤 Process running in background...');
-        }
-        
-    }).catch(error => {
-        console.error('❌ Scheduler failed to initialize:', error);
-        process.exit(1);
-    });
+        }).catch(error => {
+            console.error('❌ Scheduler failed to initialize:', error);
+            process.exit(1);
+        });
+    }
 }
