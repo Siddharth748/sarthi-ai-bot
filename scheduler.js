@@ -1,9 +1,9 @@
-// correct-scheduler.js - Exact HELTAR Structure from Zod Error
+// image-header-scheduler.js - Correct Image Header Structure
 import pkg from 'pg';
 const { Client } = pkg;
 import axios from 'axios';
 
-class CorrectScheduler {
+class ImageHeaderScheduler {
     constructor() {
         this.dbConfig = {
             connectionString: process.env.DATABASE_URL,
@@ -19,7 +19,7 @@ class CorrectScheduler {
             { country_code: "91", whatsapp_number: "7018122128" }
         ];
         
-        console.log('✅ Correct Scheduler Ready');
+        console.log('✅ Image Header Scheduler Ready');
     }
 
     async getDbClient() {
@@ -28,32 +28,7 @@ class CorrectScheduler {
         return client;
     }
 
-    // EXACT STRUCTURE FROM ZOD ERROR
-    createHeltarPayload(phone) {
-        const fullNumber = phone.country_code + phone.whatsapp_number;
-        
-        const payload = {
-            campaignName: "Sarathi AI Test Campaign", // camelCase
-            templateName: "problem_solver_english",   // camelCase  
-            languageCode: "en",                       // camelCase
-            messages: [{                              // array, not contacts
-                clientWaNumber: fullNumber,           // full number without +
-                message: {
-                    name: "problem_solver_english",
-                    language: {
-                        code: "en",
-                        policy: "deterministic"
-                    }
-                },
-                messageType: "template"
-            }]
-        };
-
-        console.log('📨 EXACT HELTAR Payload:', JSON.stringify(payload, null, 2));
-        return payload;
-    }
-
-    // ALTERNATIVE: With header image
+    // CORRECT STRUCTURE WITH IMAGE HEADER
     createHeltarPayloadWithImage(phone) {
         const fullNumber = phone.country_code + phone.whatsapp_number;
         
@@ -74,7 +49,7 @@ class CorrectScheduler {
                             type: "header",
                             parameters: [
                                 {
-                                    type: "image", 
+                                    type: "image",
                                     image: {
                                         link: "https://raw.githubusercontent.com/Siddharth748/sarthi-ai-bot/main/data/Gemini_Generated_Image_yccjv2yccjv2yccj-6.png"
                                     }
@@ -87,7 +62,72 @@ class CorrectScheduler {
             }]
         };
 
-        console.log('📨 HELTAR Payload (with image):', JSON.stringify(payload, null, 2));
+        console.log('📨 HELTAR Payload (with image header):', JSON.stringify(payload, null, 2));
+        return payload;
+    }
+
+    // ALTERNATIVE: Try without any components first
+    createHeltarSimplePayload(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
+        const payload = {
+            campaignName: "Sarathi AI Test Campaign",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    }
+                    // No components at all
+                },
+                messageType: "template"
+            }]
+        };
+
+        console.log('📨 HELTAR Simple Payload (no components):', JSON.stringify(payload, null, 2));
+        return payload;
+    }
+
+    // TEST: Try with different image URL (maybe GitHub raw URL issue)
+    createHeltarPayloadWithCDNImage(phone) {
+        const fullNumber = phone.country_code + phone.whatsapp_number;
+        
+        const payload = {
+            campaignName: "Sarathi AI Test Campaign",
+            templateName: "problem_solver_english", 
+            languageCode: "en",
+            messages: [{
+                clientWaNumber: fullNumber,
+                message: {
+                    name: "problem_solver_english",
+                    language: {
+                        code: "en",
+                        policy: "deterministic"
+                    },
+                    components: [
+                        {
+                            type: "header",
+                            parameters: [
+                                {
+                                    type: "image",
+                                    image: {
+                                        // Try a different image URL that's definitely accessible
+                                        link: "https://images.unsplash.com/photo-1541963463532-d68292c34b19?w=400"
+                                    }
+                                }
+                            ]
+                        }
+                    ]
+                },
+                messageType: "template"
+            }]
+        };
+
+        console.log('📨 HELTAR Payload (with CDN image):', JSON.stringify(payload, null, 2));
         return payload;
     }
 
@@ -122,7 +162,9 @@ class CorrectScheduler {
             return { success: true, data: response.data };
 
         } catch (error) {
-            console.log(`❌ ${testName} FAILED:`, error.response?.data || error.message);
+            console.log(`❌ ${testName} FAILED:`);
+            console.log('Error:', error.response?.data?.error || error.message);
+            console.log('Details:', error.response?.data?.error_data?.details);
             
             await this.logMessage(
                 `failed_${Date.now()}_${phone.whatsapp_number}`,
@@ -135,6 +177,7 @@ class CorrectScheduler {
             return { 
                 success: false, 
                 error: error.message,
+                details: error.response?.data?.error_data?.details,
                 data: error.response?.data
             };
         }
@@ -142,51 +185,63 @@ class CorrectScheduler {
 
     async runTests() {
         try {
-            console.log('🚀 TESTING EXACT HELTAR STRUCTURE');
+            console.log('🚀 TESTING IMAGE HEADER STRUCTURES');
             console.log('=' .repeat(60));
             console.log('📞 Test Numbers:', this.testNumbers.map(p => `${p.country_code}${p.whatsapp_number}`).join(', '));
             console.log('📋 Template: problem_solver_english');
+            console.log('🖼️  Template expects: IMAGE header');
             console.log('=' .repeat(60));
 
             const testPhone = this.testNumbers[0];
             
-            // TEST 1: Basic structure (camelCase fields + messages array)
-            console.log('\n1️⃣  TEST 1: Basic structure (camelCase + messages array)');
+            // TEST 1: Try without any components (see if template works without header)
+            console.log('\n1️⃣  TEST 1: No components (check if template works without header)');
             const test1 = await this.sendTestMessage(
                 testPhone, 
-                this.createHeltarPayload, 
-                'BASIC_STRUCTURE'
+                this.createHeltarSimplePayload, 
+                'NO_COMPONENTS'
             );
 
             if (test1.success) {
-                console.log('🎉 SUCCESS with basic structure!');
-                
-                // Send to second number if first worked
-                console.log('\n📍 Sending to second number...');
-                const testPhone2 = this.testNumbers[1];
-                await this.sendTestMessage(testPhone2, this.createHeltarPayload, 'SECOND_NUMBER');
-                
+                console.log('🎉 SUCCESS! Template works without header components');
                 return test1;
             }
 
-            // TEST 2: With header image
-            console.log('\n2️⃣  TEST 2: With header image components');
+            // TEST 2: With image header (GitHub URL)
+            console.log('\n2️⃣  TEST 2: With image header (GitHub URL)');
             await new Promise(resolve => setTimeout(resolve, 2000));
             const test2 = await this.sendTestMessage(
                 testPhone, 
                 this.createHeltarPayloadWithImage, 
-                'WITH_IMAGE'
+                'GITHUB_IMAGE'
             );
 
             if (test2.success) {
-                console.log('🎉 SUCCESS with header image!');
+                console.log('🎉 SUCCESS with GitHub image!');
                 return test2;
             }
 
-            console.log('\n❌ BOTH TESTS FAILED');
-            console.log('Last error details:', JSON.stringify(test2.data, null, 2));
+            // TEST 3: With different image URL (CDN)
+            console.log('\n3️⃣  TEST 3: With different image (CDN URL)');
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            const test3 = await this.sendTestMessage(
+                testPhone, 
+                this.createHeltarPayloadWithCDNImage, 
+                'CDN_IMAGE'
+            );
+
+            if (test3.success) {
+                console.log('🎉 SUCCESS with CDN image!');
+                return test3;
+            }
+
+            console.log('\n❌ ALL IMAGE TESTS FAILED');
+            console.log('💡 Possible issues:');
+            console.log('   - Image URL not accessible by WhatsApp servers');
+            console.log('   - Template might need specific image dimensions/format');
+            console.log('   - Check template configuration in WhatsApp Business Manager');
             
-            return { success: false, error: 'Both structure tests failed' };
+            return { success: false, error: 'All image header tests failed' };
 
         } catch (error) {
             console.error('💥 Test failed:', error);
@@ -221,18 +276,19 @@ class CorrectScheduler {
 }
 
 // Run tests
-const scheduler = new CorrectScheduler();
+const scheduler = new ImageHeaderScheduler();
 
 scheduler.runTests()
     .then(result => {
         if (result.success) {
-            console.log('\n🎉 HELTAR INTEGRATION SUCCESSFUL!');
-            console.log('✨ You can now use this exact structure for all messages');
+            console.log('\n🎉 IMAGE HEADER ISSUE SOLVED!');
+            console.log('✨ Use the working structure for all future messages');
         } else {
-            console.log('\n💡 Check:');
-            console.log('1. Verify template name exactly matches in WhatsApp Business Manager');
-            console.log('2. Check if template needs specific body parameters');
-            console.log('3. Confirm WhatsApp Business Account is active');
+            console.log('\n🔧 Next steps:');
+            console.log('1. Check if GitHub raw image URL is accessible publicly');
+            console.log('2. Verify image meets WhatsApp requirements (format, size)');
+            console.log('3. Try uploading image to a CDN service');
+            console.log('4. Check template configuration in Meta Business Suite');
         }
         process.exit(result.success ? 0 : 1);
     })
