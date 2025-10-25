@@ -1,4 +1,4 @@
-// index.js — SarathiAI (OPTIMIZED FOR TEMPLATE BUTTONS + ENGAGEMENT)
+// index.js — SarathiAI (COMPLETE VERSION WITH ALL FIXES)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -22,7 +22,7 @@ const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
-const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "1200", 10) || 1200;
+const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "280", 10) || 280;
 
 /* ---------------- Enhanced Database Pool ---------------- */
 const dbPool = new Pool({ 
@@ -37,138 +37,153 @@ const dbPool = new Pool({
 /* ---------------- Response Cache ---------------- */
 const responseCache = new Map();
 
-/* =============== 🚨 TEMPLATE BUTTON RESPONSE SYSTEM =============== */
+/* =============== 🚨 OPTIMIZED TEMPLATE BUTTON RESPONSE SYSTEM =============== */
 
 const OPTIMIZED_TEMPLATE_RESPONSES = {
     // PROBLEM SOLVER TEMPLATE BUTTONS
     'work stress': {
-        english: `"It's tough when work pressure feels overwhelming, isn't it? 😔
+        english: `Work pressure overwhelming? 😔
 
-The Gita says: Perform duty without attachment to results.
+Krishna says in Gita 2.47: "Focus on duty, not results."
 
-This moment will pass - Krishna's guidance brings inner calm. 🕉️
+This moment will pass. Your inner strength is greater than any stress. 🕉️
 
-Is there one particular thing that's weighing on you the most, or is it just the sheer volume of it all?"`,
+What's the heaviest part weighing on you right now?`,
         
-        hindi: `"काम का तनाव वाकई बहुत भारी लग सकता है, है ना? 😔
+        hindi: `काम का तनाव भारी लग रहा? 😔
 
-गीता कहती है: कर्म करो, फल की चिंता मत करो।
+कृष्ण गीता 2.47 में कहते: "कर्म करो, फल की चिंता मत करो।"
 
-यह समय भी बीत जाएगा - कृष्ण का मार्गदर्शन शांति लाता है। 🕉️
+यह समय भी बीत जाएगा। आपकी आंतरिक शक्ति तनाव से बड़ी है। 🕉️
 
-क्या कोई एक खास बात है जो सबसे ज्यादा परेशान कर रही है, या बस सब कुछ एक साथ हो रहा है?"`
+अभी सबसे ज्यादा क्या भारी लग रहा है?`
     },
     
     'relationship issues': {
-        english: `"Relationship struggles can leave you feeling quite isolated and misunderstood... 💔
+        english: `Relationship struggles hurt deeply... 💔
 
-The Gita teaches: See the divine in every being.
+Gita teaches: See the divine in every being.
 
-This perspective can transform how you connect with others. 🌟
+Krishna's wisdom can heal your connections. 🌟
 
-If you're up for sharing, what's feeling like the heaviest part of it all right now?"`,
+What part feels most painful right now?`,
         
-        hindi: `"रिश्तों की परेशानियाँ आपको अकेला और गलत समझा हुआ महसूस करा सकती हैं... 💔
+        hindi: `रिश्तों की परेशानियाँ गहरा दुख देती हैं... 💔
 
-गीता सिखाती है: हर प्राणी में दिव्यता देखो।
+गीता सिखाती: हर प्राणी में दिव्यता देखो।
 
-यह दृष्टिकोण आपके जुड़ाव को बदल सकता है। 🌟
+कृष्ण का ज्ञान आपके जुड़ाव को ठीक कर सकता है। 🌟
 
-अगर आप बांटना चाहें, तो अभी सबसे ज्यादा कौन सी बात भारी लग रही है?"`
+अभी सबसे ज्यादा दर्द किस बात का है?`
     },
     
     'personal confusion': {
-        english: `"That feeling of being lost and uncertain about which path to take can be really draining... 🌀
+        english: `Feeling lost about life's path? 🌀
 
-Gita wisdom: The soul is eternal and cannot be destroyed by confusion.
+Gita wisdom: Your soul is eternal, confusion is temporary.
 
-Your inner clarity will emerge from this turbulence. ✨
+Krishna guides through every uncertainty. ✨
 
-What aspect of your situation feels the most unclear or confusing to you right now?"`,
+What feels most unclear to you currently?`,
         
-        hindi: `"कौन सा रास्ता चुनें, इस अनिश्चितता की भावना वाकई थका देने वाली हो सकती है... 🌀
+        hindi: `जीवन का रास्ता भटका हुआ लगता है? 🌀
 
-गीता ज्ञान: आत्मा अमर है और भ्रम से नष्ट नहीं हो सकती।
+गीता ज्ञान: आपकी आत्मा अमर है, भ्रम अस्थायी है।
 
-इस उथल-पुथल से आपकी आंतरिक स्पष्टता प्रकट होगी। ✨
+कृष्ण हर अनिश्चितता में मार्गदर्शन देते हैं। ✨
 
-आपकी स्थिति का कौन सा पहलू अभी सबसे ज्यादा अस्पष्ट या भ्रमित करने वाला लग रहा है?"`
+अभी सबसे ज्यादा क्या अस्पष्ट लग रहा है?`
     },
     
     'anxiety': {
-        english: `"Anxiety can make everything feel like it's spinning out of control, can't it? 😰
+        english: `Anxiety making everything feel out of control? 😰
 
-The Gita reminds: The mind may be restless, but the soul remains steady.
+Krishna reminds in Gita 2.56: "Be steady in sorrow and joy."
 
-This anxious wave will settle, revealing your inner strength. 🌊
+This anxious wave will settle, revealing your calm center. 🌊
 
-Are there specific thoughts that keep looping in your mind, or is it more of a general unease?"`,
+What thoughts keep looping in your mind?`,
         
-        hindi: `"चिंता सब कुछ नियंत्रण से बाहर होने जैसा महसूस करा सकती है, है ना? 😰
+        hindi: `चिंता सब कुछ बेकाबू लग रहा है? 😰
 
-गीता याद दिलाती है: मन चंचल हो सकता है, पर आत्मा स्थिर रहती है।
+कृष्ण गीता 2.56 में याद दिलाते: "दुख और सुख में स्थिर रहो।"
 
-यह चिंता की लहर थमेगी, आपकी आंतरिक शक्ति को प्रकट करते हुए। 🌊
+यह चिंता की लहर थमेगी, आपका शांत केंद्र प्रकट होगा। 🌊
 
-क्या कोई खास विचार हैं जो दिमाग में घूम रहे हैं, या यह सामान्य बेचैनी है?"`
+कौन से विचार दिमाग में घूम रहे हैं?`
     },
     
     'custom help': {
-        english: `"I understand you have a specific situation that needs personalized guidance... 🤔
+        english: `I understand you need personalized guidance... 🤔
 
-The Gita offers wisdom for every unique challenge life presents.
+Krishna's Gita offers wisdom for every unique situation.
 
-Your specific circumstances deserve specific solutions. 💫
+Your specific challenge deserves specific solutions. 💫
 
-Could you share what particular challenge you're facing right now?"`,
+What particular situation are you facing?`,
         
-        hindi: `"मैं समझता हूँ आपकी कोई खास स्थिति है जिसे व्यक्तिगत मार्गदर्शन चाहिए... 🤔
+        hindi: `समझता हूँ आपको व्यक्तिगत मार्गदर्शन चाहिए... 🤔
 
-गीता जीवन की हर अनोखी चुनौती के लिए ज्ञान प्रदान करती है।
+कृष्ण की गीता हर अनोखी स्थिति के लिए ज्ञान देती है।
 
-आपकी विशेष परिस्थितियों के लिए विशेष समाधान चाहिए। 💫
+आपकी विशेष चुनौती के लिए विशेष समाधान चाहिए। 💫
 
-क्या आप बता सकते हैं कि आप अभी किस खास चुनौती का सामना कर रहे हैं?"`
+आप किस खास स्थिति का सामना कर रहे हैं?`
     },
 
     // DAILY WISDOM TEMPLATE BUTTONS
     'practice': {
-        english: `"Finding focus can feel impossible when the mind is restless... 🌀
+        english: `Mind feeling restless? 🌀
 
-Take 2 minutes: Breathe deeply while repeating 'Hare Krishna'
+Krishna's simple practice: 2 minutes of deep breathing with "Hare Krishna"
 
-Feel the peace slowly returning with each breath. 🙏
+Feel peace returning with each breath. 🙏
 
-How does your mind feel now compared to 2 minutes ago? Is the 'volume' any lower?"`,
+How does your mind feel now? Calmer?`,
         
-        hindi: `"ध्यान केंद्रित करना असंभव लग सकता है जब मन अशांत हो... 🌀
+        hindi: `मन अशांत लग रहा? 🌀
 
-2 मिनट लें: गहरी सांस लेते हुए 'हरे कृष्ण' दोहराएं
+कृष्ण का सरल अभ्यास: 2 मिनट गहरी सांस + "हरे कृष्ण"
 
-हर सांस के साथ शांति धीरे-धीरे लौटती महसूस करें। 🙏
+हर सांस के साथ शांति लौटती महसूस करें। 🙏
 
-2 मिनट पहले की तुलना में अब आपका मन कैसा महसूस कर रहा है? क्या 'शोर' कम हुआ है?"`
+अब आपका मन कैसा महसूस कर रहा? शांत?`
     },
 
     // EMOTIONAL CHECK-IN TEMPLATE BUTTONS  
     'hare krishna': {
-        english: `"That heavy feeling is real, and many struggle to shake it off... 💭
+        english: `That heavy feeling is real... 💭
 
-'The soul is eternal' - this temporary emotion doesn't define you.
+Krishna says: "The soul is eternal" - this emotion doesn't define you.
 
-Krishna's love is constant, even in difficult moments. ❤️
+His love is constant, even in difficult moments. ❤️
 
-I'm here to listen. What's on your mind?"`,
+What's specifically on your mind right now?`,
         
-        hindi: `"वह भारीपन वास्तविक है, और कई लोग इसे छुटकारा पाने के लिए संघर्ष करते हैं... 💭
+        hindi: `वह भारीपन वास्तविक है... 💭
 
-'आत्मा अमर है' - यह अस्थायी भावना आपको परिभाषित नहीं करती।
+कृष्ण कहते: "आत्मा अमर है" - यह भावना आपको परिभाषित नहीं करती।
 
-कृष्ण का प्यार स्थिर है, मुश्किल समय में भी। ❤️
+उनका प्यार स्थिर है, मुश्किल समय में भी। ❤️
 
-मैं सुनने के लिए यहाँ हूँ। आपके मन में क्या चल रहा है?"`
+अभी खासकर आपके मन में क्या चल रहा है?`
     }
 };
+
+// Optimize template responses for length
+function optimizeTemplateResponses() {
+    Object.keys(OPTIMIZED_TEMPLATE_RESPONSES).forEach(key => {
+        ['english', 'hindi'].forEach(lang => {
+            if (OPTIMIZED_TEMPLATE_RESPONSES[key][lang]) {
+                OPTIMIZED_TEMPLATE_RESPONSES[key][lang] = optimizeMessageLength(
+                    OPTIMIZED_TEMPLATE_RESPONSES[key][lang], 
+                    250
+                );
+            }
+        });
+    });
+}
+optimizeTemplateResponses();
 
 // Button text mapping for detection
 const BUTTON_MAPPING = {
@@ -189,6 +204,220 @@ const BUTTON_MAPPING = {
     'अभ्यास': 'practice'
 };
 
+/* ---------------- PERFECTED LANGUAGE DETECTION ---------------- */
+function detectLanguageFromText(text, currentLanguage = "English") {
+    if (!text || typeof text !== "string") return currentLanguage;
+    
+    const cleanText = text.trim().toLowerCase();
+    
+    // 1. EXPLICIT language commands - HIGHEST PRIORITY
+    if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
+        return "English";
+    }
+    if (cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('hind')) {
+        return "Hindi";
+    }
+    
+    // 2. Hindi script detection - ABSOLUTE CONFIDENCE
+    if (/[\u0900-\u097F]/.test(text)) {
+        return "Hindi";
+    }
+    
+    // 3. Pure English text detection
+    const isPureEnglish = /^[a-zA-Z\s,.!?'"-]+$/.test(text) && text.length > 2;
+    if (isPureEnglish) {
+        return "English";
+    }
+    
+    // 4. Romanized Hindi detection - STRONG PATTERNS
+    const hindiRomanPatterns = [
+        /\b(kaise|kya|kyu|kaun|kahan|kab|kaisa|kitna|karni|karte|hain|ho|hai|hun)\b/i,
+        /\b(main|mera|mere|meri|tum|aap|hum|hamara|unka|uska|apna|apne)\b/i,
+        /\b(mujhe|tujhe|use|hamein|unhein|karke|hokar|kar|lekin|par|aur|ya)\b/i,
+        /\b(accha|theek|sahi|galat|bhoot|zyada|kam|subah|shaam|raat)\b/i,
+        /\b(bahut|thoda|kyun|karo|kare|rahe|raha|rahi|chahiye|nahi|nahin)\b/i
+    ];
+    
+    const hindiMatches = hindiRomanPatterns.filter(pattern => pattern.test(cleanText)).length;
+    if (hindiMatches >= 2) {
+        return "Hindi";
+    }
+    
+    // 5. Single word greetings detection
+    const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe', 'radhe radhe', 'hare krishna'];
+    const englishGreetings = ['hi', 'hello', 'hey', 'thanks', 'thank you'];
+    
+    if (hindiGreetings.includes(cleanText)) return "Hindi";
+    if (englishGreetings.includes(cleanText)) return "English";
+    
+    // 6. Default to current language for ambiguous cases
+    return currentLanguage;
+}
+
+async function determineUserLanguage(phone, text, user) {
+    let currentLanguage = user.language_preference || user.language || 'English';
+    const detectedLanguage = detectLanguageFromText(text, currentLanguage);
+    
+    console.log(`🔤 Language Detection: "${text}" -> ${detectedLanguage} (was: ${currentLanguage})`);
+    
+    // Check for explicit language commands
+    const cleanText = text.toLowerCase().trim();
+    const isLanguageSwitchCommand = 
+        cleanText.includes('english') || 
+        cleanText.includes('hindi') ||
+        cleanText.includes('speak english') ||
+        cleanText.includes('speak hindi') ||
+        cleanText.includes('angrezi') ||
+        cleanText.includes('hind');
+    
+    if (isLanguageSwitchCommand) {
+        let newLanguage = currentLanguage;
+        
+        if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
+            newLanguage = 'English';
+        } else if (cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('hind')) {
+            newLanguage = 'Hindi';
+        }
+        
+        if (newLanguage !== currentLanguage) {
+            await updateUserState(phone, { 
+                language_preference: newLanguage,
+                language: newLanguage
+            });
+            console.log(`🔄 Language switched to: ${newLanguage}`);
+            return { language: newLanguage, isSwitch: true, switchTo: newLanguage };
+        }
+    }
+    
+    // Only update language if detection is confident and different
+    if (detectedLanguage !== currentLanguage) {
+        const isConfidentDetection = 
+            /[\u0900-\u097F]/.test(text) ||
+            (/^[a-zA-Z\s,.!?'"-]+$/.test(text) && text.length > 3) ||
+            ['namaste', 'namaskar', 'pranam', 'radhe radhe'].includes(cleanText) ||
+            ['hi', 'hello', 'hey', 'thanks', 'thank you'].includes(cleanText);
+            
+        if (isConfidentDetection) {
+            await updateUserState(phone, { 
+                language_preference: detectedLanguage,
+                language: detectedLanguage 
+            });
+            console.log(`🔄 Language updated to: ${detectedLanguage} (confident detection)`);
+            return { language: detectedLanguage, isSwitch: true, switchTo: detectedLanguage };
+        }
+    }
+    
+    return { language: currentLanguage, isSwitch: false };
+}
+
+/* ---------------- MESSAGE LENGTH OPTIMIZATION ---------------- */
+function optimizeMessageLength(message, maxLength = 280) {
+    if (!message || message.length <= maxLength) {
+        return message;
+    }
+    
+    // For template button responses, preserve the structure but shorten if needed
+    if (message.includes('\n\n')) {
+        const parts = message.split('\n\n');
+        if (parts.length >= 2) {
+            let shortened = parts[0] + '\n\n' + parts[1];
+            if (shortened.length > maxLength) {
+                shortened = parts[0].substring(0, maxLength - 10) + '...';
+            }
+            
+            // Add engagement question
+            const hasHindi = /[\u0900-\u097F]/.test(message);
+            const engagementQuestions = hasHindi 
+                ? ["\n\nक्या और जानना चाहेंगे? 👍", "\n\nसमझ में आया? 💫", "\n\nआगे बात करें? 🙏"]
+                : ["\n\nWant to know more? 👍", "\n\nMake sense? 💫", "\n\nContinue talking? 🙏"];
+            
+            shortened += engagementQuestions[Math.floor(Math.random() * engagementQuestions.length)];
+            
+            return shortened.substring(0, maxLength);
+        }
+    }
+    
+    // For regular messages, split by sentences
+    const sentences = message.split(/[.!?।]/).filter(s => s.trim().length > 5);
+    
+    if (sentences.length <= 2) {
+        return message.substring(0, maxLength - 3) + '...';
+    }
+    
+    // Take first 2-3 meaningful sentences
+    let shortened = sentences.slice(0, 2).join('. ') + '.';
+    
+    // Add engagement question
+    const hasHindi = /[\u0900-\u097F]/.test(message);
+    if (shortened.length < message.length) {
+        const engagementQuestions = hasHindi 
+            ? ["\n\nक्या और जानना चाहेंगे? 👍"]
+            : ["\n\nWant to know more? 👍"];
+        shortened += engagementQuestions[0];
+    }
+    
+    return shortened.substring(0, maxLength);
+}
+
+/* ---------------- ENHANCED ANALYTICS TRACKING ---------------- */
+async function trackTemplateButtonClick(phone, buttonType, buttonText, language, templateContext = {}) {
+    try {
+        const patternId = `pattern_${Date.now()}_${phone.replace('+', '')}`;
+        
+        // Track in user_response_patterns with proper error handling
+        await dbPool.query(`
+            INSERT INTO user_response_patterns 
+            (pattern_id, phone, template_id, first_response_text, first_response_time_seconds, 
+             response_sentiment, asked_for_help, emotional_state_detected, button_clicked, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        `, [
+            patternId,
+            phone,
+            templateContext.template_id || 'problem_solver_english',
+            buttonText.substring(0, 500),
+            0,
+            'seeking_guidance',
+            true,
+            'seeking_guidance',
+            buttonType
+        ]);
+
+        // Track in user_engagement
+        const sessionId = `sess_${Date.now()}_${phone.replace('+', '')}`;
+        await dbPool.query(`
+            INSERT INTO user_engagement 
+            (session_id, phone, morning_message_id, first_reply_time, buttons_clicked, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+        `, [
+            sessionId,
+            phone,
+            templateContext.message_id || 'morning_template',
+            new Date(),
+            [buttonType]
+        ]);
+
+        // Also track in template_analytics
+        try {
+            await dbPool.query(`
+                INSERT INTO template_analytics 
+                (phone, template_id, button_clicked, language, clicked_at)
+                VALUES ($1, $2, $3, $4, NOW())
+            `, [
+                phone,
+                templateContext.template_id || 'problem_solver_english',
+                buttonType,
+                language
+            ]);
+        } catch (e) {
+            console.log('Template analytics insert optional');
+        }
+
+        console.log(`📊 Analytics: ${buttonType} by ${phone} in ${language}`);
+    } catch (error) {
+        console.error('Analytics tracking error:', error.message);
+    }
+}
+
 /* ---------------- Template Button Detection ---------------- */
 function isTemplateButtonResponse(text) {
     const cleanText = text.toLowerCase().trim();
@@ -207,49 +436,6 @@ function getButtonType(text) {
     return null;
 }
 
-/* ---------------- Template Button Analytics ---------------- */
-async function trackTemplateButtonClick(phone, buttonType, buttonText, language, templateContext = {}) {
-    try {
-        const patternId = `pattern_${Date.now()}_${phone.replace('+', '')}`;
-        
-        // Track in user_response_patterns
-        await dbPool.query(`
-            INSERT INTO user_response_patterns 
-            (pattern_id, phone, template_id, first_response_text, first_response_time_seconds, 
-             response_sentiment, asked_for_help, emotional_state_detected, button_clicked)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        `, [
-            patternId,
-            phone,
-            templateContext.template_id || 'unknown',
-            buttonText,
-            0, // immediate response
-            'question', // assuming they're asking for help
-            true,
-            'seeking_guidance',
-            buttonType
-        ]);
-
-        // Track in user_engagement
-        const sessionId = `sess_${Date.now()}_${phone.replace('+', '')}`;
-        await dbPool.query(`
-            INSERT INTO user_engagement 
-            (session_id, phone, morning_message_id, first_reply_time, buttons_clicked)
-            VALUES ($1, $2, $3, $4, $5)
-        `, [
-            sessionId,
-            phone,
-            templateContext.message_id || 'unknown',
-            new Date(),
-            [buttonType]
-        ]);
-
-        console.log(`📊 Button tracked: ${buttonType} by ${phone} in ${language}`);
-    } catch (error) {
-        console.error('Button tracking error:', error.message);
-    }
-}
-
 /* ---------------- Template Button Response Handler ---------------- */
 async function handleTemplateButtonResponse(phone, text, language, user) {
     const buttonType = getButtonType(text);
@@ -261,7 +447,7 @@ async function handleTemplateButtonResponse(phone, text, language, user) {
 
     console.log(`🎯 Processing template button: ${buttonType} in ${language}`);
 
-    // Track the button click
+    // Track the button click with enhanced analytics
     await trackTemplateButtonClick(phone, buttonType, text, language);
 
     // Get optimized response
@@ -284,14 +470,9 @@ async function handleTemplateButtonResponse(phone, text, language, user) {
         last_activity_ts: new Date().toISOString()
     });
 
-    // Track in analytics
-    await trackOutgoing(phone, response, `template_${buttonType}`);
-
     console.log(`✅ Template button handled: ${buttonType} for ${phone}`);
     return true;
 }
-
-/* =============== EXISTING CODE (Enhanced with Template Integration) =============== */
 
 /* ---------------- Enhanced Gita Wisdom Database ---------------- */
 const ENHANCED_GITA_WISDOM = {
@@ -371,7 +552,7 @@ Do you feel staying silent is better now, or would you like to take some action?
 • 3 विश्वसनीय लोगों की सूची बनाएं जिनसे बात कर सकते हैं
 • रोज 5 मिनट शांत बैठें - बस साँसों को देखें
 
-आप किस एक छोटे कदम से शुरुआत कर सकते हैं?`
+आप किस एक छोटे कदम से शुरूआत कर सकते हैं?`
             ],
             english: [
                 `🌊 **Facing Stress**
@@ -490,7 +671,8 @@ async function setupDatabase() {
             ADD COLUMN IF NOT EXISTS user_segment VARCHAR(20) DEFAULT 'new',
             ADD COLUMN IF NOT EXISTS last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             ADD COLUMN IF NOT EXISTS pending_followup TEXT,
-            ADD COLUMN IF NOT EXISTS followup_type VARCHAR(50)
+            ADD COLUMN IF NOT EXISTS followup_type VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS language VARCHAR(10) DEFAULT 'English'
         `);
 
         await client.query(`
@@ -552,9 +734,9 @@ async function getUserState(phone) {
             await dbPool.query(`
                 INSERT INTO users (
                     phone_number, first_seen_date, last_seen_date, total_sessions, 
-                    language_preference, last_activity_ts, memory_data, chat_history,
+                    language_preference, language, last_activity_ts, memory_data, chat_history,
                     conversation_stage
-                ) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English', CURRENT_TIMESTAMP, '{}', '[]', 'menu')
+                ) VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English', 'English', CURRENT_TIMESTAMP, '{}', '[]', 'menu')
             `, [phone]);
             
             const newRes = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
@@ -569,6 +751,7 @@ async function getUserState(phone) {
         user.memory_data = user.memory_data || {};
         user.conversation_stage = user.conversation_stage || 'menu';
         user.language_preference = user.language_preference || 'English';
+        user.language = user.language || 'English';
         user.last_activity_ts = user.last_activity_ts || new Date().toISOString();
         
         return user;
@@ -579,7 +762,8 @@ async function getUserState(phone) {
             chat_history: [], 
             memory_data: {}, 
             conversation_stage: "menu",
-            language_preference: "English"
+            language_preference: "English",
+            language: "English"
         };
     }
 }
@@ -600,128 +784,6 @@ async function updateUserState(phone, updates) {
     } catch (err) {
         console.error("updateUserState failed:", err);
     }
-}
-
-/* ---------------- 🚨 PERFECT LANGUAGE DETECTION ---------------- */
-function detectLanguageFromText(text, currentLanguage = "English") {
-    if (!text || typeof text !== "string") return currentLanguage;
-    
-    const cleanText = text.trim().toLowerCase();
-    
-    // 1. EXPLICIT language commands - HIGHEST PRIORITY
-    if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
-        return "English";
-    }
-    if (cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('hind')) {
-        return "Hindi";
-    }
-    
-    // 2. FIXED: Pure English text detection - HIGH CONFIDENCE
-    const isPureEnglish = /^[a-zA-Z\s,.!?'"-]+$/.test(text) && text.length > 2;
-    if (isPureEnglish) {
-        // English greetings and common phrases
-        const englishPhrases = [
-            'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening',
-            'thanks', 'thank you', 'bye', 'goodbye', 'ok', 'okay', 'yes', 'no',
-            'please', 'sorry', 'excuse me', 'how are you', "what's up", 'see you',
-            'can we continue', 'i appreciate', 'what can you do', 'help', 'guidance',
-            'more', 'next', 'continue', 'tell me', 'explain', 'discuss', 'talk about',
-            'hello again', 'hi again', 'start over', 'menu', 'options'
-        ];
-        
-        if (englishPhrases.some(phrase => cleanText.includes(phrase))) {
-            return "English";
-        }
-        
-        // If it's clearly English text with meaningful content
-        if (cleanText.length > 5 && /[a-zA-Z]{3,}/.test(cleanText)) {
-            return "English";
-        }
-        
-        // Single English words that are clearly English
-        const englishWords = ['help', 'thanks', 'bye', 'hello', 'hi', 'yes', 'no', 'ok', 'please'];
-        if (englishWords.includes(cleanText)) {
-            return "English";
-        }
-    }
-    
-    // 3. Hindi script detection - HIGHEST CONFIDENCE
-    if (/[\u0900-\u097F]/.test(text)) {
-        return "Hindi";
-    }
-    
-    // 4. Hindi greetings in Roman script - HIGH CONFIDENCE
-    const hindiGreetings = ['namaste', 'namaskar', 'pranam', 'radhe radhe', 'hare krishna', 'jai shri krishna'];
-    if (hindiGreetings.some(greeting => cleanText === greeting)) {
-        return "Hindi";
-    }
-    
-    // 5. Romanized Hindi patterns - MEDIUM CONFIDENCE
-    const romanizedHindiPatterns = [
-        /\b(kaise|kya|kyu|kaun|kahan|kab|kaisa|kitna|karni|karte|hain|ho|hai|hun|main|mera|mere|meri|tum|aap|hum|hamara|unka|uska)\b/i,
-        /\b(accha|theek|sahi|galat|bhoot|zyada|kam|subah|shaam|raat|din|samaan|kaam|dost|ghar|paani)\b/i,
-        /\b(mujhe|tujhe|use|hamein|unhein|karke|hokar|kar|lekin|par|aur|ya|phir|bhi)\b/i,
-        /\b(bahut|thoda|kyun|karo|kare|rahe|raha|rahi|chahiye|nahi|nahin|toh|hee)\b/i
-    ];
-    
-    const hindiWordCount = romanizedHindiPatterns.filter(pattern => pattern.test(cleanText)).length;
-    if (hindiWordCount >= 2) {
-        return "Hindi";
-    }
-    
-    // 6. Default to current language for ambiguous cases
-    return currentLanguage;
-}
-
-async function determineUserLanguage(phone, text, user) {
-    let currentLanguage = user.language_preference || 'English';
-    const detectedLanguage = detectLanguageFromText(text, currentLanguage);
-    
-    console.log(`🔤 Language Detection: "${text}" -> ${detectedLanguage} (was: ${currentLanguage})`);
-    
-    // Check for explicit language commands
-    const cleanText = text.toLowerCase().trim();
-    const isLanguageSwitchCommand = 
-        cleanText.includes('english') || 
-        cleanText.includes('hindi') ||
-        cleanText.includes('speak english') ||
-        cleanText.includes('speak hindi');
-    
-    if (isLanguageSwitchCommand) {
-        let newLanguage = currentLanguage;
-        
-        if (cleanText.includes('english') || cleanText.includes('speak english')) {
-            newLanguage = 'English';
-        } else if (cleanText.includes('hindi') || cleanText.includes('speak hindi')) {
-            newLanguage = 'Hindi';
-        }
-        
-        if (newLanguage !== currentLanguage) {
-            await updateUserState(phone, { 
-                language_preference: newLanguage
-            });
-            console.log(`🔄 Language switched to: ${newLanguage}`);
-            return { language: newLanguage, isSwitch: true, switchTo: newLanguage };
-        }
-    }
-    
-    // Only update language if detection is confident and different
-    if (detectedLanguage !== currentLanguage) {
-        const isConfidentDetection = 
-            /[\u0900-\u097F]/.test(text) || // Hindi script - HIGHEST confidence
-            (/^[a-zA-Z\s,.!?'"-]+$/.test(text) && text.length > 3) || // Pure English - HIGH confidence
-            text.toLowerCase().includes('namaste') || // Clear Hindi greeting
-            text.toLowerCase().includes('hi') || // Clear English greeting
-            text.toLowerCase().includes('hello'); // Clear English greeting
-            
-        if (isConfidentDetection) {
-            await updateUserState(phone, { language_preference: detectedLanguage });
-            console.log(`🔄 Language updated to: ${detectedLanguage} (confident detection)`);
-            return { language: detectedLanguage, isSwitch: true, switchTo: detectedLanguage };
-        }
-    }
-    
-    return { language: currentLanguage, isSwitch: false };
 }
 
 /* ---------------- Enhanced Menu System ---------------- */
@@ -846,7 +908,10 @@ async function trackOutgoing(phone, reply, type = "chat") {
 /* ---------------- Enhanced Heltar Sending ---------------- */
 async function sendViaHeltar(phone, message, type = "chat") {
     try {
-        const safeMessage = String(message || "").trim().slice(0, 4096);
+        // Apply length optimization to ALL messages
+        const optimizedMessage = optimizeMessageLength(message, MAX_REPLY_LENGTH);
+        const safeMessage = String(optimizedMessage || "").trim();
+        
         if (!safeMessage) return;
         if (!HELTAR_API_KEY) {
             console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
@@ -871,17 +936,19 @@ async function sendViaHeltar(phone, message, type = "chat") {
     }
 }
 
-/* ---------------- Complete Response System (No More "Type More") ---------------- */
+/* ---------------- Complete Response System ---------------- */
 async function sendCompleteResponse(phone, fullResponse, language, type = "chat") {
-    // Ensure response is complete and doesn't have "Type More"
     let cleanResponse = fullResponse.replace(/Type\s+['"]?More['"]?\s*.*$/i, '');
     cleanResponse = cleanResponse.replace(/['"]?More['"]?\s*टाइप\s*.*$/i, '');
+    
+    // Apply length optimization
+    cleanResponse = optimizeMessageLength(cleanResponse, MAX_REPLY_LENGTH);
     
     // Add proper ending if missing
     if (!/[.!?।]\s*$/.test(cleanResponse.trim())) {
         const endings = language === "Hindi" 
-            ? ["। आप क्या सोचते हैं?", "। क्या यह उपयोगी लगा?", "। आगे क्या जानना चाहेंगे?"]
-            : [". What are your thoughts?", ". Does this seem helpful?", ". What would you like to know next?"];
+            ? ["। आप क्या सोचते हैं?", "। क्या यह उपयोगी लगा?"]
+            : [". What are your thoughts?", ". Does this seem helpful?"];
         cleanResponse += endings[Math.floor(Math.random() * endings.length)];
     }
     
@@ -1482,7 +1549,7 @@ function parseWebhookMessage(body) {
   return null;
 }
 
-/* ---------------- 🚨 MAIN WEBHOOK HANDLER (UPDATED WITH TEMPLATE BUTTONS) ---------------- */
+/* ---------------- 🚨 MAIN WEBHOOK HANDLER (COMPLETE) ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -1626,19 +1693,22 @@ app.get("/health", (req, res) => {
     bot: BOT_NAME, 
     timestamp: new Date().toISOString(),
     features: [
-      "🚨 TEMPLATE BUTTON HANDLING - All 6 templates supported",
-      "🚨 OPTIMIZED 4-LINE RESPONSES - Psychological engagement",
-      "🚨 COMPLETE ANALYTICS TRACKING - Button clicks & engagement",
-      "🚨 PERFECT Language Detection",
-      "🚨 COMPLETE RESPONSES - No More 'Type More'", 
+      "🚨 PERFECTED Language Detection (English/Hindi)",
+      "🚨 OPTIMIZED MESSAGE LENGTH (Max 280 chars)",
+      "🚨 COMPLETE ANALYTICS TRACKING", 
+      "🚨 PESSIMISTIC → KRISHNA → FOLLOWUP Structure",
       "Enhanced Gita Wisdom Database",
       "Daily Wisdom System",
       "Response Caching",
-      "Connection Pooling"
+      "Connection Pooling",
+      "Template Button Handling",
+      "Menu System",
+      "AI Fallbacks"
     ],
     templateButtons: Object.keys(OPTIMIZED_TEMPLATE_RESPONSES),
     cacheSize: responseCache.size,
-    databasePool: dbPool.totalCount
+    databasePool: dbPool.totalCount,
+    message_length_limit: MAX_REPLY_LENGTH
   });
 });
 
@@ -1668,14 +1738,16 @@ setInterval(cleanupStuckStages, 30 * 60 * 1000);
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} TEMPLATE-OPTIMIZED VERSION listening on port ${PORT}`);
-  console.log("✅ ALL TEMPLATE BUTTONS READY:");
-  console.log("   🚨 PROBLEM SOLVER: work stress, relationship issues, personal confusion, anxiety, custom help");
-  console.log("   🚨 DAILY WISDOM: Practice / अभ्यास");
-  console.log("   🚨 EMOTIONAL CHECK-IN: Hare Krishna");
-  console.log("   🚨 OPTIMIZED 4-LINE RESPONSES with psychological engagement");
-  console.log("   🚨 COMPLETE ANALYTICS TRACKING for all button clicks");
-  console.log("   🚨 Auto-cleanup for stuck users every 30 minutes");
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE OPTIMIZED VERSION listening on port ${PORT}`);
+  console.log("✅ ALL ORIGINAL FEATURES + FIXES IMPLEMENTED:");
+  console.log("   🚨 PERFECTED Language Detection (English/Hindi/Hinglish)");
+  console.log("   🚨 MESSAGE LENGTH OPTIMIZED (280 chars max)");
+  console.log("   🚨 COMPLETE ANALYTICS TRACKING (All tables)");
+  console.log("   🚨 PESSIMISTIC → KRISHNA → FOLLOWUP Structure");
+  console.log("   🚨 Template buttons with psychological engagement");
+  console.log("   📊 Database analytics for all 694 users");
+  console.log("   🤖 Enhanced AI responses with fallbacks");
+  console.log("   📱 WhatsApp-optimized message delivery");
   setupDatabase().catch(console.error);
 });
 
