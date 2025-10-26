@@ -189,6 +189,65 @@ const BUTTON_MAPPING = {
     'अभ्यास': 'practice'
 };
 
+/* ---------------- VARIED ENGAGEMENT QUESTIONS ---------------- */
+const ENGAGEMENT_QUESTIONS = {
+  english: [
+    "What's the one thing making this feel heaviest?",
+    "If you could change just one thing right now, what would it be?",
+    "What would make the next hour feel more manageable?",
+    "Which part feels most overwhelming?",
+    "What's the smallest step that would help right now?",
+    "If Krishna were advising you personally, what do you think he'd say?",
+    "What would help you feel 10% calmer in this moment?",
+    "What's the first thought that comes to mind when you think about this?",
+    "Which aspect needs the most attention right now?",
+    "What would a moment of peace look like for you right now?"
+  ],
+  hindi: [
+    "सबसे ज्यादा क्या भारी लग रहा है?",
+    "अगर आप एक चीज़ बदल सकते, तो क्या बदलेंगे?",
+    "अगले एक घंटे को बेहतर बनाने के लिए क्या कर सकते हैं?",
+    "कौन सा हिस्सा सबसे ज्यादा मुश्किल लग रहा है?",
+    "अभी सबसे छोटा कौन सा कदम मदद करेगा?",
+    "अगर कृष्ण आपको सलाह दे रहे होते, तो क्या कहते?",
+    "इस पल में 10% शांत महसूस करने के लिए क्या मदद करेगा?",
+    "इसके बारे में सोचते ही आपके मन में पहला क्या विचार आता है?",
+    "किस पहलू पर सबसे ज्यादा ध्यान देने की जरूरत है?",
+    "इस समय आपके लिए शांति का एक पल कैसा दिखेगा?"
+  ]
+};
+
+// Track last used questions per user to avoid repetition
+const userQuestionHistory = new Map();
+
+function getEngagementQuestion(phone, language) {
+  const questions = ENGAGEMENT_QUESTIONS[language] || ENGAGEMENT_QUESTIONS.english;
+  
+  // Get user's question history or initialize
+  if (!userQuestionHistory.has(phone)) {
+    userQuestionHistory.set(phone, []);
+  }
+  const usedQuestions = userQuestionHistory.get(phone);
+  
+  // If all questions used, reset
+  if (usedQuestions.length >= questions.length) {
+    userQuestionHistory.set(phone, []);
+  }
+  
+  // Find unused question
+  const availableQuestions = questions.filter((_, index) => !usedQuestions.includes(index));
+  const randomIndex = Math.floor(Math.random() * availableQuestions.length);
+  const selectedQuestion = availableQuestions[randomIndex];
+  
+  // Track which question index was used
+  const questionIndex = questions.indexOf(selectedQuestion);
+  usedQuestions.push(questionIndex);
+  userQuestionHistory.set(phone, usedQuestions);
+  
+  console.log(`🎯 Selected engagement question: "${selectedQuestion}" for ${phone}`);
+  return selectedQuestion;
+}
+
 /* ---------------- PERFECTED LANGUAGE DETECTION ---------------- */
 function detectLanguageFromText(text, currentLanguage = "English") {
     if (!text || typeof text !== "string") return currentLanguage;
@@ -604,7 +663,16 @@ const ENHANCED_SYSTEM_PROMPT = {
    - अंतिम वाक्य: केवल 1 प्रश्न पूछें (कभी दो नहीं)
 
 **उदाहरण संरचना:**
-"नौकरी का तनाव वाकई कठिन हो सकता है 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो। आज सिर्फ एक छोटा कदम उठाएं - बस 5 मिनट का ब्रेक लें। सबसे ज्यादा क्या भारी लग रहा है?"
+"नौकरी का तनाव वाकई कठिन हो सकता है 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो।
+आज सिर्फ एक छोटा कदम उठाएं - 5 मिनट का ब्रेक लें।
+सबसे ज्यादा क्या भारी लग रहा है?"
+
+**विविध प्रश्न उदाहरण:**
+- "अगर आप एक चीज़ बदल सकते, तो क्या बदलेंगे?"
+- "अगले एक घंटे को बेहतर बनाने के लिए क्या कर सकते हैं?"
+- "कौन सा हिस्सा सबसे ज्यादा मुश्किल लग रहा है?"
+- "अभी सबसे छोटा कौन सा कदम मदद करेगा?"
+- "अगर कृष्ण यहाँ होते, तो क्या सलाह देते?"
 
 **कभी न करें:**
 - "Want to know more?" या "Does this seem helpful?" न लिखें
@@ -622,7 +690,16 @@ const ENHANCED_SYSTEM_PROMPT = {
    - Final sentence: Ask ONLY 1 question (never two)
 
 **Example Structure:**
-"Job stress can be really tough 😔 Gita 2.47 says: Focus on duty, not results. Take just one small step today - a 5-minute break. What's feeling heaviest right now?"
+"Job stress can be really tough 😔 Gita 2.47 says: Focus on duty, not results. 
+Take just one small step today - a 5-minute break. 
+What's the one thing making this feel heaviest right now?"
+
+**Varied Question Examples:**
+- "If you could change just one thing, what would it be?"
+- "What would make the next hour feel more manageable?" 
+- "Which part feels most overwhelming?"
+- "What's the smallest step that would help?"
+- "If Krishna were here, what advice do you think he'd give?"
 
 **NEVER DO:**
 - Write "Want to know more?" or "Does this seem helpful?"
@@ -713,6 +790,54 @@ function pruneChatHistory(history, maxMessages = 20) {
     if (!Array.isArray(history) || history.length <= maxMessages) {
         return history;
     }
+/* ---------------- CONVERSATION CONTEXT TRACKING ---------------- */
+function buildConversationContext(user, currentMessage) {
+  const history = user.chat_history || [];
+  const recentMessages = history.slice(-4); // Last 2 exchanges
+  
+  let context = {
+    previousTopics: [],
+    emotionalTone: detectEmotionAdvanced(currentMessage)?.emotion || 'neutral',
+    isFollowUp: false
+  };
+  
+  // Analyze recent conversation for continuity
+  if (recentMessages.length >= 2) {
+    const lastUserMessage = recentMessages[recentMessages.length - 2]?.content || '';
+    const lastBotMessage = recentMessages[recentMessages.length - 1]?.content || '';
+    
+    context.isFollowUp = lastUserMessage.length > 10;
+    context.previousTopics = extractTopics([lastUserMessage, lastBotMessage]);
+  }
+  
+  return context;
+}
+
+function extractTopics(messages) {
+  const topics = [];
+  const text = messages.join(' ').toLowerCase();
+  
+  if (text.includes('work') || text.includes('job') || text.includes('काम') || text.includes('नौकरी')) {
+    topics.push('work');
+  }
+  if (text.includes('stress') || text.includes('pressure') || text.includes('तनाव') || text.includes('दबाव')) {
+    topics.push('stress');
+  }
+  if (text.includes('relationship') || text.includes('family') || text.includes('रिश्ता') || text.includes('परिवार')) {
+    topics.push('relationships');
+  }
+  if (text.includes('confus') || text.includes('understand') || text.includes('समझ') || text.includes('भ्रम')) {
+    topics.push('confusion');
+  }
+  if (text.includes('anxious') || text.includes('worry') || text.includes('चिंता') || text.includes('घबराहट')) {
+    topics.push('anxiety');
+  }
+  if (text.includes('sad') || text.includes('depress') || text.includes('दुखी') || text.includes('उदास')) {
+    topics.push('sadness');
+  }
+  
+  return topics;
+}
     
     const importantMessages = history.filter(msg => 
         msg.role === 'system' || 
@@ -1172,30 +1297,33 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
 
     const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
     
-    const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता का संदेश: "${text}"
-      
-**कृपया ध्यान दें: उत्तर अधिकतम 120 शब्दों में दें और इस संरचना का सख्ती से पालन करें:**
+    // Build conversation context
+const user = await getUserState(phone);
+const conversationContext = buildConversationContext(user, text);
+
+const userPrompt = language === "Hindi" 
+  ? `उपयोगकर्ता का संदेश: "${text}"
+  
+पिछला संदर्भ: ${conversationContext.previousTopics.includes('work') ? 'काम के बारे में बात कर रहे थे' : 'नया संवाद'}
+भावनात्मक स्थिति: ${conversationContext.emotionalTone}
+क्या यह पिछली बातचीत का जारी रूप है? ${conversationContext.isFollowUp ? 'हाँ' : 'नहीं'}
+
+**कृपया ध्यान दें: उत्तर अधिकतम 120 शब्दों में दें और विविध प्रश्नों का उपयोग करें।**
 1. समस्या को पहचानें (सहानुभूति)
 2. गीता श्लोक दें  
 3. 1 व्यावहारिक सलाह दें
-4. केवल 1 प्रश्न पूछें
+4. केवल 1 प्रश्न पूछें (हमेशा अलग प्रश्न)`
+  : `User message: "${text}"
+  
+Previous context: ${conversationContext.previousTopics.includes('work') ? 'Previously discussed work' : 'New conversation'}
+Emotional tone: ${conversationContext.emotionalTone}
+Is this continuing previous discussion? ${conversationContext.isFollowUp ? 'Yes' : 'No'}
 
-कभी "Want to know more?" या दो प्रश्न न पूछें।`
-      : `User message: "${text}"
-      
-**IMPORTANT: Keep response MAX 120 words and follow this structure STRICTLY:**
+**IMPORTANT: Keep response MAX 120 words and use VARIED questions.**
 1. Acknowledge problem (empathy)
 2. Provide Gita verse  
 3. Give 1 practical advice
-4. Ask ONLY 1 question
-
-NEVER write "Want to know more?" or ask two questions.`;
-
-    const messages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt }
-    ];
+4. Ask ONLY 1 question (always different question)`;
 
     console.log("📤 Sending to OpenAI with STRICT word limit");
 
@@ -1226,18 +1354,31 @@ NEVER write "Want to know more?" or ask two questions.`;
         .replace(/क्या और जानना चाहेंगे\?.*$/i, '')
         .replace(/समझ में आया\?.*$/i, '');
       
-      // Ensure single question at the end
-      const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 5);
-      if (sentences.length > 0) {
-        const lastSentence = sentences[sentences.length - 1].trim();
-        if (!lastSentence.includes('?') && sentences.length >= 2) {
-          // Add a simple engaging question if missing
-          const questions = language === "Hindi" 
-            ? ["सबसे ज्यादा क्या भारी लग रहा है?", "आप क्या सोचते हैं?", "क्या यह मददगार लगा?"]
-            : ["What's feeling heaviest right now?", "What are your thoughts?", "Does this help?"];
-          cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + questions[0];
-        }
-      }
+      // Ensure single engaging question at the end
+const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 5);
+if (sentences.length > 0) {
+  const lastSentence = sentences[sentences.length - 1].trim();
+  if (!lastSentence.includes('?') && sentences.length >= 2) {
+    // Add varied engaging question
+    const engagementQuestion = getEngagementQuestion(phone, language);
+    cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
+  } else if (lastSentence.includes('?')) {
+    // Replace repetitive questions with varied ones
+    const repetitiveQuestions = [
+      "What's feeling heaviest right now?",
+      "What are your thoughts?",
+      "Does this seem helpful?",
+      "सबसे ज्यादा क्या भारी लग रहा है?",
+      "आप क्या सोचते हैं?",
+      "क्या यह मददगार लगा?"
+    ];
+    
+    if (repetitiveQuestions.some(q => lastSentence.includes(q))) {
+      const engagementQuestion = getEngagementQuestion(phone, language);
+      cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
+    }
+  }
+}
       
       await sendViaHeltar(phone, cleanResponse, "enhanced_ai_response");
       
