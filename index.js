@@ -591,35 +591,43 @@ What's one small step you could start with?`
     }
 };
 
-// FIXED: Enhanced system prompt for SHORT responses
+/* ---------------- COMPLETELY REVISED OPENAI PROMPT SYSTEM ---------------- */
 const ENHANCED_SYSTEM_PROMPT = {
-  hindi: `आप सारथी AI हैं, भगवद गीता के विशेषज्ञ मार्गदर्शक। 
+  hindi: `आप सारथी AI हैं - भगवद गीता के आधार पर मार्गदर्शन देने वाले विशेषज्ञ।
 
-**महत्वपूर्ण नियम:**
-- उत्तर अधिकतम 200-250 शब्दों में दें (WhatsApp के लिए संक्षिप्त)
-- कभी भी "Type More" या अधूरे वाक्य न दें
-- संरचना का पालन करें:
-  1. समस्या को समझें (1 वाक्य)
-  2. गीता का प्रासंगिक श्लोक दें (1 वाक्य)  
-  3. 2 व्यावहारिक सुझाव दें
-  4. संवाद जारी रखने के लिए प्रश्न पूछें
+**कड़े नियम:**
+1. उत्तर अधिकतम 120 शब्दों में दें (केवल 3-4 छोटे पैराग्राफ)
+2. संरचना सख्ती से अपनाएं:
+   - पहला वाक्य: समस्या को पहचानें (सहानुभूति दिखाएं)
+   - दूसरा वाक्य: गीता का प्रासंगिक श्लोक दें
+   - तीसरा वाक्य: 1 व्यावहारिक सलाह दें
+   - अंतिम वाक्य: केवल 1 प्रश्न पूछें (कभी दो नहीं)
 
-**उदाहरण:**
-"तनाव महसूस कर रहे हैं? 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो। आज एक छोटा कदम उठाएं और गहरी सांस लें। क्या सबसे ज्यादा भारी लग रहा है?"`,
+**उदाहरण संरचना:**
+"नौकरी का तनाव वाकई कठिन हो सकता है 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो। आज सिर्फ एक छोटा कदम उठाएं - बस 5 मिनट का ब्रेक लें। सबसे ज्यादा क्या भारी लग रहा है?"
 
-  english: `You are Sarathi AI, an expert Bhagavad Gita guide.
+**कभी न करें:**
+- "Want to know more?" या "Does this seem helpful?" न लिखें
+- उत्तर 120 शब्दों से अधिक न हो
+- केवल एक ही प्रश्न पूछें`,
 
-**CRITICAL RULES:**
-- Keep responses MAX 200-250 words (brief for WhatsApp)
-- NEVER include "Type More" or incomplete sentences  
-- Follow this structure:
-  1. Acknowledge problem (1 sentence)
-  2. Provide relevant Gita verse (1 sentence)
-  3. Give 2 practical suggestions
-  4. Ask question to continue dialogue
+  english: `You are Sarathi AI - an expert guide based on Bhagavad Gita.
 
-**Example:**
-"Feeling stressed? 😔 Gita 2.47 says: Focus on duty, not results. Take one small step today and breathe deeply. What feels heaviest right now?"`
+**STRICT RULES:**
+1. Keep response MAX 120 words (only 3-4 short paragraphs)
+2. Follow this structure STRICTLY:
+   - First sentence: Acknowledge the problem (show empathy) 
+   - Second sentence: Provide relevant Gita verse
+   - Third sentence: Give 1 practical advice
+   - Final sentence: Ask ONLY 1 question (never two)
+
+**Example Structure:**
+"Job stress can be really tough 😔 Gita 2.47 says: Focus on duty, not results. Take just one small step today - a 5-minute break. What's feeling heaviest right now?"
+
+**NEVER DO:**
+- Write "Want to know more?" or "Does this seem helpful?"
+- Exceed 120 words
+- Ask more than one question`
 };
 
 /* ---------------- Validation & Setup ---------------- */
@@ -1152,6 +1160,7 @@ async function getEnhancedAIResponseWithRetry(phone, text, language, context, re
     }
 }
 
+/* ---------------- FIXED AI RESPONSE FUNCTION ---------------- */
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
   try {
     if (!OPENAI_KEY || OPENAI_KEY === '') {
@@ -1159,54 +1168,42 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
       return await getContextualFallback(phone, text, language, conversationContext);
     }
 
-    console.log("🤖 Using Enhanced OpenAI for SHORT response...");
+    console.log("🤖 Using STRICT OpenAI for short response...");
 
-    const recentHistory = conversationContext.previousMessages?.slice(-3) || [];
-    const contextSummary = buildContextSummary(recentHistory, language);
-    
     const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
     
     const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता का वर्तमान संदेश: "${text}"
+      ? `उपयोगकर्ता का संदेश: "${text}"
+      
+**कृपया ध्यान दें: उत्तर अधिकतम 120 शब्दों में दें और इस संरचना का सख्ती से पालन करें:**
+1. समस्या को पहचानें (सहानुभूति)
+2. गीता श्लोक दें  
+3. 1 व्यावहारिक सलाह दें
+4. केवल 1 प्रश्न पूछें
 
-पिछला संदर्भ: ${contextSummary}
+कभी "Want to know more?" या दो प्रश्न न पूछें।`
+      : `User message: "${text}"
+      
+**IMPORTANT: Keep response MAX 120 words and follow this structure STRICTLY:**
+1. Acknowledge problem (empathy)
+2. Provide Gita verse  
+3. Give 1 practical advice
+4. Ask ONLY 1 question
 
-🚫 **कृपया ध्यान दें: उत्तर अधिकतम 200-250 शब्दों में दें। "Type More" कभी न लिखें।**
-
-कृपया संक्षिप्त, व्यावहारिक उत्तर दें:
-1. समस्या को समझें (1 वाक्य)
-2. गीता का प्रासंगिक श्लोक दें (1 वाक्य)  
-3. 2 व्यावहारिक सुझाव दें
-4. संवाद जारी रखने के लिए प्रश्न पूछें
-
-उत्तर कभी भी अधूरा न छोड़ें - पूर्ण वाक्यों में समाप्त करें।`
-      : `User's current message: "${text}"
-
-Previous context: ${contextSummary}
-
-🚫 **IMPORTANT: Keep response MAX 200-250 words. NEVER include "Type More".**
-
-Please provide brief, practical response:
-1. Acknowledge problem (1 sentence)
-2. Provide relevant Gita verse (1 sentence)  
-3. Give 2 practical suggestions
-4. Ask question to continue dialogue
-
-NEVER leave the response incomplete - always end with complete sentences.`;
+NEVER write "Want to know more?" or ask two questions.`;
 
     const messages = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt }
     ];
 
-    console.log("📤 Sending to OpenAI with SHORT response instructions");
+    console.log("📤 Sending to OpenAI with STRICT word limit");
 
     const body = { 
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 300, // REDUCED to enforce shorter responses
-      temperature: 0.7,
-      top_p: 0.9
+      max_tokens: 180, // STRICTLY LIMITED to enforce brevity
+      temperature: 0.7
     };
 
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
@@ -1220,20 +1217,38 @@ NEVER leave the response incomplete - always end with complete sentences.`;
     const aiResponse = resp.data?.choices?.[0]?.message?.content;
     
     if (aiResponse && aiResponse.trim().length > 10) {
-      console.log("✅ Enhanced OpenAI SHORT response received");
+      console.log("✅ STRICT OpenAI response received");
       
-      const completeResponse = ensureCompleteStructuredResponse(aiResponse, language);
+      // Clean up any accidental follow-up questions
+      let cleanResponse = aiResponse
+        .replace(/Want to know more\?.*$/i, '')
+        .replace(/Does this seem helpful\?.*$/i, '')
+        .replace(/क्या और जानना चाहेंगे\?.*$/i, '')
+        .replace(/समझ में आया\?.*$/i, '');
       
-      await sendCompleteResponse(phone, completeResponse, language, "enhanced_ai_response");
+      // Ensure single question at the end
+      const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 5);
+      if (sentences.length > 0) {
+        const lastSentence = sentences[sentences.length - 1].trim();
+        if (!lastSentence.includes('?') && sentences.length >= 2) {
+          // Add a simple engaging question if missing
+          const questions = language === "Hindi" 
+            ? ["सबसे ज्यादा क्या भारी लग रहा है?", "आप क्या सोचते हैं?", "क्या यह मददगार लगा?"]
+            : ["What's feeling heaviest right now?", "What are your thoughts?", "Does this help?"];
+          cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + questions[0];
+        }
+      }
+      
+      await sendViaHeltar(phone, cleanResponse, "enhanced_ai_response");
       
       const user = await getUserState(phone);
       const updatedHistory = [...(user.chat_history || []), { 
         role: 'assistant', 
-        content: completeResponse 
+        content: cleanResponse 
       }];
       await updateUserState(phone, { 
         chat_history: updatedHistory,
-        last_message: completeResponse,
+        last_message: cleanResponse,
         last_message_role: 'assistant'
       });
       
@@ -1475,14 +1490,31 @@ function getFallbackDailyWisdom(language, dayOfYear) {
   return formatDailyWisdom(fallbackLesson, language, dayOfYear);
 }
 
-/* ---------------- Simple Handlers ---------------- */
-async function handleLanguageSwitch(phone, newLanguage) {
+/* ---------------- FIXED LANGUAGE SWITCHING ---------------- */
+async function handleLanguageSwitch(phone, newLanguage, originalMessage = "") {
     const confirmationMessage = newLanguage === 'English' 
         ? "✅ Language switched to English. How can I help you today? 😊" 
         : "✅ भाषा हिंदी में बदल गई। मैं आपकी कैसे मदद कर सकता हूँ? 😊";
     
     await sendViaHeltar(phone, confirmationMessage, "language_switch");
-    await resetToMenuStage(phone, newLanguage);
+    
+    // If there was an original message, respond to it instead of showing menu
+    if (originalMessage && originalMessage.trim().length > 0) {
+        console.log(`🔄 Responding to original message after language switch: "${originalMessage}"`);
+        const user = await getUserState(phone);
+        const conversationContext = {
+            stage: user.conversation_stage,
+            emotion: detectEmotionAdvanced(originalMessage)?.emotion,
+            situation: detectUserSituation(originalMessage),
+            previousMessages: user.chat_history?.slice(-4) || [],
+            language: newLanguage,
+            isFollowUp: false
+        };
+        await getEnhancedAIResponse(phone, originalMessage, newLanguage, conversationContext);
+    } else {
+        // Only show menu if no original message
+        await resetToMenuStage(phone, newLanguage);
+    }
 }
 
 async function handleSmallTalk(phone, text, language) {
