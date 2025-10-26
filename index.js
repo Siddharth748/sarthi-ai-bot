@@ -1623,11 +1623,13 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    // Handle language switching
-    if (isLanguageSwitch) {
-      await handleLanguageSwitch(phone, languageResult.switchTo);
-      return;
-    }
+    // Handle language switching - FIXED VERSION
+if (isLanguageSwitch) {
+  // Store the original message before switching language
+  const originalMessage = text;
+  await handleLanguageSwitch(phone, languageResult.switchTo, originalMessage);
+  return;
+}
 
     // Update chat history BEFORE processing
     const updatedHistory = [...(user.chat_history || []), { role: 'user', content: text }];
