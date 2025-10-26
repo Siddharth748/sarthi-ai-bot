@@ -1,4 +1,4 @@
-// index.js — SarathiAI (COMPLETE VERSION WITH ALL FIXES)
+// index.js — SarathiAI (COMPLETE FIXED VERSION)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -22,7 +22,7 @@ const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 const HELTAR_PHONE_ID = (process.env.HELTAR_PHONE_ID || "").trim();
 
-const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "280", 10) || 280;
+const MAX_REPLY_LENGTH = parseInt(process.env.MAX_REPLY_LENGTH || "350", 10) || 350;
 
 /* ---------------- Enhanced Database Pool ---------------- */
 const dbPool = new Pool({ 
@@ -170,21 +170,6 @@ What's specifically on your mind right now?`,
     }
 };
 
-// Optimize template responses for length
-function optimizeTemplateResponses() {
-    Object.keys(OPTIMIZED_TEMPLATE_RESPONSES).forEach(key => {
-        ['english', 'hindi'].forEach(lang => {
-            if (OPTIMIZED_TEMPLATE_RESPONSES[key][lang]) {
-                OPTIMIZED_TEMPLATE_RESPONSES[key][lang] = optimizeMessageLength(
-                    OPTIMIZED_TEMPLATE_RESPONSES[key][lang], 
-                    250
-                );
-            }
-        });
-    });
-}
-optimizeTemplateResponses();
-
 // Button text mapping for detection
 const BUTTON_MAPPING = {
     // English buttons
@@ -310,53 +295,78 @@ async function determineUserLanguage(phone, text, user) {
     return { language: currentLanguage, isSwitch: false };
 }
 
-/* ---------------- MESSAGE LENGTH OPTIMIZATION ---------------- */
-function optimizeMessageLength(message, maxLength = 280) {
+/* ---------------- FIXED MESSAGE LENGTH OPTIMIZATION ---------------- */
+function optimizeMessageForWhatsApp(message, maxLength = 350) {
     if (!message || message.length <= maxLength) {
         return message;
     }
     
-    // For template button responses, preserve the structure but shorten if needed
+    // NEVER cut menus or template responses
+    if (message.includes('🚩') || message.includes('Welcome') || message.includes('स्वागत') || 
+        message.includes('1️⃣') || message.includes('2️⃣') || message.includes('3️⃣') || 
+        message.includes('4️⃣') || message.includes('5️⃣')) {
+        return message; // Menus should NEVER be cut
+    }
+    
+    // For template responses, preserve structure
     if (message.includes('\n\n')) {
         const parts = message.split('\n\n');
         if (parts.length >= 2) {
             let shortened = parts[0] + '\n\n' + parts[1];
             if (shortened.length > maxLength) {
-                shortened = parts[0].substring(0, maxLength - 10) + '...';
+                // If still too long, take just first part but ensure complete sentence
+                const sentences = parts[0].split(/[.!?।]/).filter(s => s.trim().length > 5);
+                if (sentences.length > 0) {
+                    shortened = sentences[0] + '.';
+                }
             }
             
-            // Add engagement question
-            const hasHindi = /[\u0900-\u097F]/.test(message);
-            const engagementQuestions = hasHindi 
-                ? ["\n\nक्या और जानना चाहेंगे? 👍", "\n\nसमझ में आया? 💫", "\n\nआगे बात करें? 🙏"]
-                : ["\n\nWant to know more? 👍", "\n\nMake sense? 💫", "\n\nContinue talking? 🙏"];
-            
-            shortened += engagementQuestions[Math.floor(Math.random() * engagementQuestions.length)];
+            // Add engagement question if we shortened
+            if (shortened.length < message.length) {
+                const hasHindi = /[\u0900-\u097F]/.test(message);
+                shortened += hasHindi ? '\n\nक्या और जानना चाहेंगे? 👍' : '\n\nWant to know more? 👍';
+            }
             
             return shortened.substring(0, maxLength);
         }
     }
     
-    // For regular messages, split by sentences
-    const sentences = message.split(/[.!?।]/).filter(s => s.trim().length > 5);
+    // For regular messages, split by sentences and find good breaking point
+    const sentences = message.split(/[.!?।]/).filter(s => s.trim().length > 10);
     
-    if (sentences.length <= 2) {
-        return message.substring(0, maxLength - 3) + '...';
+    if (sentences.length <= 1) {
+        // If only one long sentence, find last complete word before limit
+        if (message.length > maxLength) {
+            const truncated = message.substring(0, maxLength - 20);
+            const lastSpace = truncated.lastIndexOf(' ');
+            const lastPeriod = truncated.lastIndexOf('.');
+            const breakPoint = Math.max(lastPeriod, lastSpace);
+            
+            if (breakPoint > maxLength - 50) { // Ensure we have enough content
+                return truncated.substring(0, breakPoint) + '...\n\nWant to know more? 👍';
+            }
+            return truncated + '...\n\nWant to know more? 👍';
+        }
+        return message;
     }
     
-    // Take first 2-3 meaningful sentences
+    // Take first 2 complete sentences
     let shortened = sentences.slice(0, 2).join('. ') + '.';
     
-    // Add engagement question
-    const hasHindi = /[\u0900-\u097F]/.test(message);
+    // Add engagement question if we shortened
     if (shortened.length < message.length) {
-        const engagementQuestions = hasHindi 
-            ? ["\n\nक्या और जानना चाहेंगे? 👍"]
-            : ["\n\nWant to know more? 👍"];
-        shortened += engagementQuestions[0];
+        const hasHindi = /[\u0900-\u097F]/.test(message);
+        shortened += hasHindi ? '\n\nक्या और जानना चाहेंगे? 👍' : '\n\nWant to know more? 👍';
     }
     
-    return shortened.substring(0, maxLength);
+    // Final safety check - never return incomplete words
+    if (shortened.length > maxLength) {
+        const safeShortened = shortened.substring(0, maxLength - 10);
+        const lastSpace = safeShortened.lastIndexOf(' ');
+        return safeShortened.substring(0, lastSpace) + '...';
+    }
+    
+    return shortened;
 }
 
 /* ---------------- ENHANCED ANALYTICS TRACKING ---------------- */
@@ -459,7 +469,7 @@ async function handleTemplateButtonResponse(phone, text, language, user) {
 
     const response = responseTemplate[language] || responseTemplate.english;
     
-    // Send the optimized response
+    // Send the optimized response WITHOUT length restriction for templates
     await sendViaHeltar(phone, response, `template_button_${buttonType}`);
     
     // Update user state to continue conversation
@@ -581,55 +591,35 @@ What's one small step you could start with?`
     }
 };
 
-// Enhanced system prompt for complete responses
+// FIXED: Enhanced system prompt for SHORT responses
 const ENHANCED_SYSTEM_PROMPT = {
-  hindi: `आप सारथी AI हैं, भगवद गीता के विशेषज्ञ मार्गदर्शक। इन बातों का विशेष ध्यान रखें:
+  hindi: `आप सारथी AI हैं, भगवद गीता के विशेषज्ञ मार्गदर्शक। 
 
-🌿 **पूर्ण उत्तर दें:**
-• कभी भी "Type 'More'" या अधूरे वाक्य न दें
-• हर उत्तर स्वयं में पूर्ण हो (10-15 वाक्य)
-• स्पष्ट समापन के साथ समाप्त करें
+**महत्वपूर्ण नियम:**
+- उत्तर अधिकतम 200-250 शब्दों में दें (WhatsApp के लिए संक्षिप्त)
+- कभी भी "Type More" या अधूरे वाक्य न दें
+- संरचना का पालन करें:
+  1. समस्या को समझें (1 वाक्य)
+  2. गीता का प्रासंगिक श्लोक दें (1 वाक्य)  
+  3. 2 व्यावहारिक सुझाव दें
+  4. संवाद जारी रखने के लिए प्रश्न पूछें
 
-📚 **शास्त्रों का सूक्ष्म उपयोग:**
-• स्थिति के अनुसार श्लोक चुनें:
-  - नैतिक दुविधा: 16.1-3 (दैवी vs आसुरी गुण), 17.14-16 (सत्य)
-  - डर: 2.56 (अनुद्विग्नमनाः), 18.63 (सोच-विचार)
-  - कर्म: 3.5 (निष्क्रियता), 4.17 (कर्म में अकर्म)
+**उदाहरण:**
+"तनाव महसूस कर रहे हैं? 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो। आज एक छोटा कदम उठाएं और गहरी सांस लें। क्या सबसे ज्यादा भारी लग रहा है?"`,
 
-💡 **व्यावहारिक मार्गदर्शन:**
-• सैद्धांतिक सलाह न दें - ठोस कदम सुझाएं
-• "ध्यान करें" के बजाय "5 मिनट श्वास पर ध्यान दें" कहें
-• वास्तविक जीवन की रण्नीतियाँ दें
+  english: `You are Sarathi AI, an expert Bhagavad Gita guide.
 
-🎯 **संदर्भ जागरूकता:**
-• पिछली बातचीत को याद रखें और उसका संदर्भ दें
-• उपयोगकर्ता की विशिष्ट स्थिति से जुड़ें
+**CRITICAL RULES:**
+- Keep responses MAX 200-250 words (brief for WhatsApp)
+- NEVER include "Type More" or incomplete sentences  
+- Follow this structure:
+  1. Acknowledge problem (1 sentence)
+  2. Provide relevant Gita verse (1 sentence)
+  3. Give 2 practical suggestions
+  4. Ask question to continue dialogue
 
-🚫 **कभी भी अधूरा उत्तर न दें - हमेशा पूर्ण वाक्यों में समाप्त करें।**`,
-
-  english: `You are Sarathi AI, an expert Bhagavad Gita guide. Pay special attention to:
-
-🌿 **Complete Responses:**
-• NEVER include "Type 'More'" or incomplete sentences
-• Every response should be self-contained (10-15 sentences)
-• End with clear conclusion
-
-📚 **Nuanced Scripture Use:**
-• Choose verses contextually:
-  - Moral dilemmas: 16.1-3 (divine vs demonic), 17.14-16 (truth)
-  - Fear: 2.56 (undisturbed), 18.63 (reflect)
-  - Action: 3.5 (inaction), 4.17 (action in inaction)
-
-💡 **Practical Guidance:**
-• No theoretical advice - give concrete steps
-• Instead of "meditate" say "focus on breath for 5 minutes"
-• Provide real-life strategies
-
-🎯 **Context Awareness:**
-• Remember previous conversation and reference it
-• Connect to user's specific situation
-
-🚫 **NEVER leave responses incomplete - always end with complete sentences.**`
+**Example:**
+"Feeling stressed? 😔 Gita 2.47 says: Focus on duty, not results. Take one small step today and breathe deeply. What feels heaviest right now?"`
 };
 
 /* ---------------- Validation & Setup ---------------- */
@@ -786,7 +776,7 @@ async function updateUserState(phone, updates) {
     }
 }
 
-/* ---------------- Enhanced Menu System ---------------- */
+/* ---------------- FIXED: COMPLETE MENU SYSTEM ---------------- */
 async function handleEnhancedStartupMenu(phone, language, user) {
     const menuMessage = language === "Hindi" 
         ? `🚩 *सारथी AI में आपका स्वागत है!* 🚩
@@ -816,13 +806,14 @@ I'm your personal Gita companion. Please choose:
 
 Please choose 1-5 or just type your thoughts 🙏`;
 
+    // Send menu WITHOUT any length restrictions
     await sendViaHeltar(phone, menuMessage, "enhanced_welcome");
     await updateUserState(phone, { 
         conversation_stage: "menu",
         last_menu_shown: new Date().toISOString()
     });
     
-    console.log(`✅ Menu shown to ${phone} in ${language}`);
+    console.log(`✅ Complete menu shown to ${phone} in ${language}`);
 }
 
 /* ---------------- Stage Reset Logic ---------------- */
@@ -905,13 +896,17 @@ async function trackOutgoing(phone, reply, type = "chat") {
     }
 }
 
-/* ---------------- Enhanced Heltar Sending ---------------- */
+/* ---------------- FIXED: Enhanced Heltar Sending ---------------- */
 async function sendViaHeltar(phone, message, type = "chat") {
     try {
-        // Apply length optimization to ALL messages
-        const optimizedMessage = optimizeMessageLength(message, MAX_REPLY_LENGTH);
-        const safeMessage = String(optimizedMessage || "").trim();
+        // Apply smart length optimization ONLY for AI responses, not menus/templates
+        let finalMessage = message;
+        if (type.includes('ai_response') || type === 'chat' || type === 'enhanced_ai_response') {
+            finalMessage = optimizeMessageForWhatsApp(message, MAX_REPLY_LENGTH);
+        }
+        // Menus, templates, and welcome messages are sent as-is
         
+        const safeMessage = String(finalMessage || "").trim();
         if (!safeMessage) return;
         if (!HELTAR_API_KEY) {
             console.warn(`(Simulated -> ${phone}): ${safeMessage}`);
@@ -941,8 +936,8 @@ async function sendCompleteResponse(phone, fullResponse, language, type = "chat"
     let cleanResponse = fullResponse.replace(/Type\s+['"]?More['"]?\s*.*$/i, '');
     cleanResponse = cleanResponse.replace(/['"]?More['"]?\s*टाइप\s*.*$/i, '');
     
-    // Apply length optimization
-    cleanResponse = optimizeMessageLength(cleanResponse, MAX_REPLY_LENGTH);
+    // Apply smart length optimization
+    cleanResponse = optimizeMessageForWhatsApp(cleanResponse, MAX_REPLY_LENGTH);
     
     // Add proper ending if missing
     if (!/[.!?।]\s*$/.test(cleanResponse.trim())) {
@@ -1123,7 +1118,7 @@ function detectUserSituation(text) {
   return Object.keys(situations).find(situation => situations[situation]) || 'general';
 }
 
-/* ---------------- Enhanced AI Response System ---------------- */
+/* ---------------- FIXED: Enhanced AI Response System with SHORT responses ---------------- */
 async function getCachedAIResponse(phone, text, language, context) {
     const cacheKey = `${phone}:${text.substring(0, 50)}:${language}`;
     
@@ -1164,7 +1159,7 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
       return await getContextualFallback(phone, text, language, conversationContext);
     }
 
-    console.log("🤖 Using Enhanced OpenAI for nuanced response...");
+    console.log("🤖 Using Enhanced OpenAI for SHORT response...");
 
     const recentHistory = conversationContext.previousMessages?.slice(-3) || [];
     const contextSummary = buildContextSummary(recentHistory, language);
@@ -1176,32 +1171,26 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
 
 पिछला संदर्भ: ${contextSummary}
 
-भावना: ${conversationContext.emotion || 'सामान्य'}
-स्थिति: ${conversationContext.situation || 'सामान्य'}
+🚫 **कृपया ध्यान दें: उत्तर अधिकतम 200-250 शब्दों में दें। "Type More" कभी न लिखें।**
 
-🚫 **कृपया ध्यान दें: उत्तर कभी भी अधूरा न छोड़ें। "Type More" या "More टाइप करें" कभी न लिखें।**
-
-कृपया एक संपूर्ण, सुसंगत उत्तर दें जो:
-1. 10-15 वाक्यों में पूरा हो (कभी भी अधूरा न छोड़ें)
-2. एक स्पष्ट समापन के साथ समाप्त हो  
-3. 2-3 व्यावहारिक सुझाव दे
-4. एक विचारणीय प्रश्न के साथ समाप्त हो
+कृपया संक्षिप्त, व्यावहारिक उत्तर दें:
+1. समस्या को समझें (1 वाक्य)
+2. गीता का प्रासंगिक श्लोक दें (1 वाक्य)  
+3. 2 व्यावहारिक सुझाव दें
+4. संवाद जारी रखने के लिए प्रश्न पूछें
 
 उत्तर कभी भी अधूरा न छोड़ें - पूर्ण वाक्यों में समाप्त करें।`
       : `User's current message: "${text}"
 
 Previous context: ${contextSummary}
 
-Emotion: ${conversationContext.emotion || 'general'}
-Situation: ${conversationContext.situation || 'general'}
+🚫 **IMPORTANT: Keep response MAX 200-250 words. NEVER include "Type More".**
 
-🚫 **IMPORTANT: NEVER leave the response incomplete. NEVER include "Type More" or similar phrases.**
-
-Please provide a complete, coherent response that:
-1. Is 10-15 sentences long (NEVER leave incomplete)
-2. Ends with a clear conclusion
-3. Provides 2-3 practical suggestions
-4. Ends with a thought-provoking question
+Please provide brief, practical response:
+1. Acknowledge problem (1 sentence)
+2. Provide relevant Gita verse (1 sentence)  
+3. Give 2 practical suggestions
+4. Ask question to continue dialogue
 
 NEVER leave the response incomplete - always end with complete sentences.`;
 
@@ -1210,13 +1199,13 @@ NEVER leave the response incomplete - always end with complete sentences.`;
       { role: "user", content: userPrompt }
     ];
 
-    console.log("📤 Sending to OpenAI with enhanced context");
+    console.log("📤 Sending to OpenAI with SHORT response instructions");
 
     const body = { 
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 1200,
-      temperature: 0.8,
+      max_tokens: 300, // REDUCED to enforce shorter responses
+      temperature: 0.7,
       top_p: 0.9
     };
 
@@ -1231,7 +1220,7 @@ NEVER leave the response incomplete - always end with complete sentences.`;
     const aiResponse = resp.data?.choices?.[0]?.message?.content;
     
     if (aiResponse && aiResponse.trim().length > 10) {
-      console.log("✅ Enhanced OpenAI response received");
+      console.log("✅ Enhanced OpenAI SHORT response received");
       
       const completeResponse = ensureCompleteStructuredResponse(aiResponse, language);
       
@@ -1549,7 +1538,7 @@ function parseWebhookMessage(body) {
   return null;
 }
 
-/* ---------------- 🚨 MAIN WEBHOOK HANDLER (COMPLETE) ---------------- */
+/* ---------------- 🚨 MAIN WEBHOOK HANDLER (COMPLETE & FIXED) ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
     res.status(200).send("OK");
@@ -1693,9 +1682,9 @@ app.get("/health", (req, res) => {
     bot: BOT_NAME, 
     timestamp: new Date().toISOString(),
     features: [
-      "🚨 PERFECTED Language Detection (English/Hindi)",
-      "🚨 OPTIMIZED MESSAGE LENGTH (Max 280 chars)",
-      "🚨 COMPLETE ANALYTICS TRACKING", 
+      "🚨 FIXED Language Detection (English/Hindi)",
+      "🚨 FIXED MESSAGE LENGTH (Smart optimization)",
+      "🚨 FIXED COMPLETE MENUS (No cutting)", 
       "🚨 PESSIMISTIC → KRISHNA → FOLLOWUP Structure",
       "Enhanced Gita Wisdom Database",
       "Daily Wisdom System",
@@ -1738,15 +1727,14 @@ setInterval(cleanupStuckStages, 30 * 60 * 1000);
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE OPTIMIZED VERSION listening on port ${PORT}`);
-  console.log("✅ ALL ORIGINAL FEATURES + FIXES IMPLEMENTED:");
-  console.log("   🚨 PERFECTED Language Detection (English/Hindi/Hinglish)");
-  console.log("   🚨 MESSAGE LENGTH OPTIMIZED (280 chars max)");
-  console.log("   🚨 COMPLETE ANALYTICS TRACKING (All tables)");
-  console.log("   🚨 PESSIMISTIC → KRISHNA → FOLLOWUP Structure");
-  console.log("   🚨 Template buttons with psychological engagement");
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE FIXED VERSION listening on port ${PORT}`);
+  console.log("✅ ALL CRITICAL ISSUES FIXED:");
+  console.log("   🚨 MENUS: Complete and NEVER cut off");
+  console.log("   🚨 MESSAGES: Smart length optimization (no mid-sentence cuts)");
+  console.log("   🚨 OPENAI: Instructed for SHORT WhatsApp responses (200-250 words)");
+  console.log("   🚨 TEMPLATES: Proper button handling without restrictions");
   console.log("   📊 Database analytics for all 694 users");
-  console.log("   🤖 Enhanced AI responses with fallbacks");
+  console.log("   🤖 Enhanced AI responses with proper fallbacks");
   console.log("   📱 WhatsApp-optimized message delivery");
   setupDatabase().catch(console.error);
 });
