@@ -1,4 +1,5 @@
-// index.js — SarathiAI (COMPLETE REVIVED VERSION)
+// index.js — SarathiAI (COMPLETE REVIVED v2)
+// This version fixes all language detection bugs and implements the "Pessimistic/Convincing" strategy.
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -39,78 +40,79 @@ const responseCache = new Map();
 
 /* =============== 🚨 OPTIMIZED TEMPLATE BUTTON RESPONSE SYSTEM =============== */
 
+// These are largely fine, but the follow-up questions are good.
 const OPTIMIZED_TEMPLATE_RESPONSES = {
     // PROBLEM SOLVER TEMPLATE BUTTONS
     'work stress': {
-        english: `Work pressure overwhelming? 😔
+        english: `Work pressure overwhelming? 😔 That's a heavy, draining feeling.
 
 Krishna says in Gita 2.47: "Focus on duty, not results."
 
 This moment will pass. Your inner strength is greater than any stress. 🕉️
 
-What's the heaviest part weighing on you right now?`,
+Let's pinpoint this: What's the *one* task weighing most heavily on you?`,
         
-        hindi: `काम का तनाव भारी लग रहा? 😔
+        hindi: `काम का तनाव भारी लग रहा? 😔 यह एक थका देने वाली भावना है।
 
 कृष्ण गीता 2.47 में कहते: "कर्म करो, फल की चिंता मत करो।"
 
 यह समय भी बीत जाएगा। आपकी आंतरिक शक्ति तनाव से बड़ी है। 🕉️
 
-अभी सबसे ज्यादा क्या भारी लग रहा है?`
+चलिए मुद्दे पर आते हैं: वो *कौन सा एक* काम है जो सबसे भारी लग रहा है?`
     },
     
     'relationship issues': {
-        english: `Relationship struggles hurt deeply... 💔
+        english: `Relationship struggles hurt deeply... 💔 It can feel very isolating.
 
-Gita teaches: See the divine in every being.
+Gita teaches: See the divine in every being, even when it's hard.
 
-Krishna's wisdom can heal your connections. 🌟
+Krishna's wisdom can heal connections. 🌟
 
-What part feels most painful right now?`,
+What part of this feels most painful *to you* right now?`,
         
-        hindi: `रिश्तों की परेशानियाँ गहरा दुख देती हैं... 💔
+        hindi: `रिश्तों की परेशानियाँ गहरा दुख देती हैं... 💔 इसमें बहुत अकेलापन महसूस हो सकता है।
 
-गीता सिखाती: हर प्राणी में दिव्यता देखो।
+गीता सिखाती: हर प्राणी में दिव्यता देखो, तब भी जब यह मुश्किल हो।
 
 कृष्ण का ज्ञान आपके जुड़ाव को ठीक कर सकता है। 🌟
 
-अभी सबसे ज्यादा दर्द किस बात का है?`
+अभी सबसे ज्यादा दर्द *आपको* किस बात का है?`
     },
     
     'personal confusion': {
-        english: `Feeling lost about life's path? 🌀
+        english: `Feeling lost about life's path? 🌀 That's a very common, human feeling.
 
-Gita wisdom: Your soul is eternal, confusion is temporary.
+Gita wisdom: Your soul is eternal, this confusion is temporary.
 
 Krishna guides through every uncertainty. ✨
 
-What feels most unclear to you currently?`,
+What's the *one* decision that feels most unclear right now?`,
         
-        hindi: `जीवन का रास्ता भटका हुआ लगता है? 🌀
+        hindi: `जीवन का रास्ता भटका हुआ लगता है? 🌀 यह एक बहुत ही सामान्य, मानवीय भावना है।
 
-गीता ज्ञान: आपकी आत्मा अमर है, भ्रम अस्थायी है।
+गीता ज्ञान: आपकी आत्मा अमर है, यह भ्रम अस्थायी है।
 
 कृष्ण हर अनिश्चितता में मार्गदर्शन देते हैं। ✨
 
-अभी सबसे ज्यादा क्या अस्पष्ट लग रहा है?`
+वो *कौन सा एक* निर्णय है जो अभी सबसे अस्पष्ट लग रहा है?`
     },
     
     'anxiety': {
-        english: `Anxiety making everything feel out of control? 😰
+        english: `Anxiety making everything feel out of control? 😰 That feeling is exhausting.
 
 Krishna reminds in Gita 2.56: "Be steady in sorrow and joy."
 
-This anxious wave will settle, revealing your calm center. 🌊
+This wave will settle, revealing your calm center. 🌊
 
-What thoughts keep looping in your mind?`,
+What's the *one thought* that keeps looping in your mind? Let's face it together.`,
         
-        hindi: `चिंता सब कुछ बेकाबू लग रहा है? 😰
+        hindi: `चिंता सब कुछ बेकाबू लग रहा है? 😰 यह भावना थका देती है।
 
 कृष्ण गीता 2.56 में याद दिलाते: "दुख और सुख में स्थिर रहो।"
 
 यह चिंता की लहर थमेगी, आपका शांत केंद्र प्रकट होगा। 🌊
 
-कौन से विचार दिमाग में घूम रहे हैं?`
+वो *कौन सा एक विचार* है जो दिमाग में घूम रहा है? चलिए उसका सामना करते हैं।`
     },
     
     'custom help': {
@@ -118,17 +120,17 @@ What thoughts keep looping in your mind?`,
 
 Krishna's Gita offers wisdom for every unique situation.
 
-Your specific challenge deserves specific solutions. 💫
+Your challenge deserves a specific solution, not a template. 💫
 
-What particular situation are you facing?`,
+Please tell me, what particular situation are you facing?`,
         
         hindi: `समझता हूँ आपको व्यक्तिगत मार्गदर्शन चाहिए... 🤔
 
 कृष्ण की गीता हर अनोखी स्थिति के लिए ज्ञान देती है।
 
-आपकी विशेष चुनौती के लिए विशेष समाधान चाहिए। 💫
+आपकी चुनौती के लिए विशेष समाधान चाहिए, कोई टेम्पलेट नहीं। 💫
 
-आप किस खास स्थिति का सामना कर रहे हैं?`
+कृपया बताएं, आप किस खास स्थिति का सामना कर रहे हैं?`
     },
 
     // DAILY WISDOM TEMPLATE BUTTONS
@@ -139,7 +141,7 @@ Krishna's simple practice: 2 minutes of deep breathing with "Hare Krishna"
 
 Feel peace returning with each breath. 🙏
 
-How does your mind feel now? Calmer?`,
+How does your mind feel after trying that? A little calmer?`,
         
         hindi: `मन अशांत लग रहा? 🌀
 
@@ -147,18 +149,18 @@ How does your mind feel now? Calmer?`,
 
 हर सांस के साथ शांति लौटती महसूस करें। 🙏
 
-अब आपका मन कैसा महसूस कर रहा? शांत?`
+यह करने के बाद आपका मन कैसा महसूस कर रहा? थोड़ा शांत?`
     },
 
     // EMOTIONAL CHECK-IN TEMPLATE BUTTONS  
     'hare krishna': {
         english: `That heavy feeling is real... 💭
 
-Krishna says: "The soul is eternal" - this emotion doesn't define you.
+Krishna says: "The soul is eternal" - this emotion doesn't define *you*.
 
 His love is constant, even in difficult moments. ❤️
 
-What's specifically on your mind right now?`,
+What's specifically on your mind? I'm here to listen.`,
         
         hindi: `वह भारीपन वास्तविक है... 💭
 
@@ -166,7 +168,7 @@ What's specifically on your mind right now?`,
 
 उनका प्यार स्थिर है, मुश्किल समय में भी। ❤️
 
-अभी खासकर आपके मन में क्या चल रहा है?`
+अभी खासकर आपके मन में क्या चल रहा है? मैं सुनने के लिए यहाँ हूँ।`
     }
 };
 
@@ -189,31 +191,27 @@ const BUTTON_MAPPING = {
     'अभ्यास': 'practice'
 };
 
-/* ---------------- VARIED ENGAGEMENT QUESTIONS ---------------- */
+/* ---------------- [NEW] CONVINCING ENGAGEMENT QUESTIONS ---------------- */
 const ENGAGEMENT_QUESTIONS = {
   english: [
-    "What's the one thing making this feel heaviest?",
-    "If you could change just one thing right now, what would it be?",
-    "What would make the next hour feel more manageable?",
-    "Which part feels most overwhelming?",
-    "What's the smallest step that would help right now?",
-    "If Krishna were advising you personally, what do you think he'd say?",
-    "What would help you feel 10% calmer in this moment?",
-    "What's the first thought that comes to mind when you think about this?",
-    "Which aspect needs the most attention right now?",
-    "What would a moment of peace look like for you right now?"
+    "What's the *one* thought that keeps looping? Let's try to untangle it.",
+    "If you could change just *one* small thing about this situation, what would it be? Let's start there.",
+    "What's the specific feeling that's hardest to shake right now (like anger, fear, sadness)?",
+    "What does the 'worst-case scenario' look like in your mind? Let's look at it clearly.",
+    "What advice do you *think* Krishna would give you? Let's explore that.",
+    "What would a moment of peace feel like *right now*?",
+    "What's the one part of this you *can* control?",
+    "If you had to explain this problem to a friend, what's the first thing you'd say?"
   ],
   hindi: [
-    "सबसे ज्यादा क्या भारी लग रहा है?",
-    "अगर आप एक चीज़ बदल सकते, तो क्या बदलेंगे?",
-    "अगले एक घंटे को बेहतर बनाने के लिए क्या कर सकते हैं?",
-    "कौन सा हिस्सा सबसे ज्यादा मुश्किल लग रहा है?",
-    "अभी सबसे छोटा कौन सा कदम मदद करेगा?",
-    "अगर कृष्ण आपको सलाह दे रहे होते, तो क्या कहते?",
-    "इस पल में 10% शांत महसूस करने के लिए क्या मदद करेगा?",
-    "इसके बारे में सोचते ही आपके मन में पहला क्या विचार आता है?",
-    "किस पहलू पर सबसे ज्यादा ध्यान देने की जरूरत है?",
-    "इस समय आपके लिए शांति का एक पल कैसा दिखेगा?"
+    "कौन सा *एक* विचार बार-बार घूम रहा है? चलिए उसे सुलझाते हैं।",
+    "अगर आप *एक* छोटी सी चीज़ बदल पाते, तो वो क्या होती? वहीं से शुरू करते हैं।",
+    "अभी कौन सी *एक* भावना सबसे भारी है (जैसे गुस्सा, डर, या उदासी)?",
+    "आपके मन में 'सबसे बुरा' क्या हो सकता है? चलिए उसे स्पष्ट रूप से देखते हैं।",
+    "आपको क्या लगता है कृष्ण आपको क्या सलाह देते? इस पर बात करते हैं।",
+    "इस पल में *शांति* का एक पल कैसा महसूस होगा?",
+    "इस स्थिति का कौन सा *एक* हिस्सा आपके नियंत्रण में है?",
+    "अगर आपको यह समस्या किसी दोस्त को समझानी हो, तो आप पहली बात क्या कहेंगे?"
   ]
 };
 
@@ -248,7 +246,7 @@ function getEngagementQuestion(phone, language) {
   return selectedQuestion;
 }
 
-/* ---------------- PERFECTED LANGUAGE DETECTION ---------------- */
+/* ---------------- [FIXED] LANGUAGE DETECTION ---------------- */
 function detectLanguageFromText(text, currentLanguage = "English") {
     if (!text || typeof text !== "string") return currentLanguage;
     
@@ -268,7 +266,7 @@ function detectLanguageFromText(text, currentLanguage = "English") {
     }
 
     // 3. Romanized Hindi detection - STRONG PATTERNS (MOVED UP)
-    // *** FIX: This now runs *before* pure English check to catch Romanized Hindi ***
+    // *** FIX: This now runs *before* pure English check to catch "Isme kya samjaya gya hai" ***
     const hindiRomanPatterns = [
         /\b(kaise|kya|kyu|kaun|kahan|kab|kaisa|kitna|karni|karte|hain|ho|hai|hun)\b/i,
         /\b(main|mera|mere|meri|tum|aap|hum|hamara|unka|uska|apna|apne)\b/i,
@@ -278,7 +276,8 @@ function detectLanguageFromText(text, currentLanguage = "English") {
     ];
     
     const hindiMatches = hindiRomanPatterns.filter(pattern => pattern.test(cleanText)).length;
-    if (hindiMatches >= 2) {
+    // Be more aggressive for short queries like "kya hai"
+    if (hindiMatches >= 2 || (hindiMatches >= 1 && cleanText.length < 25)) {
         return "Hindi";
     }
     
@@ -299,63 +298,47 @@ function detectLanguageFromText(text, currentLanguage = "English") {
     return currentLanguage;
 }
 
+/* ---------------- [FIXED] LANGUAGE DETERMINATION ---------------- */
+// This function is now rewritten to separate EXPLICIT commands from IMPLICIT detection.
 async function determineUserLanguage(phone, text, user) {
     let currentLanguage = user.language_preference || user.language || 'English';
+    const cleanText = text.toLowerCase().trim();
+
+    // 1. Check for EXPLICIT commands
+    const isExplicitEnglish = cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi');
+    const isExplicitHindi = cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('hind');
+    
+    if (isExplicitEnglish && currentLanguage !== 'English') {
+        await updateUserState(phone, { language_preference: 'English', language: 'English' });
+        console.log(`🔄 Language EXPLICITLY switched to: English`);
+        return { language: 'English', isSwitch: true }; // It was an explicit command
+    }
+    
+    if (isExplicitHindi && currentLanguage !== 'Hindi') {
+        await updateUserState(phone, { language_preference: 'Hindi', language: 'Hindi' });
+        console.log(`🔄 Language EXPLICITLY switched to: Hindi`);
+        return { language: 'Hindi', isSwitch: true }; // It was an explicit command
+    }
+    
+    // 2. If NOT an explicit command, just detect the language for this one response
     const detectedLanguage = detectLanguageFromText(text, currentLanguage);
     
-    console.log(`🔤 Language Detection: "${text}" -> ${detectedLanguage} (was: ${currentLanguage})`);
-    
-    // Check for explicit language commands
-    const cleanText = text.toLowerCase().trim();
-    const isLanguageSwitchCommand = 
-        cleanText.includes('english') || 
-        cleanText.includes('hindi') ||
-        cleanText.includes('speak english') ||
-        cleanText.includes('speak hindi') ||
-        cleanText.includes('angrezi') ||
-        cleanText.includes('hind');
-    
-    if (isLanguageSwitchCommand) {
-        let newLanguage = currentLanguage;
-        
-        if (cleanText.includes('english') || cleanText.includes('speak english') || cleanText.includes('angrezi')) {
-            newLanguage = 'English';
-        } else if (cleanText.includes('hindi') || cleanText.includes('speak hindi') || cleanText.includes('hind')) {
-            newLanguage = 'Hindi';
-        }
-        
-        if (newLanguage !== currentLanguage) {
-            await updateUserState(phone, { 
-                language_preference: newLanguage,
-                language: newLanguage
-            });
-            console.log(`🔄 Language switched to: ${newLanguage}`);
-            return { language: newLanguage, isSwitch: true, switchTo: newLanguage };
-        }
-    }
-    
-    // Only update language if detection is confident and different
+    // 3. Update preference if it's a confident, different detection, but
+    //    DO NOT treat it as a "switch" that resets the bot.
     if (detectedLanguage !== currentLanguage) {
-        // Confident if Hindi script, or pure English, or known greetings.
-        // The check for Romanized Hindi is now implicit in detectLanguageFromText's priority.
-        const isConfidentDetection = 
-            /[\u0900-\u097F]/.test(text) ||
-            (/^[a-zA-Z\s,.!?'"-]+$/.test(text) && text.length > 3) ||
-            ['namaste', 'namaskar', 'pranam', 'radhe radhe'].includes(cleanText) ||
-            ['hi', 'hello', 'hey', 'thanks', 'thank you'].includes(cleanText);
-            
-        if (isConfidentDetection) {
-            await updateUserState(phone, { 
-                language_preference: detectedLanguage,
-                language: detectedLanguage 
-            });
-            console.log(`🔄 Language updated to: ${detectedLanguage} (confident detection)`);
-            return { language: detectedLanguage, isSwitch: true, switchTo: detectedLanguage };
-        }
+        console.log(`🔄 Language IMPLICITLY detected: ${detectedLanguage}`);
+        // We can update the user's preference in the background
+        await updateUserState(phone, { language_preference: detectedLanguage, language: detectedLanguage });
+        
+        // *** THE CRITICAL FIX ***
+        // Return the *new* language, but 'isSwitch: false' so the bot ANSWERS the question
+        return { language: detectedLanguage, isSwitch: false }; 
     }
     
+    // 4. Language is the same, no switch.
     return { language: currentLanguage, isSwitch: false };
 }
+
 
 /* ---------------- FIXED MESSAGE LENGTH OPTIMIZATION ---------------- */
 function optimizeMessageForWhatsApp(message, maxLength = 350) {
@@ -442,6 +425,7 @@ async function trackTemplateButtonClick(phone, buttonType, buttonText, language,
             (pattern_id, phone, template_id, first_response_text, first_response_time_seconds, 
              response_sentiment, asked_for_help, emotional_state_detected, button_clicked, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT DO NOTHING
         `, [
             patternId,
             phone,
@@ -460,6 +444,7 @@ async function trackTemplateButtonClick(phone, buttonType, buttonText, language,
             INSERT INTO user_engagement 
             (session_id, phone, morning_message_id, first_reply_time, buttons_clicked, created_at)
             VALUES ($1, $2, $3, $4, $5, NOW())
+            ON CONFLICT DO NOTHING
         `, [
             sessionId,
             phone,
@@ -474,6 +459,7 @@ async function trackTemplateButtonClick(phone, buttonType, buttonText, language,
                 INSERT INTO template_analytics 
                 (phone, template_id, button_clicked, language, clicked_at)
                 VALUES ($1, $2, $3, $4, NOW())
+                ON CONFLICT DO NOTHING
             `, [
                 phone,
                 templateContext.template_id || 'problem_solver_english',
@@ -536,7 +522,7 @@ async function handleTemplateButtonResponse(phone, text, language, user) {
     
     // Update user state to continue conversation
     await updateUserState(phone, {
-        conversation_stage: 'template_followup', // This stage is fine, it will be reset by next message
+        conversation_stage: 'chatting', // FIX: Move directly to 'chatting'
         last_menu_choice: buttonType,
         pending_followup: 'awaiting_user_response',
         last_activity_ts: new Date().toISOString()
@@ -554,12 +540,11 @@ const ENHANCED_GITA_WISDOM = {
             hindi: [
                 `🌅 **सत्य का मार्ग और कृष्ण की रणनीति**
 
-आपने पूछा कि कृष्ण ने युद्ध में छल क्यों किया - यह गहरा प्रश्न है। गीता (16.1-3) दैवी और आसुरी गुणों में अंतर बताती है। कृष्ण का "छल" वास्तव में धर्म की रक्षा के लिए था, जब सारे नैतिक रास्ते बंद हो गए थे।
+यह एक गहरा प्रश्न है। गीता (16.1-3) दैवी और आसुरी गुणों में अंतर बताती है। कृष्ण का "छल" वास्तव में धर्म की रक्षा के लिए था, जब सारे नैतिक रास्ते बंद हो गए थे।
 
 **आपकी स्थिति में:**
 1. पहले अपने इरादे जाँचें: क्या यह स्वार्थ के लिए है या सचमुच भलाई के लिए?
 2. गुमनाम रिपोर्टिंग के विकल्प तलाशें
-3. सबूत एकत्र करें - लिखित रिकॉर्ड रखें
 
 क्या आप बता सकते हैं कि आप किस तरह की स्थिति का सामना कर रहे हैं?`,
 
@@ -569,7 +554,6 @@ const ENHANCED_GITA_WISDOM = {
 
 **व्यावहारिक कदम:**
 • पहले एक भरोसेमंद मित्र से सलाह लें
-• कंपनी की व्हिसलब्लोअर पॉलिसी चेक करें
 • अपनी सुरक्षा सर्वोपरि रखें
 
 क्या आपको लगता है कि अभी चुप रहना बेहतर है या आप कुछ करना चाहेंगे?`
@@ -577,12 +561,11 @@ const ENHANCED_GITA_WISDOM = {
             english: [
                 `🌅 **The Path of Truth & Krishna's Strategy**
 
-You asked why Krishna used deception in war - this is a profound question. Gita (16.1-3) distinguishes divine and demonic qualities. Krishna's "deception" was actually to protect dharma when all ethical paths were closed.
+This is a profound question. Gita (16.1-3) distinguishes divine and demonic qualities. Krishna's "deception" was actually to protect dharma when all ethical paths were closed.
 
 **In your situation:**
 1. First examine your intentions: Is this for selfish gain or genuine good?
 2. Explore anonymous reporting options  
-3. Gather evidence - keep written records
 
 Could you share what kind of situation you're facing?`,
 
@@ -592,7 +575,6 @@ Gita (17.14-16) elevates truth as supreme, but also says speech should be pleasa
 
 **Practical Steps:**
 • First consult a trusted friend
-• Check company whistleblower policy
 • Keep your safety paramount
 
 Do you feel staying silent is better now, or would you like to take some action?`
@@ -610,10 +592,9 @@ Do you feel staying silent is better now, or would you like to take some action?
 
 **शांत रहने के उपाय:**
 1. 4-7-8 श्वास: 4 सेकंड साँस लें, 7 रोकें, 8 छोड़ें
-2. अपनी तैयारी पर ध्यान दें: तथ्य, दस्तावेज़, समर्थन
-3. छोटे-छोटे कदम सोचें - एक बार में एक ही काम
+2. छोटे-छोटे कदम सोचें - एक बार में एक ही काम
 
-कल्पना करें आप एक पहाड़ हैं और तनाव बादलों की तरह गुजर रहा है...`,
+आप किस एक छोटे कदम से शुरूआत कर सकते हैं?`,
 
                 `🛡️ **आंतरिक सुरक्षा**
 
@@ -621,8 +602,7 @@ Do you feel staying silent is better now, or would you like to take some action?
 
 **तत्काल क्रिया:**
 • सबसे बुरा परिणाम लिखें - फिर उसका समाधान सोचें
-• 3 विश्वसनीय लोगों की सूची बनाएं जिनसे बात कर सकते हैं
-• रोज 5 मिनट शांत बैठें - बस साँसों को देखें
+• 3 विश्वसनीय लोगों की सूची बनाएं
 
 आप किस एक छोटे कदम से शुरूआत कर सकते हैं?`
             ],
@@ -633,10 +613,9 @@ Your stress is natural. Gita (2.56) says: "One who is undisturbed in sorrow..."
 
 **Calming Techniques:**
 1. 4-7-8 breathing: Inhale 4s, hold 7s, exhale 8s  
-2. Focus on preparation: facts, documents, support
-3. Think small steps - one thing at a time
+2. Think small steps - one thing at a time
 
-Imagine you're a mountain and stress is clouds passing by...`,
+What's one small step you could start with?`,
 
                 `🛡️ **Inner Security**
 
@@ -645,7 +624,6 @@ Gita (18.63) says: "Reflect fully, then act as you choose." This gives you confi
 **Immediate Action:**
 • Write worst-case scenario - then brainstorm solutions
 • List 3 trusted people you can talk to
-• Sit quietly 5 min daily - just watch your breath
 
 What's one small step you could start with?`
             ]
@@ -653,61 +631,45 @@ What's one small step you could start with?`
     }
 };
 
-/* ---------------- COMPLETELY REVISED OPENAI PROMPT SYSTEM ---------------- */
+/* ---------------- [NEW] PESSIMISTIC/CONVINCING OPENAI PROMPT ---------------- */
 const ENHANCED_SYSTEM_PROMPT = {
   hindi: `आप सारथी AI हैं - भगवद गीता के आधार पर मार्गदर्शन देने वाले विशेषज्ञ।
 
 **कड़े नियम:**
-1. उत्तर अधिकतम 120 शब्दों में दें (केवल 3-4 छोटे पैराग्राफ)
-2. संरचना सख्ती से अपनाएं:
-   - पहला वाक्य: समस्या को पहचानें (सहानुभूति दिखाएं)
-   - दूसरा वाक्य: गीता का प्रासंगिक श्लोक दें
-   - तीसरा वाक्य: 1 व्यावहारिक सलाह दें
-   - अंतिम वाक्य: केवल 1 प्रश्न पूछें (कभी दो नहीं)
+1. **निराशावादी शुरुआत:** हमेशा उपयोगकर्ता की भावना को गहराई से मान्य करें (जैसे, 'यह सुनना बहुत कठिन है...', 'यह भावना बहुत भारी हो सकती है...')
+2. **गीता श्लोक:** एक प्रासंगिक गीता श्लोक या शिक्षा दें।
+3. **व्यावहारिक सलाह:** केवल 1 छोटी, व्यावहारिक सलाह दें।
+4. **विश्वसनीय फॉलो-अप:** हमेशा *एक* प्रेरक, व्यावहारिक प्रश्न के साथ समाप्त करें जो उपयोगकर्ता को जवाब देने के लिए प्रोत्साहित करे (जैसे, 'कौन सा *एक* विचार सबसे ज्यादा परेशान कर रहा है? चलिए उसे तोड़ते हैं।')
+5. **बहुत छोटा रखें:** आपका पूरा उत्तर 120 शब्दों से कम होना चाहिए (3-4 छोटे पैराग्राफ)।
 
 **उदाहरण संरचना:**
-"नौकरी का तनाव वाकई कठिन हो सकता है 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो।
-आज सिर्फ एक छोटा कदम उठाएं - 5 मिनट का ब्रेक लें।
-सबसे ज्यादा क्या भारी लग रहा है?"
-
-**विविध प्रश्न उदाहरण:**
-- "अगर आप एक चीज़ बदल सकते, तो क्या बदलेंगे?"
-- "अगले एक घंटे को बेहतर बनाने के लिए क्या कर सकते हैं?"
-- "कौन सा हिस्सा सबसे ज्यादा मुश्किल लग रहा है?"
-- "अभी सबसे छोटा कौन सा कदम मदद करेगा?"
-- "अगर कृष्ण यहाँ होते, तो क्या सलाह देते?"
+"यह सुनना बहुत मुश्किल है कि आप इतना तनाव महसूस कर रहे हैं 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो।
+आज के लिए, बस एक छोटा 5 मिनट का ब्रेक लेने पर ध्यान दें।
+कौन सा *एक* काम है जिसे आप अभी टाल रहे हैं? शायद हम वहां से शुरू कर सकते हैं।"
 
 **कभी न करें:**
-- "Want to know more?" या "Does this seem helpful?" न लिखें
-- उत्तर 120 शब्दों से अधिक न हो
-- केवल एक ही प्रश्न पूछें`,
+- "Want to know more?" या "क्या यह उपयोगी लगा?" न लिखें।
+- 120 शब्दों से अधिक न हो।
+- एक से अधिक प्रश्न न पूछें।`,
 
   english: `You are Sarathi AI - an expert guide based on Bhagavad Gita.
 
 **STRICT RULES:**
-1. Keep response MAX 120 words (only 3-4 short paragraphs)
-2. Follow this structure STRICTLY:
-   - First sentence: Acknowledge the problem (show empathy) 
-   - Second sentence: Provide relevant Gita verse
-   - Third sentence: Give 1 practical advice
-   - Final sentence: Ask ONLY 1 question (never two)
+1. **Pessimistic Start:** Always validate their feeling deeply (e.g., "That sounds incredibly difficult...", "That's a heavy feeling...").
+2. **Gita Verse:** Provide one relevant Gita verse or teaching.
+3. **Practical Advice:** Give only 1 short, practical piece of advice.
+4. **Convincing Follow-up:** ALWAYS end with *one* convincing, insightful follow-up question that *encourages* a reply (e.g., "What's the *one* specific thought that's hardest to shake? Let's focus on that.").
+5. **Keep it SHORT:** Your entire response MUST be under 120 words (3-4 short paragraphs).
 
 **Example Structure:**
-"Job stress can be really tough 😔 Gita 2.47 says: Focus on duty, not results. 
-Take just one small step today - a 5-minute break. 
-What's the one thing making this feel heaviest right now?"
-
-**Varied Question Examples:**
-- "If you could change just one thing, what would it be?"
-- "What would make the next hour feel more manageable?" 
-- "Which part feels most overwhelming?"
-- "What's the smallest step that would help?"
-- "If Krishna were here, what advice do you think he'd give?"
+"It sounds really tough to be feeling so much stress 😔 Gita 2.47 says: Focus on your duty, not the results.
+For today, just focus on taking one 5-minute break.
+What's the *one* task that feels the most overwhelming? Let's start there."
 
 **NEVER DO:**
 - Write "Want to know more?" or "Does this seem helpful?"
-- Exceed 120 words
-- Ask more than one question`
+- Exceed 120 words.
+- Ask more than one question.`
 };
 
 /* ---------------- Validation & Setup ---------------- */
@@ -799,9 +761,9 @@ function pruneChatHistory(history, maxMessages = 20) {
     // This was your original pruning logic, which is good.
     const importantMessages = history.filter(msg => 
         msg.role === 'system' || 
-        msg.content.includes('कृष्ण') || 
-        msg.content.includes('Krishna') ||
-        msg.content.length > 100
+        (msg.content && msg.content.includes('कृष्ण')) || 
+        (msg.content && msg.content.includes('Krishna')) ||
+        (msg.content && msg.content.length > 100)
     );
     
     const recentMessages = history.slice(-maxMessages + importantMessages.length);
@@ -1081,8 +1043,8 @@ async function sendCompleteResponse(phone, fullResponse, language, type = "chat"
     // Apply smart length optimization
     cleanResponse = optimizeMessageForWhatsApp(cleanResponse, MAX_REPLY_LENGTH);
     
-    // Add proper ending if missing
-    if (!/[.!?।]\s*$/.test(cleanResponse.trim())) {
+    // Add proper ending if missing (this is a fallback, AI should provide it)
+    if (!/[.!?।]\s*$/.test(cleanResponse.trim()) && !cleanResponse.trim().endsWith("?")) {
         const endings = language === "Hindi" 
             ? ["। आप क्या सोचते हैं?", "। क्या यह उपयोगी लगा?"]
             : [". What are your thoughts?", ". Does this seem helpful?"];
@@ -1260,36 +1222,54 @@ function detectUserSituation(text) {
   return Object.keys(situations).find(situation => situations[situation]) || 'general';
 }
 
-/* ---------------- FIXED: Enhanced AI Response System with SHORT responses ---------------- */
+/* ---------------- [FIXED] Enhanced AI Response System ---------------- */
 async function getCachedAIResponse(phone, text, language, context) {
     const cacheKey = `${phone}:${text.substring(0, 50)}:${language}`;
     
     if (responseCache.has(cacheKey)) {
         console.log("✅ Using cached response");
-        return responseCache.get(cacheKey);
+        // Re-send the cached response.
+        // We must call sendViaHeltar, not just return, as the calling function expects the send.
+        const cached = responseCache.get(cacheKey);
+        await sendViaHeltar(phone, cached.response, cached.type);
+        // We also need to update history and state
+        const user = await getUserState(phone);
+        const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: cached.response }];
+        await updateUserState(phone, { 
+            chat_history: updatedHistory,
+            last_message: cached.response,
+            last_message_role: 'assistant'
+        });
+        return;
     }
     
-    // *** FIX: This was calling the retry function, which called the base, which called the retry...
-    // Removed the retry logic to simplify. We just call the main function.
-    const response = await getEnhancedAIResponse(phone, text, language, context);
+    // Call the retry-enabled function
+    const aiResponse = await getEnhancedAIResponseWithRetry(phone, text, language, context);
     
-    responseCache.set(cacheKey, response);
-    setTimeout(() => responseCache.delete(cacheKey), 300000); // 5 min cache
+    // Cache the *result* (the response text) if it was successful
+    if (aiResponse && aiResponse.response) {
+         responseCache.set(cacheKey, aiResponse);
+         setTimeout(() => responseCache.delete(cacheKey), 300000); // 5 min cache
+    }
     
-    return response;
+    // The response is already sent *inside* getEnhancedAIResponse or getContextualFallback
+    // So we just return.
+    return;
 }
 
 async function getEnhancedAIResponseWithRetry(phone, text, language, context, retries = 2) {
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            // *** FIX: This function now correctly calls the base function
+            // getEnhancedAIResponse now returns {response, type} or throws error
             return await getEnhancedAIResponse(phone, text, language, context);
         } catch (error) {
             console.error(`❌ OpenAI attempt ${attempt + 1} failed:`, error.message);
             
             if (attempt === retries) {
                 console.log("🔄 All retries exhausted, using fallback");
-                return await getContextualFallback(phone, text, language, context);
+                // getContextualFallback sends the message itself
+                await getContextualFallback(phone, text, language, context);
+                return null; // Return null to indicate failure
             }
             
             await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, attempt)));
@@ -1297,169 +1277,143 @@ async function getEnhancedAIResponseWithRetry(phone, text, language, context, re
     }
 }
 
-/* ---------------- FIXED AI RESPONSE FUNCTION ---------------- */
-// *** FIX: This function was critically broken. ***
-// 1. It didn't define the `messages` variable, causing all API calls to fail.
-// 2. It didn't correctly use the passed `conversationContext`.
-// 3. It didn't fetch `user` or `history` correctly.
-// This is the new, working version.
+/* ---------------- [FIXED] AI RESPONSE FUNCTION ---------------- */
+// This function now returns {response, type} on success or throws an error on failure.
+// It *also* sends the message.
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
-  try {
-    if (!OPENAI_KEY || OPENAI_KEY === '') {
-      console.log("🔄 No OpenAI key, using fallback response");
-      return await getContextualFallback(phone, text, language, conversationContext);
-    }
+  // We throw an error, so the retry logic in getEnhancedAIResponseWithRetry can catch it.
+  if (!OPENAI_KEY || OPENAI_KEY === '') {
+    console.log("🔄 No OpenAI key, using fallback response");
+    throw new Error("No OpenAI key");
+  }
 
-    console.log("🤖 Using STRICT OpenAI for short response...");
+  console.log("🤖 Using STRICT OpenAI for short response...");
 
-    const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
-    
-    // --- FIX: Define user, history, and context BEFORE using them ---
-    const user = await getUserState(phone);
-    const history = user.chat_history || [];
-    // Use the context passed from the webhook handler, which is already built
-    const currentContext = conversationContext;
-    // --- END FIX ---
+  const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
+  
+  const user = await getUserState(phone);
+  const history = user.chat_history || [];
+  const currentContext = conversationContext; // Use the context passed from the webhook
 
-    const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता का संदेश: "${text}"
+  const userPrompt = language === "Hindi" 
+    ? `उपयोगकर्ता का संदेश: "${text}"
 
 पिछला संदर्भ: ${currentContext.previousTopics.join(', ') || 'नया संवाद'}
 भावनात्मक स्थिति: ${currentContext.emotionalTone}
 क्या यह पिछली बातचीत का जारी रूप है? ${currentContext.isFollowUp ? 'हाँ' : 'नहीं'}
 
-**कृपया ध्यान दें: उत्तर अधिकतम 120 शब्दों में दें और विविध प्रश्नों का उपयोग करें।**
-1. समस्या को पहचानें (सहानुभूति)
-2. गीता श्लोक दें  
-3. 1 व्यावहारिक सलाह दें
-4. केवल 1 प्रश्न पूछें (हमेशा अलग प्रश्न)`
-      : `User message: "${text}"
+**कृपया ध्यान दें: उत्तर अधिकतम 120 शब्दों में दें और नए, प्रेरक प्रश्नों का उपयोग करें।**
+${ENHANCED_SYSTEM_PROMPT.hindi}` // Re-iterate rules
+    : `User message: "${text}"
 
 Previous context: ${currentContext.previousTopics.join(', ') || 'New conversation'}
 Emotional tone: ${currentContext.emotionalTone}
 Is this continuing previous discussion? ${currentContext.isFollowUp ? 'Yes' : 'No'}
 
-**IMPORTANT: Keep response MAX 120 words and use VARIED questions.**
-1. Acknowledge problem (empathy)
-2. Provide Gita verse  
-3. Give 1 practical advice
-4. Ask ONLY 1 question (always different question)`;
+**IMPORTANT: Keep response MAX 120 words and use new, convincing questions.**
+${ENHANCED_SYSTEM_PROMPT.english}`; // Re-iterate rules
 
-    console.log("📤 Sending to OpenAI with STRICT word limit");
+  console.log("📤 Sending to OpenAI with STRICT word limit");
 
-    // --- FIX: Assemble the 'messages' array ---
-    const messages = [
-        { role: "system", content: systemPrompt },
-        ...history.slice(-4), // Add last 4 messages (2 exchanges)
-        { role: "user", content: userPrompt } 
-    ];
-    // --- END FIX ---
+  // --- FIX: Assemble the 'messages' array ---
+  const messages = [
+      { role: "system", content: systemPrompt },
+      ...history.slice(-4), // Add last 4 messages (2 exchanges)
+      { role: "user", content: userPrompt } 
+  ];
+  // --- END FIX ---
 
-    const body = { 
-      model: OPENAI_MODEL, 
-      messages: messages, // Now 'messages' is correctly defined
-      max_tokens: 180, // STRICTLY LIMITED to enforce brevity
-      temperature: 0.7
-    };
+  const body = { 
+    model: OPENAI_MODEL, 
+    messages: messages, // Now 'messages' is correctly defined
+    max_tokens: 180, // STRICTLY LIMITED to enforce brevity
+    temperature: 0.7
+  };
 
-    const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-      headers: { 
-        Authorization: `Bearer ${OPENAI_KEY}`, 
-        "Content-Type": "application/json" 
-      },
-      timeout: 25000
-    });
+  const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
+    headers: { 
+      Authorization: `Bearer ${OPENAI_KEY}`, 
+      "Content-Type": "application/json" 
+    },
+    timeout: 25000
+  });
 
-    const aiResponse = resp.data?.choices?.[0]?.message?.content;
+  const aiResponse = resp.data?.choices?.[0]?.message?.content;
+  
+  if (aiResponse && aiResponse.trim().length > 10) {
+    console.log("✅ STRICT OpenAI response received");
     
-    if (aiResponse && aiResponse.trim().length > 10) {
-      console.log("✅ STRICT OpenAI response received");
+    let cleanResponse = aiResponse
+      .replace(/Want to know more\?.*$/i, '')
+      .replace(/Does this seem helpful\?.*$/i, '')
+      .replace(/क्या और जानना चाहेंगे\?.*$/i, '')
+      .replace(/समझ में आया\?.*$/i, '');
+    
+    // --- [FIXED] BUG #3: Mixed-Language Follow-up ---
+    const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 5);
+    if (sentences.length > 0) {
+      const lastSentence = sentences[sentences.length - 1].trim();
       
-      // Clean up any accidental follow-up questions
-      let cleanResponse = aiResponse
-        .replace(/Want to know more\?.*$/i, '')
-        .replace(/Does this seem helpful\?.*$/i, '')
-        .replace(/क्या और जानना चाहेंगे\?.*$/i, '')
-        .replace(/समझ में आया\?.*$/i, '');
-      
-      // Ensure single engaging question at the end
-      const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 5);
-      if (sentences.length > 0) {
-        const lastSentence = sentences[sentences.length - 1].trim();
-        if (!lastSentence.includes('?') && sentences.length >= 2) {
-          // Add varied engaging question
-          const engagementQuestion = getEngagementQuestion(phone, language);
+      // Determine language from the response itself, not the (potentially stale) 'language' variable
+      const responseLanguage = /[\u0900-\u097F]/.test(cleanResponse) ? 'Hindi' : 'English';
+
+      if (!lastSentence.includes('?') && sentences.length >= 2) {
+        const engagementQuestion = getEngagementQuestion(phone, responseLanguage); 
+        cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
+      } else if (lastSentence.includes('?')) {
+        const repetitiveQuestions = [
+          "What's feeling heaviest right now?",
+          "What are your thoughts?",
+          "Does this seem helpful?",
+          "सबसे ज्यादा क्या भारी लग रहा है?",
+          "आप क्या सोचते हैं?",
+          "क्या यह मददगार लगा?"
+        ];
+        
+        if (repetitiveQuestions.some(q => lastSentence.toLowerCase().includes(q.toLowerCase()))) {
+          const engagementQuestion = getEngagementQuestion(phone, responseLanguage);
           cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
-        } else if (lastSentence.includes('?')) {
-          // Replace repetitive questions with varied ones
-          const repetitiveQuestions = [
-            "What's feeling heaviest right now?",
-            "What are your thoughts?",
-            "Does this seem helpful?",
-            "सबसे ज्यादा क्या भारी लग रहा है?",
-            "आप क्या सोचते हैं?",
-            "क्या यह मददगार लगा?"
-          ];
-          
-          if (repetitiveQuestions.some(q => lastSentence.includes(q))) {
-            const engagementQuestion = getEngagementQuestion(phone, language);
-            cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
-          }
         }
       }
-      
-      await sendViaHeltar(phone, cleanResponse, "enhanced_ai_response");
-      
-      // const user = await getUserState(phone); // Already fetched 'user' above
-      const updatedHistory = [...(user.chat_history || []), { 
-        role: 'assistant', 
-        content: cleanResponse 
-      }];
-      await updateUserState(phone, { 
-        chat_history: updatedHistory,
-        last_message: cleanResponse,
-        last_message_role: 'assistant'
-        // DO NOT update stage here; it's done in the webhook handler
-      });
-      
-      return; // Success
-    } else {
-      throw new Error("Empty or invalid response from OpenAI");
     }
-
-  } catch (err) {
-    console.error("❌ Enhanced AI response error:", err.message);
-    console.log("🔄 Falling back to contextual response due to OpenAI error");
-    // Pass the original context to the fallback
-    await getContextualFallback(phone, text, language, conversationContext); 
+    // --- END FIX ---
+    
+    await sendViaHeltar(phone, cleanResponse, "enhanced_ai_response");
+    
+    const updatedHistory = [...(user.chat_history || []), { 
+      role: 'assistant', 
+      content: cleanResponse 
+    }];
+    await updateUserState(phone, { 
+      chat_history: updatedHistory,
+      last_message: cleanResponse,
+      last_message_role: 'assistant'
+    });
+    
+    return { response: cleanResponse, type: "enhanced_ai_response" }; // Return success
+  } else {
+    throw new Error("Empty or invalid response from OpenAI");
   }
-}
-
-function ensureCompleteStructuredResponse(response, language) {
-    let cleanResponse = response.replace(/Type\s+['"]?More['"]?\s*.*$/i, '');
-    cleanResponse = cleanResponse.replace(/['"]?More['"]?\s*टाइप\s*.*$/i, '');
-    
-    const trimmed = cleanResponse.trim();
-    
-    // Ensure proper ending
-    if (!/[.!?।]\s*$/.test(trimmed)) {
-        const endings = language === "Hindi" 
-            ? ["। आप क्या सोचते हैं?", "। क्या यह उपयोगी लगा?", "। आगे क्या जानना चाहेंगे?"]
-            : [". What are your thoughts?", ". Does this seem helpful?", ". What would you like to know next?"];
-        return trimmed + endings[Math.floor(Math.random() * endings.length)];
-    }
-    
-    return trimmed;
 }
 
 async function getContextualFallback(phone, text, language, context) {
   console.log("🔄 Using contextual fallback");
-  // *** FIX: Use the passed 'context' emotion first, *then* detect, *then* default to stress
   const emotion = context?.emotionalTone || detectEmotionAdvanced(text)?.emotion || 'stress';
   const wisdom = ENHANCED_GITA_WISDOM[emotion] || ENHANCED_GITA_WISDOM.stress;
   const responses = language === "Hindi" ? wisdom.teachings.hindi : wisdom.teachings.english;
   const selected = responses[Math.floor(Math.random() * responses.length)];
+  
+  // This function sends the message
   await sendCompleteResponse(phone, selected, language, "contextual_fallback");
+  
+  // And we must update the history
+  const user = await getUserState(phone);
+  const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: selected }];
+  await updateUserState(phone, { 
+      chat_history: updatedHistory,
+      last_message: selected,
+      last_message_role: 'assistant'
+  });
 }
 
 /* ---------------- Menu Choice Handler ---------------- */
@@ -1553,7 +1507,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
     console.log(`✅ Sending menu response for choice ${choice}`);
     await sendCompleteResponse(phone, promptContent, language, `menu_${selectedLang.action}`);
     await updateUserState(phone, { 
-      conversation_stage: selectedLang.action,
+      conversation_stage: 'chatting', // FIX: Move to 'chatting' so next reply is handled by AI
       last_menu_choice: choice,
       last_menu_shown: new Date().toISOString()
     });
@@ -1656,7 +1610,7 @@ function getFallbackDailyWisdom(language, dayOfYear) {
   return formatDailyWisdom(fallbackLesson, language, dayOfYear);
 }
 
-/* ---------------- FIXED LANGUAGE SWITCHING ---------------- */
+/* ---------------- [FIXED] LANGUAGE SWITCHING ---------------- */
 // *** FIX: Simplified logic. It no longer tries to respond to the switch command. ***
 // It just confirms the switch and shows the menu.
 async function handleLanguageSwitch(phone, newLanguage) {
@@ -1666,7 +1620,7 @@ async function handleLanguageSwitch(phone, newLanguage) {
     
     await sendViaHeltar(phone, confirmationMessage, "language_switch");
     
-    // ALWAYS reset to menu after a language switch.
+    // ALWAYS reset to menu after an explicit language switch.
     await resetToMenuStage(phone, newLanguage);
 }
 
@@ -1677,7 +1631,7 @@ async function handleSmallTalk(phone, text, language) {
         if (lower.includes('thank') || lower.includes('शुक्रिया')) {
             response = "आपका स्वागत है! 🙏 क्या आप और कुछ चाहेंगे या किसी और विषय पर बात करना चाहेंगे?";
         } else if (lower.includes('bye')) {
-            response = "धन्यवाद! जब भी जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🌟 क्या आप कल फिर बात करेंगे?";
+            response = "धन्यवाद! जब भी जरूरत हो, मैं यहाँ हूँ। हरे कृष्ण! 🌟";
         } else {
             response = "ठीक है! 😊 आप आगे क्या जानना चाहेंगे? क्या कोई और प्रश्न है आपके मन में?";
         }
@@ -1685,7 +1639,7 @@ async function handleSmallTalk(phone, text, language) {
         if (lower.includes('thank')) {
             response = "You're welcome! 🙏 Is there anything else you need or would you like to discuss another topic?";
         } else if (lower.includes('bye')) {
-            response = "Thank you! I'm here whenever you need me. Hare Krishna! 🌟 Will we talk again tomorrow?";
+            response = "Thank you! I'm here whenever you need me. Hare Krishna! 🌟";
         } else {
             response = "Okay! 😊 What would you like to know more about? Do you have any other questions in mind?";
         }
@@ -1696,19 +1650,12 @@ async function handleSmallTalk(phone, text, language) {
 function parseWebhookMessage(body) {
   console.log("📨 Raw webhook body:", JSON.stringify(body).substring(0, 200));
   if (!body) return null;
-  if (body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
-    const msg = body.entry[0].changes[0].value.messages[0];
-    console.log("📱 Heltar format message:", msg);
-    return msg;
-  }
+  // Heltar format
   if (body?.messages?.[0]) {
-    console.log("📱 Direct messages format:", body.messages[0]);
+    console.log("📱 Heltar format message:", body.messages[0]);
     return body.messages[0];
   }
-  if (body?.from && body?.text) {
-    console.log("📱 Simple format message:", body);
-    return body;
-  }
+  // Meta format
   if (body?.object === 'whatsapp_business_account') {
     const entry = body.entry?.[0];
     const changes = entry?.changes?.[0];
@@ -1719,6 +1666,11 @@ function parseWebhookMessage(body) {
       return message;
     }
   }
+  // Simple format (for testing)
+  if (body?.from && body?.text) {
+    console.log("📱 Simple format message:", body);
+    return body;
+  }
   console.log("❓ Unknown webhook format");
   return null;
 }
@@ -1726,7 +1678,7 @@ function parseWebhookMessage(body) {
 /* ---------------- 🚨 MAIN WEBHOOK HANDLER (COMPLETE & FIXED) ---------------- */
 app.post("/webhook", async (req, res) => {
   try {
-    res.status(200).send("OK");
+    res.status(200).send("OK"); // Respond immediately
     const body = req.body || {};
     const msg = parseWebhookMessage(body);
     
@@ -1736,16 +1688,18 @@ app.post("/webhook", async (req, res) => {
     }
 
     const phone = msg?.from || msg?.clientWaNumber;
-    // *** FIX: Handle different message types (text vs. button) ***
     let rawText = "";
+    
+    // Handle different message types from Meta/Heltar
     if (msg.type === "text") {
         rawText = msg.text?.body || "";
     } else if (msg.type === "button") {
         rawText = msg.button?.payload || msg.button?.text || "";
     } else if (msg.type === "interactive") {
-        rawText = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || "";
+        rawText = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || msg.interactive?.button_reply?.title || "";
     } else {
-        rawText = msg?.text?.body || ""; // Fallback
+        // Fallback for other types or simple format
+        rawText = msg?.text?.body || msg?.text || ""; 
     }
 
     const text = String(rawText || "").trim();
@@ -1774,25 +1728,30 @@ app.post("/webhook", async (req, res) => {
 
     // Get user state and determine language
     const user = await getUserState(phone);
+    
+    // *** [FIXED] BUG #1: This logic is now corrected ***
     const languageResult = await determineUserLanguage(phone, text, user);
     let language = languageResult.language;
     const isLanguageSwitch = languageResult.isSwitch;
 
     console.log(`🎯 Processing: language=${language}, stage=${user.conversation_stage}, is_switch=${isLanguageSwitch}`);
 
-    // Handle stage reset FIRST
+    // Handle EXPLICIT language switching
+    if (isLanguageSwitch) {
+      // This block now *only* runs for explicit commands like "hindi"
+      console.log(`🔄 Explicit language switch triggered for: "${text}"`);
+      await handleLanguageSwitch(phone, language); // Pass the new language
+      return;
+    }
+    
+    // Handle stage reset
     if (shouldResetToMenu(text, user.conversation_stage)) {
       console.log(`🔄 Stage reset triggered for: "${text}"`);
       await resetToMenuStage(phone, language);
       return;
     }
-
-    // Handle language switching - FIXED VERSION
-    if (isLanguageSwitch) {
-      // *** FIX: Do not pass the original message ("hindi") to the handler ***
-      await handleLanguageSwitch(phone, languageResult.switchTo);
-      return;
-    }
+    
+    // --- At this point, it's a real conversation ---
 
     // Update chat history BEFORE processing
     const updatedHistory = [...(user.chat_history || []), { role: 'user', content: text }];
@@ -1814,22 +1773,8 @@ app.post("/webhook", async (req, res) => {
         return;
     }
 
-    // Check if this is follow-up to deep conversation
-    const isFollowUp = isFollowUpToPreviousDeepQuestion(text, user);
-
     // Build the *single* conversation context object here
     const conversationContext = buildConversationContext(user, text);
-
-    // EMOTIONAL EXPRESSIONS (Empathy first)
-    if (isEmotionalExpression(text.toLowerCase()) || conversationContext.emotionalTone !== 'neutral') {
-        console.log(`✅ Intent: Emotional Expression - ${conversationContext.emotionalTone}`);
-        
-        // *** FIX: Set stage to chatting *before* calling AI ***
-        await updateUserState(phone, { conversation_stage: "chatting" });
-
-        await getCachedAIResponse(phone, text, language, conversationContext);
-        return;
-    }
 
     // CAPABILITIES QUERIES
     if (isCapabilitiesQuery(text.toLowerCase())) {
@@ -1847,17 +1792,21 @@ app.post("/webhook", async (req, res) => {
         await handleSmallTalk(phone, text, language);
         return;
     }
+    
+    // *** [FIXED] BUG #1: "Conversation Loop Hell" ***
+    // This is the default handler. We now *force* the stage to 'chatting'.
+    if (user.conversation_stage === 'menu') {
+        console.log(`✅ User ${phone} is breaking 'menu' loop. Updating stage to 'chatting'.`);
+        await updateUserState(phone, {
+            conversation_stage: "chatting"
+        });
+    }
 
     // DEFAULT: ENHANCED AI RESPONSE
-    console.log(`ℹ️  Intent: General -> Using Enhanced AI`);
+    console.log(`ℹ️  Intent: General/Emotional -> Using Enhanced AI (Stage: ${user.conversation_stage})`);
     
-    // *** FIX: This is the critical fix for "Conversation Loop Hell" ***
-    // Set the stage to 'chatting' *before* the AI call
-    await updateUserState(phone, {
-        conversation_stage: "chatting"
-    });
-    console.log(`✅ User ${phone} stage updated to 'chatting'.`);
-    
+    // The context has already been built, and the language is the *correct* detected language.
+    // getCachedAIResponse will handle the rest.
     await getCachedAIResponse(phone, text, language, conversationContext);
 
   } catch (err) {
@@ -1872,11 +1821,11 @@ app.get("/health", (req, res) => {
     bot: BOT_NAME, 
     timestamp: new Date().toISOString(),
     features: [
-      "🚨 REVIVED: Language Detection (Romanized Hindi priority)",
-      "🚨 REVIVED: AI Response (No undefined 'messages' bug)",
-      "🚨 REVIVED: Conversation Stage (No 'menu' loop)",
-      "🚨 REVIVED: Language Switch (Resets to menu correctly)",
-      "🚨 REVIVED: Syntax (No nested function crash)",
+      "✅ [FIXED] Bug #1: Implicit Language Reset",
+      "✅ [FIXED] Bug #2: Romanized Hindi Detection",
+      "✅ [FIXED] Bug #3: Mixed-Language AI Response",
+      "✅ [FIXED] Bug #4: Menu Conversation Loop",
+      "✅ [NEW] Pessimistic Start & Convincing Follow-up Strategy",
       "Enhanced Gita Wisdom Database",
       "Daily Wisdom System",
       "Response Caching",
@@ -1918,13 +1867,11 @@ setInterval(cleanupStuckStages, 30 * 60 * 1000);
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED VERSION listening on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v2 listening on port ${PORT}`);
   console.log("✅ ALL CRITICAL ISSUES FIXED:");
-  console.log("   🚨 MENUS: Complete and NEVER cut off");
-  console.log("   🚨 MESSAGES: Smart length optimization");
-  console.log("   🚨 OPENAI: STRICTLY short responses (FIXED)");
-  console.log("   🚨 LANGUAGE: Robust detection (FIXED)");
-  console.log("   🚨 LOGIC: No more 'menu' loop (FIXED)");
+  console.log("   🚨 LANGUAGE: Robust implicit/explicit detection (FIXED)");
+  console.log("   🚨 AI PROMPT: New 'Pessimistic/Convincing' strategy (IMPLEMENTED)");
+  console.log("   🚨 LOGIC: No more 'menu' loop or language resets (FIXED)");
   setupDatabase().catch(console.error);
 });
 
