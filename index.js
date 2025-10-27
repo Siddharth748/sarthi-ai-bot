@@ -1,5 +1,5 @@
-// index.js — SarathiAI (COMPLETE REVIVED v2)
-// This version fixes all language detection bugs and implements the "Pessimistic/Convincing" strategy.
+// index.js — SarathiAI (COMPLETE REVIVED v3)
+// This version fixes AI monotony, the 'undefined' bug, and language bleed-over.
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -40,7 +40,6 @@ const responseCache = new Map();
 
 /* =============== 🚨 OPTIMIZED TEMPLATE BUTTON RESPONSE SYSTEM =============== */
 
-// These are largely fine, but the follow-up questions are good.
 const OPTIMIZED_TEMPLATE_RESPONSES = {
     // PROBLEM SOLVER TEMPLATE BUTTONS
     'work stress': {
@@ -191,7 +190,7 @@ const BUTTON_MAPPING = {
     'अभ्यास': 'practice'
 };
 
-/* ---------------- [NEW] CONVINCING ENGAGEMENT QUESTIONS ---------------- */
+/* ---------------- [FIXED] CONVINCING ENGAGEMENT QUESTIONS ---------------- */
 const ENGAGEMENT_QUESTIONS = {
   english: [
     "What's the *one* thought that keeps looping? Let's try to untangle it.",
@@ -218,26 +217,41 @@ const ENGAGEMENT_QUESTIONS = {
 // Track last used questions per user to avoid repetition
 const userQuestionHistory = new Map();
 
+/* ---------------- [FIXED] `undefined` BUG in getEngagementQuestion ---------------- */
 function getEngagementQuestion(phone, language) {
   const questions = ENGAGEMENT_QUESTIONS[language] || ENGAGEMENT_QUESTIONS.english;
   
-  // Get user's question history or initialize
   if (!userQuestionHistory.has(phone)) {
     userQuestionHistory.set(phone, []);
   }
-  const usedQuestions = userQuestionHistory.get(phone);
+  let usedQuestions = userQuestionHistory.get(phone); // Use 'let'
   
-  // If all questions used, reset
+  // *** FIX ***
+  // If all questions used, reset the array *before* filtering
   if (usedQuestions.length >= questions.length) {
-    userQuestionHistory.set(phone, []);
+    usedQuestions = []; // Reset the array
+    userQuestionHistory.set(phone, usedQuestions); // Save the reset
   }
   
-  // Find unused question
   const availableQuestions = questions.filter((_, index) => !usedQuestions.includes(index));
+  
+  // *** ADD SAFETY CHECK ***
+  if (availableQuestions.length === 0) {
+      // This should no longer happen, but as a fallback:
+      userQuestionHistory.set(phone, []); // Reset
+      console.log(`🎯 EngagementQuestion fallback: returning first question.`);
+      return questions[0]; // Return the first question
+  }
+  
   const randomIndex = Math.floor(Math.random() * availableQuestions.length);
   const selectedQuestion = availableQuestions[randomIndex];
   
-  // Track which question index was used
+  // Safety check if selectedQuestion is somehow undefined
+  if (!selectedQuestion) {
+      console.log(`🎯 EngagementQuestion fallback: selectedQuestion was undefined.`);
+      return questions[0]; 
+  }
+
   const questionIndex = questions.indexOf(selectedQuestion);
   usedQuestions.push(questionIndex);
   userQuestionHistory.set(phone, usedQuestions);
@@ -631,21 +645,20 @@ What's one small step you could start with?`
     }
 };
 
-/* ---------------- [NEW] PESSIMISTIC/CONVINCING OPENAI PROMPT ---------------- */
+/* ---------------- [FIXED] PESSIMISTIC/CONVINCING OPENAI PROMPT ---------------- */
+// This prompt is now smarter. It instructs the AI to be conditional.
 const ENHANCED_SYSTEM_PROMPT = {
   hindi: `आप सारथी AI हैं - भगवद गीता के आधार पर मार्गदर्शन देने वाले विशेषज्ञ।
 
 **कड़े नियम:**
-1. **निराशावादी शुरुआत:** हमेशा उपयोगकर्ता की भावना को गहराई से मान्य करें (जैसे, 'यह सुनना बहुत कठिन है...', 'यह भावना बहुत भारी हो सकती है...')
+1. **भावना का विश्लेषण करें:**
+    - **अगर उपयोगकर्ता परेशान है** (तनाव, उदास, भ्रमित): "पessimistic start" का प्रयोग करें। उनकी भावना को गहराई से मान्य करें (जैसे, 'यह सुनना बहुत कठिन है...', 'यह भावना भारी हो सकती है...') 😔
+    - **अगर उपयोगकर्ता प्रश्न पूछ रहा है** (जैसे 'क्या खाएं?', 'कैसे सफल हों?'): सीधे, व्यावहारिक रूप से उत्तर दें। "पessimistic start" का प्रयोग *न* करें।
 2. **गीता श्लोक:** एक प्रासंगिक गीता श्लोक या शिक्षा दें।
 3. **व्यावहारिक सलाह:** केवल 1 छोटी, व्यावहारिक सलाह दें।
 4. **विश्वसनीय फॉलो-अप:** हमेशा *एक* प्रेरक, व्यावहारिक प्रश्न के साथ समाप्त करें जो उपयोगकर्ता को जवाब देने के लिए प्रोत्साहित करे (जैसे, 'कौन सा *एक* विचार सबसे ज्यादा परेशान कर रहा है? चलिए उसे तोड़ते हैं।')
-5. **बहुत छोटा रखें:** आपका पूरा उत्तर 120 शब्दों से कम होना चाहिए (3-4 छोटे पैराग्राफ)।
-
-**उदाहरण संरचना:**
-"यह सुनना बहुत मुश्किल है कि आप इतना तनाव महसूस कर रहे हैं 😔 गीता 2.47 कहती है: कर्म करो, फल की चिंता मत करो।
-आज के लिए, बस एक छोटा 5 मिनट का ब्रेक लेने पर ध्यान दें।
-कौन सा *एक* काम है जिसे आप अभी टाल रहे हैं? शायद हम वहां से शुरू कर सकते हैं।"
+5. **छोटा रखें:** आपका पूरा उत्तर 120 शब्दों से कम होना चाहिए।
+6. **इमोजी बदलें:** केवल 😔 का प्रयोग न करें। 😔, 🌀, 🤔, 🙏, 🕉️ का मिश्रण प्रयोग करें।
 
 **कभी न करें:**
 - "Want to know more?" या "क्या यह उपयोगी लगा?" न लिखें।
@@ -655,16 +668,14 @@ const ENHANCED_SYSTEM_PROMPT = {
   english: `You are Sarathi AI - an expert guide based on Bhagavad Gita.
 
 **STRICT RULES:**
-1. **Pessimistic Start:** Always validate their feeling deeply (e.g., "That sounds incredibly difficult...", "That's a heavy feeling...").
+1. **Analyze Emotion:**
+    - **If user is distressed** (stressed, sad, confused): Use the "pessimistic start." Validate their feeling deeply (e.g., "That sounds incredibly difficult...", "That's a heavy feeling..."). 😔
+    - **If user is asking a question** (e.g., 'What to eat?', 'How to be successful?'): Answer them directly and practically. Do *not* use the "pessimistic start".
 2. **Gita Verse:** Provide one relevant Gita verse or teaching.
 3. **Practical Advice:** Give only 1 short, practical piece of advice.
 4. **Convincing Follow-up:** ALWAYS end with *one* convincing, insightful follow-up question that *encourages* a reply (e.g., "What's the *one* specific thought that's hardest to shake? Let's focus on that.").
-5. **Keep it SHORT:** Your entire response MUST be under 120 words (3-4 short paragraphs).
-
-**Example Structure:**
-"It sounds really tough to be feeling so much stress 😔 Gita 2.47 says: Focus on your duty, not the results.
-For today, just focus on taking one 5-minute break.
-What's the *one* task that feels the most overwhelming? Let's start there."
+5. **Keep it SHORT:** Your entire response MUST be under 120 words.
+6. **Vary Emojis:** Do not only use 😔. Use a mix of 😔, 🌀, 🤔, 🙏, 🕉️.
 
 **NEVER DO:**
 - Write "Want to know more?" or "Does this seem helpful?"
@@ -1045,6 +1056,7 @@ async function sendCompleteResponse(phone, fullResponse, language, type = "chat"
     
     // Add proper ending if missing (this is a fallback, AI should provide it)
     if (!/[.!?।]\s*$/.test(cleanResponse.trim()) && !cleanResponse.trim().endsWith("?")) {
+        // *** FIX: This fallback is now less likely to be used, but kept as a safety net ***
         const endings = language === "Hindi" 
             ? ["। आप क्या सोचते हैं?", "। क्या यह उपयोगी लगा?"]
             : [". What are your thoughts?", ". Does this seem helpful?"];
@@ -1295,6 +1307,8 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
   const history = user.chat_history || [];
   const currentContext = conversationContext; // Use the context passed from the webhook
 
+  // *** [FIXED] Bug #D: Language Bleed-over ***
+  // Forcefully tell the AI which language to use in the prompt.
   const userPrompt = language === "Hindi" 
     ? `उपयोगकर्ता का संदेश: "${text}"
 
@@ -1302,7 +1316,7 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
 भावनात्मक स्थिति: ${currentContext.emotionalTone}
 क्या यह पिछली बातचीत का जारी रूप है? ${currentContext.isFollowUp ? 'हाँ' : 'नहीं'}
 
-**कृपया ध्यान दें: उत्तर अधिकतम 120 शब्दों में दें और नए, प्रेरक प्रश्नों का उपयोग करें।**
+**बहुत महत्वपूर्ण: आपको केवल हिंदी में ही जवाब देना है।**
 ${ENHANCED_SYSTEM_PROMPT.hindi}` // Re-iterate rules
     : `User message: "${text}"
 
@@ -1310,7 +1324,7 @@ Previous context: ${currentContext.previousTopics.join(', ') || 'New conversatio
 Emotional tone: ${currentContext.emotionalTone}
 Is this continuing previous discussion? ${currentContext.isFollowUp ? 'Yes' : 'No'}
 
-**IMPORTANT: Keep response MAX 120 words and use new, convincing questions.**
+**VERY IMPORTANT: You MUST reply in English only.**
 ${ENHANCED_SYSTEM_PROMPT.english}`; // Re-iterate rules
 
   console.log("📤 Sending to OpenAI with STRICT word limit");
@@ -1349,7 +1363,7 @@ ${ENHANCED_SYSTEM_PROMPT.english}`; // Re-iterate rules
       .replace(/क्या और जानना चाहेंगे\?.*$/i, '')
       .replace(/समझ में आया\?.*$/i, '');
     
-    // --- [FIXED] BUG #3: Mixed-Language Follow-up ---
+    // --- [FIXED] BUG #3 & C: Mixed-Language Follow-up & 'undefined' bug ---
     const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 5);
     if (sentences.length > 0) {
       const lastSentence = sentences[sentences.length - 1].trim();
@@ -1358,9 +1372,11 @@ ${ENHANCED_SYSTEM_PROMPT.english}`; // Re-iterate rules
       const responseLanguage = /[\u0900-\u097F]/.test(cleanResponse) ? 'Hindi' : 'English';
 
       if (!lastSentence.includes('?') && sentences.length >= 2) {
+        // AI didn't add a question, so we add one.
         const engagementQuestion = getEngagementQuestion(phone, responseLanguage); 
         cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
       } else if (lastSentence.includes('?')) {
+        // AI added a question. Let's check if it's repetitive.
         const repetitiveQuestions = [
           "What's feeling heaviest right now?",
           "What are your thoughts?",
@@ -1371,10 +1387,12 @@ ${ENHANCED_SYSTEM_PROMPT.english}`; // Re-iterate rules
         ];
         
         if (repetitiveQuestions.some(q => lastSentence.toLowerCase().includes(q.toLowerCase()))) {
+          // It's repetitive, replace it.
           const engagementQuestion = getEngagementQuestion(phone, responseLanguage);
           cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
         }
       }
+      // Else: The AI provided a good, unique question. We leave it alone.
     }
     // --- END FIX ---
     
@@ -1447,7 +1465,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
         action: "daily_wisdom"
       }
     },
-    "3": {
+    "3.": {
       hindi: {
         prompt: "💬 मैं सुनने के लिए यहाँ हूँ। कृपया बताएं आप कैसा महसूस कर रहे हैं? मैं गीता की शिक्षाओं के through आपकी मदद करूंगा।",
         action: "conversation"
@@ -1729,7 +1747,7 @@ app.post("/webhook", async (req, res) => {
     // Get user state and determine language
     const user = await getUserState(phone);
     
-    // *** [FIXED] BUG #1: This logic is now corrected ***
+    // *** [FIXED] BUG #1 & 2: This logic is now corrected ***
     const languageResult = await determineUserLanguage(phone, text, user);
     let language = languageResult.language;
     const isLanguageSwitch = languageResult.isSwitch;
@@ -1774,6 +1792,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     // Build the *single* conversation context object here
+    // This now runs for *all* other message types
     const conversationContext = buildConversationContext(user, text);
 
     // CAPABILITIES QUERIES
@@ -1793,13 +1812,15 @@ app.post("/webhook", async (req, res) => {
         return;
     }
     
-    // *** [FIXED] BUG #1: "Conversation Loop Hell" ***
+    // *** [FIXED] BUG: "Conversation Loop Hell" ***
     // This is the default handler. We now *force* the stage to 'chatting'.
     if (user.conversation_stage === 'menu') {
         console.log(`✅ User ${phone} is breaking 'menu' loop. Updating stage to 'chatting'.`);
         await updateUserState(phone, {
             conversation_stage: "chatting"
         });
+        // Also update the local user object for this request
+        user.conversation_stage = "chatting"; 
     }
 
     // DEFAULT: ENHANCED AI RESPONSE
@@ -1825,8 +1846,10 @@ app.get("/health", (req, res) => {
       "✅ [FIXED] Bug #2: Romanized Hindi Detection",
       "✅ [FIXED] Bug #3: Mixed-Language AI Response",
       "✅ [FIXED] Bug #4: Menu Conversation Loop",
+      "✅ [FIXED] Bug #5: AI Monotony (Conditional Prompt)",
+      "✅ [FIXED] Bug #6: 'undefined' Follow-up Question",
+      "✅ [FIXED] Bug #7: AI Language Bleed-over (Forced Prompt)",
       "✅ [NEW] Pessimistic Start & Convincing Follow-up Strategy",
-      "Enhanced Gita Wisdom Database",
       "Daily Wisdom System",
       "Response Caching",
       "Connection Pooling",
@@ -1867,11 +1890,12 @@ setInterval(cleanupStuckStages, 30 * 60 * 1000);
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v2 listening on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v3 listening on port ${PORT}`);
   console.log("✅ ALL CRITICAL ISSUES FIXED:");
   console.log("   🚨 LANGUAGE: Robust implicit/explicit detection (FIXED)");
-  console.log("   🚨 AI PROMPT: New 'Pessimistic/Convincing' strategy (IMPLEMENTED)");
+  console.log("   🚨 AI PROMPT: New conditional 'Pessimistic' strategy (FIXED)");
   console.log("   🚨 LOGIC: No more 'menu' loop or language resets (FIXED)");
+  console.log("   🚨 BUGS: 'undefined' follow-up and language bleed-over (FIXED)");
   setupDatabase().catch(console.error);
 });
 
@@ -1880,3 +1904,4 @@ process.on('SIGINT', async () => {
   await dbPool.end();
   process.exit(0);
 });
+
