@@ -1,8 +1,5 @@
-// index.js — SarathiAI (COMPLETE REVIVED v5)
-// This version fixes the CRITICAL "Menu Loop Hell" bug by ensuring the
-// conversation_stage is correctly persisted.
-// It also simplifies the AI prompt to fix monotony and follow-up questions.
-
+// index.js — SarathiAI (COMPLETE REVIVED v4)
+// This version fixes all previous bugs AND adds handling for the "अभ्यास" button.
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -671,34 +668,37 @@ What's one small step you could start with?`
     }
 };
 
-/* ---------------- [FIXED v5] SIMPLIFIED AI PROMPT ---------------- */
-// This prompt removes the complex conditional logic which was failing.
-// It is now simpler and more direct, focusing on the required output structure.
+/* ---------------- [FIXED] PESSIMISTIC/CONVINCING OPENAI PROMPT ---------------- */
+// This prompt is now smarter. It instructs the AI to be conditional.
 const ENHANCED_SYSTEM_PROMPT = {
   hindi: `आप सारथी AI हैं - भगवद गीता के आधार पर मार्गदर्शन देने वाले विशेषज्ञ।
 
 **कड़े नियम:**
-1. **इनपुट को स्वीकार करें:** उपयोगकर्ता के संदेश को संक्षेप में, प्राकृतिक और सहानुभूतिपूर्ण तरीके से स्वीकार करें। *अपनी शुरुआत बदलें।* हमेशा "यह सुनना बहुत कठिन है" न कहें।
+1. **भावना का विश्लेषण करें:**
+    - **अगर उपयोगकर्ता परेशान है** (तनाव, उदास, भ्रमित): "पessimistic start" का प्रयोग करें। उनकी भावना को गहराई से मान्य करें (जैसे, 'यह सुनना बहुत कठिन है...', 'यह भावना भारी हो सकती है...') 😔
+    - **अगर उपयोगकर्ता प्रश्न पूछ रहा है** (जैसे 'क्या खाएं?', 'कैसे सफल हों?'): सीधे, व्यावहारिक रूप से उत्तर दें। "पessimistic start" का प्रयोग *न* करें।
 2. **गीता श्लोक:** एक प्रासंगिक गीता श्लोक या शिक्षा दें।
 3. **व्यावहारिक सलाह:** केवल 1 छोटी, व्यावहारिक सलाह दें।
-4. **प्रेरक फॉलो-अप:** हमेशा *एक* प्रेरक, व्यावहारिक प्रश्न के साथ समाप्त करें जो उपयोगकर्ता को जवाब देने के लिए प्रोत्साहित करे (जैसे, 'कौन सा *एक* विचार सबसे ज्यादा परेशान कर रहा है? चलिए उसे तोड़ते हैं।')। **यह प्रश्न पूछना अनिवार्य है।**
+4. **विश्वसनीय फॉलो-अप:** हमेशा *एक* प्रेरक, व्यावहारिक प्रश्न के साथ समाप्त करें जो उपयोगकर्ता को जवाब देने के लिए प्रोत्साहित करे (जैसे, 'कौन सा *एक* विचार सबसे ज्यादा परेशान कर रहा है? चलिए उसे तोड़ते हैं।') **यह प्रश्न पूछना अनिवार्य है।**
 5. **छोटा रखें:** आपका पूरा उत्तर 120 शब्दों से कम होना चाहिए।
 6. **इमोजी बदलें:** केवल 😔 का प्रयोग न करें। 😔, 🌀, 🤔, 🙏, 🕉️ का मिश्रण प्रयोग करें।
 
 **कभी न करें:**
-- "क्या और जानना चाहेंगे?" या "क्या यह उपयोगी लगा?" जैसे सामान्य प्रश्न न पूछें।
+- "Want to know more?" या "क्या यह उपयोगी लगा?" जैसे सामान्य प्रश्न न पूछें।
 - 120 शब्दों से अधिक न हो।
 - एक से अधिक प्रश्न न पूछें।`,
 
   english: `You are Sarathi AI - an expert guide based on Bhagavad Gita.
 
 **STRICT RULES:**
-1. **Acknowledge Input:** Start by briefly acknowledging the user's message in a natural, empathetic way. *Vary your opening.* Do not always say "That sounds difficult."
+1. **Analyze Emotion:**
+    - **If user is distressed** (stressed, sad, confused): Use the "pessimistic start." Validate their feeling deeply (e.g., "That sounds incredibly difficult...", "That's a heavy feeling..."). 😔
+    - **If user is asking a question** (e.g., 'What to eat?', 'How to be successful?'): Answer them directly and practically. Do *not* use the "pessimistic start".
 2. **Gita Verse:** Provide one relevant Gita verse or teaching.
 3. **Practical Advice:** Give only 1 short, practical piece of advice.
-4. **Convincing Follow-up:** ALWAYS end with *one* insightful, open-ended follow-up question that *encourages* a reply (e.g., "What's the *one* specific thought that's hardest to shake?"). **This question is mandatory.**
+4. **Convincing Follow-up:** ALWAYS end with *one* convincing, insightful follow-up question that *encourages* a reply (e.g., "What's the *one* specific thought that's hardest to shake? Let's focus on that."). **Asking this question is mandatory.**
 5. **Keep it SHORT:** Your entire response MUST be under 120 words.
-6. **Vary Emojis:** Use a mix of 😔, 🌀, 🤔, 🙏, 🕉️.
+6. **Vary Emojis:** Do not only use 😔. Use a mix of 😔, 🌀, 🤔, 🙏, 🕉️.
 
 **NEVER DO:**
 - Ask generic questions like "Want to know more?" or "Does this seem helpful?"
@@ -1321,8 +1321,8 @@ async function getCachedAIResponse(phone, text, language, context) {
         await updateUserState(phone, {
             chat_history: updatedHistory,
             last_message: cached.response,
-            last_message_role: 'assistant',
-            conversation_stage: 'chatting' // <-- CRITICAL FIX v5: Reinforce stage
+            last_message_role: 'assistant'
+            // Stage is already updated before calling this function
         });
         return;
     }
@@ -1370,7 +1370,7 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
     throw new Error("❌ No OpenAI key configured");
   }
 
-  console.log(`🤖 Using SIMPLIFIED OpenAI prompt for ${phone}...`);
+  console.log(`🤖 Using STRICT OpenAI for short response for ${phone}...`);
 
   const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
 
@@ -1436,7 +1436,7 @@ ${ENHANCED_SYSTEM_PROMPT.english}`; // System prompt with conditional logic
   console.log(`Raw AI Response for ${phone}:\n${aiResponse}`);
 
   if (aiResponse && aiResponse.trim().length > 5) { // Check for minimal length
-    console.log(`✅ SIMPLIFIED OpenAI response received for ${phone}`);
+    console.log(`✅ STRICT OpenAI response received for ${phone}`);
     // *** FIX: Remove the generic "Want to know more?" first ***
     let cleanResponse = aiResponse
       .replace(/Want to know more\?.*$/im, '') // Added 'i' and 'm' flags
@@ -1446,26 +1446,50 @@ ${ENHANCED_SYSTEM_PROMPT.english}`; // System prompt with conditional logic
       .trim(); // Trim whitespace
 
     // --- [FIXED] BUG #3 & C: Mixed-Language Follow-up & 'undefined' bug ---
-    // The new v5 prompt *forces* the AI to add a question.
-    // We will no longer add a fallback question, as that was the source
-    // of the 'undefined' bug. We trust the new prompt.
-    const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 3);
+    const sentences = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 3); // Slightly lower sentence length threshold
+    console.log(` Cleaned sentences for ${phone}: ${sentences.length}`);
     if (sentences.length > 0) {
-        const lastSentence = sentences[sentences.length - 1].trim();
-        if (!lastSentence.includes('?')) {
-            // AI *still* failed to add a question, despite the prompt.
-            // Add the *safest* possible fallback.
-            console.log(`⚠️ AI failed to add question for ${phone}. Adding safe fallback.`);
-            const responseLanguage = /[\u0900-\u097F]/.test(cleanResponse) ? 'Hindi' : 'English';
-            const fallbackQuestion = responseLanguage === 'Hindi'
-                ? "आप इस बारे में और क्या सोचते हैं?"
-                : "What are your thoughts on this?";
-            cleanResponse = cleanResponse.replace(/[.!?।]\s*$/, '') + '. ' + fallbackQuestion;
-        }
-    }
-    // --- END FIX ---
+      const lastSentence = sentences[sentences.length - 1].trim();
+      console.log(` Last sentence for ${phone}: "${lastSentence}"`);
 
+      // Determine language from the response itself, not the (potentially stale) 'language' variable
+      const responseLanguage = /[\u0900-\u097F]/.test(cleanResponse) ? 'Hindi' : 'English';
+
+      if (!lastSentence.includes('?')) {
+        // AI didn't add a question, so we add one.
+        console.log(` AI did not add question for ${phone}. Adding engagement question.`);
+        const engagementQuestion = getEngagementQuestion(phone, responseLanguage);
+         // Append question carefully, check for existing punctuation
+        cleanResponse = cleanResponse.replace(/[.!?।]\s*$/, '') + '. ' + engagementQuestion;
+
+      } else { // AI added a question, check if repetitive
+        const repetitiveQuestions = [
+          "what's feeling heaviest right now?", // Normalized case
+          "what are your thoughts?",
+          "does this seem helpful?",
+          "सबसे ज्यादा क्या भारी लग रहा है?",
+          "आप क्या सोचते हैं?",
+          "क्या यह मददगार लगा?"
+        ];
+
+        if (repetitiveQuestions.some(q => lastSentence.toLowerCase().includes(q))) {
+          // It's repetitive, replace it.
+          console.log(` Replacing repetitive question for ${phone}: "${lastSentence}"`);
+          const engagementQuestion = getEngagementQuestion(phone, responseLanguage);
+          // Replace the last sentence (question)
+          cleanResponse = sentences.slice(0, -1).join('. ') + '. ' + engagementQuestion;
+        }
+        // Else: The AI provided a good, unique question. We leave it alone.
+      }
+    } else {
+        // Response was very short and had no sentences, add a question
+        console.log(` AI response too short for ${phone}. Adding engagement question.`);
+        const responseLanguage = /[\u0900-\u097F]/.test(cleanResponse) ? 'Hindi' : 'English';
+        const engagementQuestion = getEngagementQuestion(phone, responseLanguage);
+        cleanResponse = cleanResponse.replace(/[.!?।]\s*$/, '') + '. ' + engagementQuestion;
+    }
     console.log(` Final Clean Response for ${phone}:\n${cleanResponse}`);
+    // --- END FIX ---
 
     // Send the potentially modified response
     // Use sendCompleteResponse which handles optimization via sendViaHeltar
@@ -1477,19 +1501,12 @@ ${ENHANCED_SYSTEM_PROMPT.english}`; // System prompt with conditional logic
       role: 'assistant',
       content: cleanResponse
     }];
-
-    // =================================================================
-    // =========== 🚨 CRITICAL FIX v5: "Menu Loop Hell" 🚨 ===========
-    // =================================================================
-    // We MUST include conversation_stage: 'chatting' in this final update
-    // to ensure the user is no longer in the 'menu' stage.
     await updateUserState(phone, {
       chat_history: finalHistory, // Save the updated history
       last_message: cleanResponse,
-      last_message_role: 'assistant',
-      conversation_stage: 'chatting' // <-- THE FIX
+      last_message_role: 'assistant'
+      // Stage is updated before this function is called
     });
-    // =================================================================
 
     return { response: cleanResponse, type: "enhanced_ai_response" }; // Return success
   } else {
@@ -1512,19 +1529,11 @@ async function getContextualFallback(phone, text, language, context) {
   // And we must update the history AFTER sending
   const user = await getUserState(phone); // Fetch latest state
   const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: selected }];
-
-  // =================================================================
-  // =========== 🚨 CRITICAL FIX v5: "Menu Loop Hell" 🚨 ===========
-  // =================================================================
-  // We MUST include conversation_stage: 'chatting' in this final update
-  // to ensure the user is no longer in the 'menu' stage.
   await updateUserState(phone, {
       chat_history: updatedHistory,
       last_message: selected,
-      last_message_role: 'assistant',
-      conversation_stage: 'chatting' // <-- THE FIX
+      last_message_role: 'assistant'
   });
-  // =================================================================
 }
 
 /* ---------------- Menu Choice Handler ---------------- */
@@ -1594,16 +1603,13 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
   if (!selected) {
     // If not a menu choice (e.g., user typed text), treat as direct conversation
     console.log(`🔄 Treating as direct conversation instead of menu choice for ${phone}`);
-    // We don't update stage here, we let getCachedAIResponse do it
-    //
-    // await updateUserState(phone, {
-    //     conversation_stage: "chatting" // This is handled by getCachedAIResponse now
-    // });
+    await updateUserState(phone, {
+        conversation_stage: "chatting"
+    });
 
     // Build context for the AI
     const conversationContext = buildConversationContext(user, choice); // 'choice' is the text
 
-    // This will handle the response AND stage update
     await getCachedAIResponse(phone, choice, language, conversationContext);
     return;
   }
@@ -1644,8 +1650,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user) {
     await updateUserState(phone, {
         chat_history: updatedHistory,
         last_message: fallbackMessage,
-        last_message_role: 'assistant',
-        conversation_stage: 'chatting' // Move to chatting even on error
+        last_message_role: 'assistant'
     });
   }
 }
@@ -1793,10 +1798,7 @@ async function handleSmallTalk(phone, text, language) {
     await updateUserState(phone, {
         chat_history: updatedHistory,
         last_message: response,
-        last_message_role: 'assistant',
-        // CRITICAL FIX v5: Even small talk should move to chatting
-        // (or stay in chatting), NOT be stuck in menu.
-        conversation_stage: 'chatting'
+        last_message_role: 'assistant'
     });
 }
 
@@ -1897,7 +1899,6 @@ app.post("/webhook", async (req, res) => {
     // --- Handle Template Buttons THIRD ---
     if (isTemplateButtonResponse(text)) {
         console.log(`🎯 Template button detected for ${phone}: "${text}"`);
-        // This function now correctly sets stage to 'chatting'
         const handled = await handleTemplateButtonResponse(phone, text, language, user);
         if (handled) {
             console.log(`✅ Template button successfully handled for ${phone}`);
@@ -1915,7 +1916,6 @@ app.post("/webhook", async (req, res) => {
         chat_history: currentHistory, // Save user message
         last_message: text,
         last_message_role: 'user'
-        // DO NOT update stage here. Let the final response handler do it.
     });
     // Update local user object for this request cycle
     user.chat_history = currentHistory;
@@ -1926,8 +1926,7 @@ app.post("/webhook", async (req, res) => {
     // --- Handle menu choices FOURTH ---
     if (user.conversation_stage === "menu" && /^[1-5]$/.test(text.trim())) {
         console.log(`✅ Intent: Menu Choice for ${phone}`);
-        // This function handles sending response & setting stage to 'chatting'
-        await handleEnhancedMenuChoice(phone, text.trim(), language, user);
+        await handleEnhancedMenuChoice(phone, text.trim(), language, user); // Sends response & updates state/history
         return; // Stop processing here
     }
 
@@ -1941,32 +1940,31 @@ app.post("/webhook", async (req, res) => {
             ? "मैं सारथी AI हूँ, आपका निजी गीता साथी! 🙏 मैं आपको जीवन की चुनौतियों के लिए भगवद गीता का मार्गदर्शन प्रदान करता हूँ। क्या आप किस विशेष मुद्दे पर चर्चा करना चाहेंगे?"
             : "I'm Sarathi AI, your personal Gita companion! 🙏 I provide guidance from Bhagavad Gita for life's challenges. Is there a specific issue you'd like to discuss?";
         await sendViaHeltar(phone, reply, "capabilities");
-        // Update history AND stage
+        // Update history
          const finalHistory = [...currentHistory, { role: 'assistant', content: reply }];
-         await updateUserState(phone, {
-            chat_history: finalHistory,
-            last_message: reply,
-            last_message_role: 'assistant',
-            conversation_stage: 'chatting' // <-- CRITICAL FIX v5
-         });
+         await updateUserState(phone, { chat_history: finalHistory, last_message: reply, last_message_role: 'assistant' });
         return; // Stop processing here
     }
 
     if (isSmallTalk(text.toLowerCase())) {
         console.log(`✅ Intent: Small Talk for ${phone}`);
-        // This function handles sending response & setting stage to 'chatting'
-        await handleSmallTalk(phone, text, language);
+        await handleSmallTalk(phone, text, language); // Sends response & updates history
         return; // Stop processing here
     }
 
-    // --- (REMOVED) No longer need the "break menu loop" block ---
-    // The default AI handler (getCachedAIResponse) will now
-    // handle setting the stage to 'chatting' automatically.
+    // --- Update stage if breaking menu loop SIXTH ---
+    if (user.conversation_stage === 'menu') {
+        console.log(`✅ User ${phone} is breaking 'menu' loop. Updating stage to 'chatting'.`);
+        await updateUserState(phone, {
+            conversation_stage: "chatting"
+        });
+        user.conversation_stage = "chatting"; // Update local object too
+    }
 
     // --- DEFAULT: ENHANCED AI RESPONSE (The Rest) ---
     console.log(`ℹ️ Intent: General/Emotional for ${phone} -> Using Enhanced AI (Stage: ${user.conversation_stage})`);
 
-    // getCachedAIResponse handles sending, history update, AND stage update
+    // getCachedAIResponse handles sending & history update
     await getCachedAIResponse(phone, text, language, conversationContext);
 
   } catch (err) {
@@ -1996,9 +1994,16 @@ app.get("/health", (req, res) => {
     bot: BOT_NAME,
     timestamp: new Date().toISOString(),
     features: [
-      "✅ [FIXED v5] CRITICAL: Menu Loop Hell",
-      "✅ [FIXED v5] AI Monotony & Follow-up Prompt",
-      "✅ [CHECKED] 'अभ्यास' Button Tracking (Code is correct)",
+      "✅ [FIXED] Bug #1: Implicit Language Reset",
+      "✅ [FIXED] Bug #2: Romanized Hindi Detection",
+      "✅ [FIXED] Bug #3: Mixed-Language AI Response",
+      "✅ [FIXED] Bug #4: Menu Conversation Loop",
+      "✅ [FIXED] Bug #5: AI Monotony (Conditional Prompt)",
+      "✅ [FIXED] Bug #6: 'undefined' Follow-up Question",
+      "✅ [FIXED] Bug #7: AI Language Bleed-over (Forced Prompt)",
+      "✅ [FIXED] Bug #8: 'Want to know more?' Loop",
+      "✅ [NEW] Pessimistic Start & Convincing Follow-up Strategy",
+      "✅ [NEW] 'अभ्यास' Button Handling",
       "Daily Wisdom System",
       "Response Caching",
       "Connection Pooling",
@@ -2043,9 +2048,13 @@ setInterval(cleanupStuckStages, 30 * 60 * 1000);
 /* ---------------- Start server ---------------- */
 app.listen(PORT, () => {
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v5 listening on port ${PORT}`);
-  console.log("✅ CRITICAL MENU LOOP FIXED.");
-  console.log("✅ AI PROMPT SIMPLIFIED.");
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v4 listening on port ${PORT}`);
+  console.log("✅ ALL CRITICAL ISSUES FIXED:");
+  console.log("   🚨 LANGUAGE: Robust implicit/explicit detection (FIXED)");
+  console.log("   🚨 AI PROMPT: Conditional 'Pessimistic' strategy (FIXED)");
+  console.log("   🚨 LOGIC: No more 'menu' loop or language resets (FIXED)");
+  console.log("   🚨 BUGS: 'undefined', language bleed-over, 'Want to know more?' (FIXED)");
+  console.log("   ✨ NEW: 'अभ्यास' button integrated.");
   setupDatabase().catch(console.error);
 });
 
