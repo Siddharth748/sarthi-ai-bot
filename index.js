@@ -1,9 +1,10 @@
-// index.js — SarathiAI (COMPLETE REVIVED v11)
-// CRITICAL FIX: Adds ALTER TABLE commands to setupDatabase to fix existing broken tables.
-// CRITICAL FIX: Corrects 'phone' vs 'phone_number' in trackTemplateButtonClick.
-// CRITICAL FIX: Implements FULL Database Locking Integration (v9 logic).
-// FIXES: Increased max_tokens to prevent AI response cutoff.
-// FIXES: Smarter message shortening to preserve follow-up question.
+// index.js — SarathiAI (COMPLETE REVIVED v12)
+// CRITICAL FIX (v12): Completely rewrites the main try/catch/finally block to prevent "double client release" crash.
+// CRITICAL FIX (v11): Adds ALTER TABLE commands to setupDatabase to fix existing broken tables.
+// CRITICAL FIX (v11): Corrects 'phone' vs 'phone_number' in trackTemplateButtonClick.
+// CRITICAL FIX (v9): Implements FULL Database Locking Integration.
+// FIXES (v10): Increased max_tokens to prevent AI response cutoff.
+// FIXES (v10): Smarter message shortening to preserve follow-up question.
 // Includes Morning Check-in, Refined AI Prompt, and all previous fixes.
 // ENSURED COMPLETENESS
 import dotenv from "dotenv";
@@ -110,7 +111,10 @@ function getEngagementQuestion(phone, language) {
     if (!questions || questions.length === 0) return "";
     if (!userQuestionHistory.has(phone)) userQuestionHistory.set(phone, []);
     let usedIndices = userQuestionHistory.get(phone);
-    if (usedIndices.length >= questions.length) { usedIndices = []; userQuestionHistory.set(phone, usedIndices); }
+    if (usedIndices.length >= questions.length) {
+        // console.log(`♻️ Resetting engagement questions for ${phone}`); // Reduce log
+        usedIndices = []; userQuestionHistory.set(phone, usedIndices);
+    }
     const availableIndices = questions.map((_, index) => index).filter(index => !usedIndices.includes(index));
     if (availableIndices.length === 0) {
         userQuestionHistory.set(phone, []);
@@ -432,21 +436,29 @@ const validateEnvVariables = () => {
     }
      console.log("✅ Environment variables validated.");
 };
-// *** SCHEMA FIX: All "phone" columns changed to "phone_number" ***
-// *** ERROR FIX: Corrected try/catch/finally to release client only ONCE ***
+// *** SCHEMA FIX (v11): All "phone" columns changed to "phone_number" ***
+// *** ERROR FIX (v11): Corrected try/catch/finally to release client only ONCE ***
 async function setupDatabase() {
     let client = null; // Initialize to null
     try {
         client = await dbPool.connect();
         console.log("🔗 Connected to database for setup.");
 
-        // Add is_processing column if it doesn't exist
+        // === Step 1: Fix existing tables first ===
+        // Try adding phone_number column if 'phone' exists (for legacy tables)
+        // We wrap these in individual try/catch blocks in case the table or 'phone' column doesn't exist
+        try { await client.query(`ALTER TABLE user_response_patterns ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning (user_response_patterns): ${e.message}`); }
+        try { await client.query(`ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning (user_engagement): ${e.message}`); }
+        try { await client.query(`ALTER TABLE template_analytics ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning (template_analytics): ${e.message}`); }
+        console.log("✅ Ensured phone_number column exists (or tried to) in analytics tables.");
+        
+        // === Step 2: Add is_processing column to users ===
         await client.query(`
             ALTER TABLE users ADD COLUMN IF NOT EXISTS is_processing BOOLEAN DEFAULT FALSE;
         `);
         console.log("✅ Ensured 'is_processing' column exists.");
 
-        // Reset any stale processing flags on startup
+        // === Step 3: Reset stale processing flags ===
         const resetResult = await client.query(`
             UPDATE users SET is_processing = FALSE WHERE is_processing = TRUE;
         `);
@@ -456,8 +468,7 @@ async function setupDatabase() {
              console.log("✅ No stale processing flags found on startup.");
         }
 
-
-        // Ensure other columns exist (idempotent)
+        // === Step 4: Ensure all other columns exist in users ===
         const columnsToAdd = [
             { name: 'subscribed_daily', type: 'BOOLEAN DEFAULT FALSE' }, { name: 'chat_history', type: 'JSONB DEFAULT \'[]\'::jsonb' },
             { name: 'conversation_stage', type: 'VARCHAR(50) DEFAULT \'menu\'' }, { name: 'last_topic_summary', type: 'TEXT' },
@@ -479,14 +490,11 @@ async function setupDatabase() {
         }
         console.log("✅ Ensured standard user columns exist.");
 
-        // Create lessons table if not exists
+        // === Step 5: Create supporting tables correctly ===
         await client.query(`
             CREATE TABLE IF NOT EXISTS lessons (
-                lesson_number INT PRIMARY KEY,
-                verse TEXT,
-                translation TEXT,
-                commentary TEXT,
-                reflection_question TEXT,
+                lesson_number INT PRIMARY KEY, verse TEXT, translation TEXT,
+                commentary TEXT, reflection_question TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
@@ -495,14 +503,10 @@ async function setupDatabase() {
             CREATE TABLE IF NOT EXISTS user_response_patterns (
                 pattern_id VARCHAR(255) PRIMARY KEY,
                 phone_number VARCHAR(20) NOT NULL, -- SCHEMA FIX
-                template_id VARCHAR(100),
-                first_response_text TEXT,
-                first_response_time_seconds INT DEFAULT 0,
-                response_sentiment VARCHAR(50),
-                asked_for_help BOOLEAN,
-                emotional_state_detected VARCHAR(50),
-                button_clicked VARCHAR(100),
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                template_id VARCHAR(100), first_response_text TEXT,
+                first_response_time_seconds INT DEFAULT 0, response_sentiment VARCHAR(50),
+                asked_for_help BOOLEAN, emotional_state_detected VARCHAR(50),
+                button_clicked VARCHAR(100), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
          // *** SCHEMA FIX: Use phone_number ***
@@ -510,10 +514,8 @@ async function setupDatabase() {
             CREATE TABLE IF NOT EXISTS user_engagement (
                 session_id VARCHAR(255) PRIMARY KEY,
                 phone_number VARCHAR(20) NOT NULL, -- SCHEMA FIX
-                morning_message_id VARCHAR(100),
-                first_reply_time TIMESTAMP WITH TIME ZONE,
-                buttons_clicked JSONB,
-                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                morning_message_id VARCHAR(100), first_reply_time TIMESTAMP WITH TIME ZONE,
+                buttons_clicked JSONB, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
          // *** SCHEMA FIX: Use phone_number ***
@@ -521,21 +523,13 @@ async function setupDatabase() {
             CREATE TABLE IF NOT EXISTS template_analytics (
                 analytics_id SERIAL PRIMARY KEY,
                 phone_number VARCHAR(20) NOT NULL, -- SCHEMA FIX
-                template_id VARCHAR(100),
-                button_clicked VARCHAR(100),
-                language VARCHAR(10),
-                clicked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                template_id VARCHAR(100), button_clicked VARCHAR(100),
+                language VARCHAR(10), clicked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
-        // *** SCHEMA FIX (v11): ADD phone_number column if tables exist but column is missing ***
-        try { await client.query(`ALTER TABLE user_response_patterns ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning checking/adding phone_number to user_response_patterns: ${e.message}`); }
-        try { await client.query(`ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning checking/adding phone_number to user_engagement: ${e.message}`); }
-        try { await client.query(`ALTER TABLE template_analytics ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning checking/adding phone_number to template_analytics: ${e.message}`); }
-        console.log("✅ Ensured phone_number column exists in analytics tables.");
-
-
-         // *** SCHEMA FIX: Use phone_number for indexes ***
+        // === Step 6: Create indexes correctly ===
+         // *** SCHEMA FIX: Use phone_number ***
          await client.query(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone_number);`);
          await client.query(`CREATE INDEX IF NOT EXISTS idx_urp_phone ON user_response_patterns (phone_number);`);
          await client.query(`CREATE INDEX IF NOT EXISTS idx_ue_phone ON user_engagement (phone_number);`);
@@ -543,7 +537,7 @@ async function setupDatabase() {
 
         console.log("✅ Ensured necessary tables & indexes exist (using phone_number).");
 
-
+        // === Step 7: Insert sample data ===
         const lessonCount = await client.query("SELECT COUNT(*) FROM lessons");
         if (parseInt(lessonCount.rows[0].count) === 0) {
             console.log("📚 Inserting sample lessons...");
@@ -1169,7 +1163,7 @@ function parseWebhookMessage(body) {
     return null;
 };
 
-/* ---------------- 🚨 MAIN WEBHOOK HANDLER (v10 - Full DB Lock & Schema Fix) ---------------- */
+/* ---------------- 🚨 MAIN WEBHOOK HANDLER (v11 - Full DB Lock & Schema Fix) ---------------- */
 app.post("/webhook", async (req, res) => {
   // 1. Respond Immediately
   res.status(200).send("OK");
@@ -1177,6 +1171,7 @@ app.post("/webhook", async (req, res) => {
   let phone;
   let client = null; // Initialize client to null
   let acquiredLock = false;
+  let clientReleased = false; // *** FIX: Flag to prevent double release ***
 
   try {
     // 2. Parse Message
@@ -1195,7 +1190,7 @@ app.post("/webhook", async (req, res) => {
      }
      else if (msg.text && typeof msg.text === 'object') { rawText = msg.text.body || ""; }
      else if (msg.text && typeof msg.text === 'string') { rawText = msg.text; }
-     else if (msg.body) { rawText = msg.body; } // Another possible text location
+     else if (msg.body) { rawText = msg.body; }
 
     const text = String(rawText || "").trim();
 
@@ -1208,6 +1203,7 @@ app.post("/webhook", async (req, res) => {
     // --- 3. Acquire Database Lock ---
     client = await dbPool.connect(); // Get client connection
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE'); // Start transaction
+    clientReleased = false; // Mark client as active
 
     // Attempt to acquire lock using SELECT FOR UPDATE NOWAIT
     let lockResult;
@@ -1220,10 +1216,14 @@ app.post("/webhook", async (req, res) => {
     } catch (lockError) {
         if (lockError.code === '55P03') { // lock_not_available
              console.log(`⏳ User ${phone} row locked. Discarding: "${text}"`);
-             await client.query('ROLLBACK'); client.release(); return;
-        } else if (lockError.code === '42703' && lockError.message.includes('is_processing')) {
-             console.error(`❌ CRITICAL: 'is_processing' column missing! Run setupDatabase.`);
-             await client.query('ROLLBACK'); client.release(); return;
+             await client.query('ROLLBACK'); client.release();
+             clientReleased = true; // *** FIX: Mark as released ***
+             return;
+        } else if (lockError.code === '42703' && (lockError.message.includes('is_processing') || lockError.message.includes('phone_number'))) {
+             console.error(`❌ CRITICAL: DB Schema mismatch! (e.g., 'is_processing' or 'phone_number' missing). Run setupDatabase. Error: ${lockError.message}`);
+             await client.query('ROLLBACK'); client.release();
+             clientReleased = true; // *** FIX: Mark as released ***
+             return;
         }
         else {
              console.error(`❌ DB Lock acquisition error for ${phone}:`, lockError);
@@ -1249,7 +1249,9 @@ app.post("/webhook", async (req, res) => {
         user = lockResult.rows[0];
         if (user.is_processing) {
             console.log(`⏳ User ${phone} already processing (redundant check). Discarding: "${text}"`);
-            await client.query('ROLLBACK'); client.release(); return;
+            await client.query('ROLLBACK'); client.release();
+            clientReleased = true; // *** FIX: Mark as released ***
+            return;
         } else {
             // *** SCHEMA FIX: Use phone_number ***
             await client.query('UPDATE users SET is_processing = TRUE WHERE phone_number = $1', [phone]);
@@ -1277,7 +1279,6 @@ app.post("/webhook", async (req, res) => {
     const lastUserMsg = user.chat_history.length > 0 ? user.chat_history[user.chat_history.length -1] : null;
     let currentHistory = user.chat_history || [];
     // Avoid adding exact duplicate messages within ~2 seconds
-    // Also check if it's the *exact same* as the last message regardless of time (e.g. double tap)
     if (!lastUserMsg || lastUserMsg.content !== text || (lastUserMsg.role !== 'user' && lastUserMsg.content !== text) || Date.now() - new Date(lastUserMsg.timestamp || 0).getTime() > 2000) {
         currentHistory = [...currentHistory, { role: 'user', content: text, timestamp: new Date().toISOString() }];
         // *** SCHEMA FIX: Use phone_number ***
@@ -1358,7 +1359,7 @@ app.post("/webhook", async (req, res) => {
     console.error(`❌❌ TOP LEVEL Webhook error for ${phone || 'unknown'}:`, err?.message || err);
     console.error(err.stack); // Log stack trace
     // 9. Rollback Transaction on Error
-    if (client) {
+    if (client && !clientReleased) { // *** FIX: Check flag ***
         try {
             if (acquiredLock) { // Only rollback if lock was acquired
                 await client.query('ROLLBACK');
@@ -1377,7 +1378,7 @@ app.post("/webhook", async (req, res) => {
 
   } finally {
       // --- 10. CRITICAL: Release Lock & Client ---
-      if (client) {
+      if (client && !clientReleased) { // *** FIX: Check flag ***
           if (acquiredLock) { // Only release lock if we committed or rolled back successfully AFTER acquiring it
               try {
                   // Use a separate connection (non-transactional) to release lock robustly
@@ -1390,8 +1391,13 @@ app.post("/webhook", async (req, res) => {
               }
           }
           client.release(); // Always release the main transaction client
+          clientReleased = true; // *** FIX: Mark as released ***
           // console.log("🔗 DB Client released in finally block."); // Verbose log
-      } else { console.log("~ No client to release in finally block (error likely occurred before client acquisition)."); }
+      } else if (client && clientReleased) {
+           console.log(`~ Client for ${phone} was already released (e.g., due to lock timeout or error).`);
+      } else {
+           console.log("~ No client to release in finally block (error likely occurred before client acquisition).");
+      }
   }
 });
 
@@ -1399,18 +1405,19 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Health check ---------------- */
 app.get("/health", (req, res) => {
   res.json({
-    status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString(), version: "v10 - Schema & Token Fix",
+    status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString(), version: "v11 - Final Lock & Schema Fix",
     features: [
         "✅ Full DB Lock using SELECT FOR UPDATE NOWAIT",
         "✅ Transactional State Updates",
         "✅ Race Condition & Multiple Reply Fix",
+        "✅ Double Client Release Fix (clientReleased flag)",
         "✅ Morning Check-in Flow ('Hare Krishna!')",
         "✅ Conditional AI Prompt (v5)",
         "✅ 'max_tokens' increased to 350",
         "✅ Smarter Message Shortening (v10)",
         "✅ All Previous Language & Logic Fixes",
         "✅ 'अभ्यास' Button Handling",
-        "✅ 'phone_number' Schema Fix"
+        "✅ 'phone_number' Schema Fix (ALTER TABLE)"
      ],
     cacheSize: responseCache.size,
     databasePoolStats: { totalCount: dbPool.totalCount, idleCount: dbPool.idleCount, waitingCount: dbPool.waitingCount, },
@@ -1444,10 +1451,10 @@ setInterval(cleanupStuckStagesAndLocks, 60 * 60 * 1000); // Run hourly
 /* ---------------- Start server ---------------- */
 const server = app.listen(PORT, async () => { // Assign server to a variable
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v10 (Schema Fix) listening on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v11 (Final Schema & Lock Fix) listening on port ${PORT}`);
   console.log("⏳ Initializing database connection and setup...");
   try {
-      await setupDatabase(); // Adds is_processing column, resets locks, and uses 'phone_number'
+      await setupDatabase(); // Adds 'is_processing' & 'phone_number' columns, resets locks
       console.log("✅ Database setup finished. Bot is ready.");
       console.log("🔧 Full DB Lock, Token Fix, & Transactional Updates Implemented.");
   } catch (dbErr) {
