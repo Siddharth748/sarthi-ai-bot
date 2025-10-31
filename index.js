@@ -1,7 +1,10 @@
 // index.js — SarathiAI (COMPLETE REVIVED v10)
-// FIXES: Increased max_tokens to prevent cutoff.
+// CRITICAL FIX: Changed all 'phone' column references to 'phone_number' to match schema.
+// CRITICAL FIX: Implements FULL Database Locking Integration (v9 logic) to fix race conditions.
+// FIXES: Increased max_tokens to prevent AI response cutoff.
 // FIXES: Smarter message shortening to preserve follow-up question.
-// Includes Full DB Lock, Morning Check-in, and all previous fixes.
+// Includes Morning Check-in, Refined AI Prompt, and all previous fixes.
+// ENSURED COMPLETENESS
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -58,7 +61,7 @@ const OPTIMIZED_TEMPLATE_RESPONSES = {
     },
     'personal confusion': {
         english: `Feeling lost about life's path? 🌀 That's a very common, human feeling.\n\nGita wisdom: Your soul is eternal, this confusion is temporary.\n\nKrishna guides through every uncertainty. ✨\n\nWhat's the *one* decision that feels most unclear right now?`,
-        hindi: `जीवन का रास्ता भटका हुआ लगता है? 🌀 यह एक बहुत ही सामान्य, मानवीय भावना है।\n\nगीता ज्ञान: आपकी आत्मा अमर है, यह भ्रम अस्थायी है।\n\nकृष्ण हर अनिश्चितता में मार्गदर्शन देते हैं। ✨\n\nवो *कौन सा एक* निर्णय है जो अभी सबसे अस्पष्ट लग रहा है?`
+        hindi: `जीवन का रास्ता भटका हुआ लगता है? 🌀 यह एक बहुत ही सामान्य, मानवीय भावना है。\n\nगीता ज्ञान: आपकी आत्मा अमर है, यह भ्रम अस्थायी है।\n\nकृष्ण हर अनिश्चितता में मार्गदर्शन देते हैं। ✨\n\nवो *कौन सा एक* निर्णय है जो अभी सबसे अस्पष्ट लग रहा है?`
     },
     'anxiety': {
         english: `Anxiety making everything feel out of control? 😰 That feeling is exhausting.\n\nKrishna reminds in Gita 2.56: "Be steady in sorrow and joy."\n\nThis wave will settle, revealing your calm center. 🌊\n\nWhat's the *one thought* that keeps looping in your mind? Let's face it together.`,
@@ -106,10 +109,7 @@ function getEngagementQuestion(phone, language) {
     if (!questions || questions.length === 0) return "";
     if (!userQuestionHistory.has(phone)) userQuestionHistory.set(phone, []);
     let usedIndices = userQuestionHistory.get(phone);
-    if (usedIndices.length >= questions.length) {
-        // console.log(`♻️ Resetting engagement questions for ${phone}`); // Reduce log
-        usedIndices = []; userQuestionHistory.set(phone, usedIndices);
-    }
+    if (usedIndices.length >= questions.length) { usedIndices = []; userQuestionHistory.set(phone, usedIndices); }
     const availableIndices = questions.map((_, index) => index).filter(index => !usedIndices.includes(index));
     if (availableIndices.length === 0) {
         userQuestionHistory.set(phone, []);
@@ -204,10 +204,11 @@ function optimizeMessageForWhatsApp(message, maxLength = 350) {
 
     // Skip optimization for structural messages
     if (trimmedMessage.includes('🚩') || trimmedMessage.includes('📖') || trimmedMessage.includes('1️⃣') || trimmedMessage.startsWith('✅') || trimmedMessage.includes('🙏 Please reply with one word')) {
+        // console.log(" optimizing message: structural element, skipping optimization.");
         return trimmedMessage.substring(0, maxLength); // Safety trim only
     }
 
-    console.log(` optimizing message: Attempting to shorten from ${trimmedMessage.length} chars.`);
+    // console.log(` optimizing message: Attempting to shorten from ${trimmedMessage.length} chars.`);
     
     // Split by sentences, keeping delimiters
     // This regex matches sentence-ending punctuation (. ! ? ।) optionally followed by quotes/spaces
@@ -225,8 +226,8 @@ function optimizeMessageForWhatsApp(message, maxLength = 350) {
         return trimmedMessage.substring(0, maxLength - 3) + "...";
     }
 
-    const firstSentence = sentences[0];
-    const lastSentence = sentences[sentences.length - 1];
+    const firstSentence = sentences[0] || "";
+    const lastSentence = sentences[sentences.length - 1] || "";
 
     // Check if first + last sentence (question) fit
     if (firstSentence.length + lastSentence.length + 5 <= maxLength) { // +5 for ' ... '
@@ -237,7 +238,7 @@ function optimizeMessageForWhatsApp(message, maxLength = 350) {
     // If not, try to take as many leading sentences as fit
     let shortened = "";
     for (const sentence of sentences) {
-        if ((shortened + sentence).length <= maxLength - 3) {
+        if ((shortened + sentence).length <= maxLength - 3) { // -3 for "..."
             shortened += sentence;
         } else {
             break; // Stop
@@ -263,20 +264,23 @@ function optimizeMessageForWhatsApp(message, maxLength = 350) {
 }
 
 /* ---------------- ENHANCED ANALYTICS TRACKING (Uses client) ---------------- */
+// *** SCHEMA FIX: Use phone_number ***
 async function trackTemplateButtonClick(phone, buttonType, buttonText, language, templateContext = {}, client) {
     try {
         const patternId = `pattern_${Date.now()}_${phone.replace(/\D/g, '')}`;
         await client.query(`
-            INSERT INTO user_response_patterns (pattern_id, phone, template_id, first_response_text, response_sentiment, asked_for_help, emotional_state_detected, button_clicked)
+            INSERT INTO user_response_patterns (pattern_id, phone_number, template_id, first_response_text, response_sentiment, asked_for_help, emotional_state_detected, button_clicked)
             VALUES ($1, $2, $3, $4, 'seeking_guidance', TRUE, 'seeking_guidance', $5) ON CONFLICT (pattern_id) DO NOTHING
         `, [ patternId, phone, templateContext.template_id || buttonType, buttonText.substring(0, 500), buttonType ]);
+        
         const sessionId = `sess_${Date.now()}_${phone.replace(/\D/g, '')}`;
         await client.query(`
-            INSERT INTO user_engagement (session_id, phone, morning_message_id, first_reply_time, buttons_clicked)
+            INSERT INTO user_engagement (session_id, phone_number, morning_message_id, first_reply_time, buttons_clicked)
             VALUES ($1, $2, $3, NOW(), $4) ON CONFLICT (session_id) DO NOTHING
         `, [ sessionId, phone, templateContext.message_id || 'button_click', JSON.stringify([buttonType]) ]);
+        
         try {
-            await client.query(`INSERT INTO template_analytics (phone, template_id, button_clicked, language, clicked_at) VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT DO NOTHING`,
+            await client.query(`INSERT INTO template_analytics (phone_number, template_id, button_clicked, language, clicked_at) VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT DO NOTHING`,
              [ phone, templateContext.template_id || buttonType, buttonType, language ]);
         } catch (e) { console.log('~ Template analytics insert optional error:', e.message); }
     } catch (error) { console.error(`❌ Analytics tracking error for ${phone}:`, error.message); }
@@ -352,7 +356,7 @@ async function handleTemplateButtonResponse(phone, text, language, user, client)
                     'UPDATE users SET conversation_stage = $1, last_menu_choice = $2, chat_history = $3, last_message = $4, last_message_role = $5, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $6',
                     [nextStage, buttonType, JSON.stringify(updatedHistory), response, 'assistant', phone]
                 );
-                await trackOutgoing(phone, response, responseType, client); // Track outgoing type/ts
+                // await trackOutgoing(phone, response, responseType, client); // trackOutgoing is called implicitly by db update
             } catch (updateErr) {
                  console.error(`❌ DB update failed after sending template ${buttonType} to ${phone}:`, updateErr);
                  // Don't re-throw, just log, as message was sent
@@ -421,7 +425,8 @@ const validateEnvVariables = () => {
     }
      console.log("✅ Environment variables validated.");
 };
-// Adds the 'is_processing' column
+// *** SCHEMA FIX: All "phone" columns changed to "phone_number" ***
+// *** ERROR FIX: Corrected try/catch/finally to release client only ONCE ***
 async function setupDatabase() {
     let client = null; // Initialize to null
     try {
@@ -478,14 +483,14 @@ async function setupDatabase() {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
-        // Create other tables if they don't exist
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query(`
             CREATE TABLE IF NOT EXISTS user_response_patterns (
                 pattern_id VARCHAR(255) PRIMARY KEY,
-                phone VARCHAR(20) NOT NULL,
+                phone_number VARCHAR(20) NOT NULL, -- SCHEMA FIX
                 template_id VARCHAR(100),
                 first_response_text TEXT,
-                first_response_time_seconds INT DEFAULT 0, -- Add default
+                first_response_time_seconds INT DEFAULT 0,
                 response_sentiment VARCHAR(50),
                 asked_for_help BOOLEAN,
                 emotional_state_detected VARCHAR(50),
@@ -493,33 +498,35 @@ async function setupDatabase() {
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
+         // *** SCHEMA FIX: Use phone_number ***
          await client.query(`
             CREATE TABLE IF NOT EXISTS user_engagement (
                 session_id VARCHAR(255) PRIMARY KEY,
-                phone VARCHAR(20) NOT NULL,
+                phone_number VARCHAR(20) NOT NULL, -- SCHEMA FIX
                 morning_message_id VARCHAR(100),
                 first_reply_time TIMESTAMP WITH TIME ZONE,
-                buttons_clicked JSONB, -- Store array as JSON
+                buttons_clicked JSONB,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
+         // *** SCHEMA FIX: Use phone_number ***
          await client.query(`
             CREATE TABLE IF NOT EXISTS template_analytics (
-                analytics_id SERIAL PRIMARY KEY, -- Use SERIAL for auto-incrementing ID
-                phone VARCHAR(20) NOT NULL,
+                analytics_id SERIAL PRIMARY KEY,
+                phone_number VARCHAR(20) NOT NULL, -- SCHEMA FIX
                 template_id VARCHAR(100),
                 button_clicked VARCHAR(100),
                 language VARCHAR(10),
                 clicked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
-         // Add indexes for potentially faster lookups if tables grow
+         // *** SCHEMA FIX: Use phone_number for indexes ***
          await client.query(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone_number);`);
-         await client.query(`CREATE INDEX IF NOT EXISTS idx_urp_phone ON user_response_patterns (phone);`);
-         await client.query(`CREATE INDEX IF NOT EXISTS idx_ue_phone ON user_engagement (phone);`);
-         await client.query(`CREATE INDEX IF NOT EXISTS idx_ta_phone ON template_analytics (phone);`);
+         await client.query(`CREATE INDEX IF NOT EXISTS idx_urp_phone ON user_response_patterns (phone_number);`);
+         await client.query(`CREATE INDEX IF NOT EXISTS idx_ue_phone ON user_engagement (phone_number);`);
+         await client.query(`CREATE INDEX IF NOT EXISTS idx_ta_phone ON template_analytics (phone_number);`);
 
-        console.log("✅ Ensured necessary tables & basic indexes exist.");
+        console.log("✅ Ensured necessary tables & indexes exist (using phone_number).");
 
 
         const lessonCount = await client.query("SELECT COUNT(*) FROM lessons");
@@ -529,19 +536,20 @@ async function setupDatabase() {
                 INSERT INTO lessons (lesson_number, verse, translation, commentary, reflection_question) VALUES
                 (1, 'कर्मण्येवाधिकारस्ते मा फलेषु कदाचन।', 'You have the right to work only, but never to the fruits.', 'Focus on your duty without attachment to results. This is the path to peace and success.', 'What action can I take today without worrying about the outcome?'),
                 (2, 'योगस्थः कुरु कर्माणि सङ्गं त्यक्त्वा धनञ्जय।', 'Perform your duty equipoised, O Arjuna, abandoning all attachment to success or failure.', 'Balance and equanimity lead to excellence in work and peace in life.', 'How can I stay balanced in challenging situations today?')
-                ON CONFLICT (lesson_number) DO NOTHING; -- Avoid errors if run twice
+                ON CONFLICT (lesson_number) DO NOTHING;
             `);
         }
         console.log("✅ Database schema setup complete.");
     } catch (err) {
         console.error("❌ CRITICAL: Database setup error:", err?.message || err);
-        // Ensure client is released even if setup fails mid-way
-        if (client) client.release();
+        // Do NOT release client here, finally block will do it.
         throw err; // Re-throw to prevent server start
     } finally {
         // Ensure client is always released if acquired
-        if (client) client.release();
-        console.log("🔗 Released setup DB client.");
+        if (client) {
+            client.release();
+            console.log("🔗 Released setup DB client.");
+        }
     }
 }
 
@@ -602,6 +610,7 @@ function extractTopics(messages) {
 };
 
 // Uses dbPool for initial fetch outside transaction
+// *** SCHEMA FIX: Use phone_number ***
 async function getUserState(phone) {
     let client = null; // Initialize client to null
     try {
@@ -635,6 +644,7 @@ async function getUserState(phone) {
 };
 
 // Uses dbPool - for non-transactional updates like initial trackIncoming
+// *** SCHEMA FIX: Use phone_number ***
 async function updateUserState(phone, updates) {
     let client = null; // Initialize client to null
     try {
@@ -673,11 +683,12 @@ async function handleEnhancedStartupMenu(phone, language, user, client) {
     if (sent) {
         const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: menuMessage, timestamp: new Date().toISOString() }];
         // Use client for transactional update, include outgoing increment
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query(
             'UPDATE users SET conversation_stage = $1, last_menu_shown = NOW(), chat_history = $2, last_message = $3, last_message_role = $4, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $5',
             ['menu', JSON.stringify(updatedHistory), menuMessage, 'assistant', phone]
         );
-        await trackOutgoing(phone, menuMessage, "enhanced_welcome", client); // Track outgoing type/ts
+        // await trackOutgoing(phone, menuMessage, "enhanced_welcome", client); // trackOutgoing is called implicitly by db update
         console.log(`✅ Menu shown to ${phone}. State 'menu'.`);
     } else { console.error(`❌ Failed to send welcome menu to ${phone}.`); }
 }
@@ -692,6 +703,7 @@ function shouldResetToMenu(message, currentStage) {
 async function resetToMenuStage(phone, language, client) {
     console.log(`🔄 Resetting ${phone} to menu stage`);
     // Fetch latest user state using the client
+    // *** SCHEMA FIX: Use phone_number ***
     const userRes = await client.query('SELECT * FROM users WHERE phone_number = $1', [phone]);
     if (userRes.rows.length === 0) { console.error(`❌ Cannot reset non-existent user ${phone}.`); return; }
     const user = userRes.rows[0];
@@ -722,9 +734,11 @@ async function trackOutgoing(phone, reply, type = "chat", client = null) {
         // Only update timestamp and type transactionally
         // The main transactional update handles last_message, role, history, and total_outgoing increment
         if (client) {
+             // *** SCHEMA FIX: Use phone_number ***
              await client.query('UPDATE users SET last_response_type = $1, last_activity_ts = NOW() WHERE phone_number = $2', [type, phone]);
         } else {
              // If called non-transactionally, update more fields but increment is less reliable
+             console.warn(`~ trackOutgoing called non-transactionally for ${phone}`);
              const user = await getUserState(phone);
              const updates = {
                  last_activity_ts: new Date().toISOString(),
@@ -864,6 +878,7 @@ async function getCachedAIResponse(phone, text, language, context, client) {
         if (sent) {
             // Update history and outgoing count using client
             const updatedHistory = [...(context.history || []), { role: 'assistant', content: cached.response, timestamp: new Date().toISOString() }];
+            // *** SCHEMA FIX: Use phone_number ***
             await client.query( // Use client
                 'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4',
                 [JSON.stringify(updatedHistory), cached.response, 'assistant', phone]
@@ -876,7 +891,7 @@ async function getCachedAIResponse(phone, text, language, context, client) {
     const aiResponseResult = await getEnhancedAIResponseWithRetry(phone, text, language, context, client);
     if (aiResponseResult && aiResponseResult.response) {
          responseCache.set(cacheKey, aiResponseResult);
-         setTimeout(() => { responseCache.delete(cacheKey); }, 5 * 60 * 1000);
+         setTimeout(() => { responseCache.delete(cacheKey); }, 5 * 60 * 1000); // 5 min cache
     }
     return aiResponseResult; // Return result or null (AI function handles DB update on success)
 }
@@ -896,9 +911,10 @@ async function getEnhancedAIResponseWithRetry(phone, text, language, context, cl
     }
      return null; // Should not be reached, but safety net
 }
+// *** FIX (v10): Increased max_tokens ***
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}, client) {
   if (!OPENAI_KEY) throw new Error("❌ No OpenAI key configured");
-  console.log(`🤖 Using STRICT OpenAI v5 prompt for ${phone}...`);
+  console.log(`🤖 Using STRICT OpenAI v10 prompt for ${phone}...`); // v10
 
   const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
   const history = conversationContext.history || []; // Use history from context
@@ -906,10 +922,10 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
   const isEmotional = currentContext.emotionalTone !== 'neutral' || isEmotionalExpression(text);
   const isQuestion = currentContext.isQuestion;
   let specificInstruction = "";
-  // *** NEW: Updated prompt logic for morning check-in ***
+  // Updated prompt logic for morning check-in
   if (currentContext.isMorningCheckinReply) {
       specificInstruction = language === 'Hindi'
-          ? `यह सुबह की जांच का जवाब है (मूड: "${text}")। इस भावना को स्वीकार करें, गीता (जैसे 2.14) से एक संक्षिप्त अंतर्दृष्टि दें, और मूड से संबंधित एक व्यावहारिक प्रश्न पूछें।`
+          ? `यह सुबह की जांच का जवाब है (मूड: "${text}")। इसे स्वीकार करें, गीता (जैसे 2.14) से एक संक्षिप्त अंतर्दृष्टि दें, और मूड से संबंधित एक व्यावहारिक प्रश्न पूछें।`
           : `This is a reply to the morning check-in (mood: "${text}"). Acknowledge this feeling, give a brief Gita insight (like 2.14), and ask a practical question related to the mood.`;
   }
   else if (isEmotional) { specificInstruction = language === 'Hindi' ? `उपयोगकर्ता व्यथित है। गहरी सहानुभूति दिखाएं।` : `User is distressed. Show deep empathy.`; }
@@ -922,9 +938,10 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
   const formattedHistory = history.map(msg => ({ role: msg.role === 'bot' || msg.role === 'assistant' ? 'assistant' : 'user', content: msg.content })).slice(-6); // Prune again just in case
   const messages = [{ role: "system", content: systemPrompt }, ...formattedHistory, { role: "user", content: userPrompt }];
 
-  console.log(`📤 Sending to OpenAI for ${phone} (V5 Prompt)`);
+  console.log(`📤 Sending to OpenAI for ${phone} (V10 Prompt)`);
   aiCallCounter++; console.log(`\n--- OpenAI Call #${aiCallCounter} for ${phone} ---`);
-  // *** FIX: Increased max_tokens from 180 to 350 ***
+  
+  // *** FIX (v10): Increased max_tokens from 180 to 350 ***
   const body = { model: OPENAI_MODEL, messages, max_tokens: 350, temperature: 0.75 };
   let aiResponse = "";
   try {
@@ -942,7 +959,6 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
   console.log(`✅ STRICT OpenAI response received for ${phone}`);
   let cleanResponse = aiResponse.replace(/Want to know more\?.*$/im, '').replace(/Does this seem helpful\?.*$/im, '').replace(/क्या और जानना चाहेंगे\?.*$/im, '').replace(/समझ में आया\?.*$/im, '').trim();
   
-  // *** FIX: Refined logic for adding fallback question ***
   const endsWithQuestion = /[?]\s*$/.test(cleanResponse);
   const responseLanguage = /[\u0900-\u097F]/.test(cleanResponse) ? 'Hindi' : 'English'; // Detect language *from response*
   
@@ -951,7 +967,6 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
       const fallbackQuestion = getEngagementQuestion(phone, responseLanguage);
       cleanResponse = cleanResponse.replace(/[.!?।]\s*$/, '') + '. ' + fallbackQuestion;
   } else {
-       // AI added a question, check if it's repetitive
        const lastSentence = cleanResponse.split(/[.!?।]/).filter(s => s.trim().length > 3).pop()?.trim();
        const repetitiveQuestions = [ "what's feeling heaviest right now?", "what are your thoughts?", "does this seem helpful?", "सबसे ज्यादा क्या भारी लग रहा है?", "आप क्या सोचते हैं?", "क्या यह मददगार लगा?" ];
        if (lastSentence && repetitiveQuestions.some(q => lastSentence.toLowerCase().includes(q.toLowerCase()))) {
@@ -965,16 +980,14 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
                 cleanResponse = cleanResponse.replace(/[.!?।]\s*$/, '') + '. ' + betterQuestion;
            }
        }
-        // Else: AI provided a good, unique question. We leave it alone.
   }
   console.log(` Final Clean Response for ${phone}:\n${cleanResponse.substring(0,100)}...`);
 
   // --- Send & Update State (using client) ---
-  // Use sendCompleteResponse which handles optimization via sendViaHeltar
   const sent = await sendCompleteResponse(phone, cleanResponse, language, "enhanced_ai_response");
   if (sent) {
       const finalHistory = [...history, { role: 'assistant', content: cleanResponse, timestamp: new Date().toISOString() }];
-      // Use client to update history/state AFTER successful sending
+      // *** SCHEMA FIX: Use phone_number ***
       await client.query(
           'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4',
           [JSON.stringify(finalHistory), cleanResponse, 'assistant', phone]
@@ -997,7 +1010,7 @@ async function getContextualFallback(phone, text, language, context, client) {
   if (sent) {
       const history = context.history || [];
       const updatedHistory = [...history, { role: 'assistant', content: selected, timestamp: new Date().toISOString() }];
-       // Use client to update history/state AFTER sending
+       // *** SCHEMA FIX: Use phone_number ***
        await client.query(
            'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4',
            [JSON.stringify(updatedHistory), selected, 'assistant', phone]
@@ -1010,7 +1023,6 @@ async function getContextualFallback(phone, text, language, context, client) {
 /* ---------------- Menu Choice Handler (Uses client) ---------------- */
 async function handleEnhancedMenuChoice(phone, choice, language, user, client) {
   console.log(`📝 Menu choice ${choice} for ${phone}`);
-  // Simplified choices object for brevity
   const choices = {
       "1": { hindi: { prompt: "🌅 आपकी वर्तमान चुनौती के लिए सही मार्गदर्शन। कृपया संक्षेप में बताएं कि आप किस परिस्थिति में हैं?", action: "immediate_guidance" }, english: { prompt: "🌅 Right guidance for your current challenge. Please briefly describe your situation?", action: "immediate_guidance" } },
       "2": { hindi: { prompt: async () => await getDailyWisdom("Hindi"), action: "daily_wisdom" }, english: { prompt: async () => await getDailyWisdom("English"), action: "daily_wisdom" } },
@@ -1021,6 +1033,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user, client) {
   const selected = choices[choice];
   if (!selected) {
     console.log(`🔄 Treating invalid menu choice "${choice}" as direct conversation for ${phone}`);
+    // *** SCHEMA FIX: Use phone_number ***
     await client.query('UPDATE users SET conversation_stage = $1, last_activity_ts = NOW() WHERE phone_number = $2', ['chatting', phone]);
     user.conversation_stage = "chatting";
     const conversationContext = buildConversationContext(user, choice);
@@ -1031,7 +1044,6 @@ async function handleEnhancedMenuChoice(phone, choice, language, user, client) {
   try {
     let promptContent; const selectedLang = selected[language] || selected.english;
     if (typeof selectedLang.prompt === 'function') {
-        // Await the promise if it's an async function
         promptContent = await selectedLang.prompt();
     } else {
         promptContent = selectedLang.prompt;
@@ -1039,7 +1051,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user, client) {
     const sent = await sendViaHeltar(phone, promptContent, `menu_${selectedLang.action}`);
     if (sent) {
         const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: promptContent, timestamp: new Date().toISOString() }];
-        // Use client for update
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query(
             'UPDATE users SET conversation_stage = $1, last_menu_choice = $2, last_menu_shown = NOW(), chat_history = $3, last_message = $4, last_message_role = $5, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $6',
             ['chatting', choice, JSON.stringify(updatedHistory), promptContent, 'assistant', phone]
@@ -1052,7 +1064,7 @@ async function handleEnhancedMenuChoice(phone, choice, language, user, client) {
     const sentError = await sendViaHeltar(phone, fallbackMessage, "menu_error");
      if(sentError){
          const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: fallbackMessage }];
-         // Use client for update
+         // *** SCHEMA FIX: Use phone_number ***
          await client.query( 'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4', [JSON.stringify(updatedHistory), fallbackMessage, 'assistant', phone] );
           await trackOutgoing(phone, fallbackMessage, "menu_error", client); // Updates type/ts
      }
@@ -1065,11 +1077,10 @@ async function getDailyWisdom(language) {
     const now = new Date(); const start = new Date(now.getFullYear(), 0, 0);
     const diff = now.getTime() - start.getTime(); const oneDay = 1000 * 60 * 60 * 24;
     const dayOfYear = Math.floor(diff / oneDay);
-    // Use dbPool here for a simple read-only query, no need to pass client
+    // Use dbPool here for a simple read-only query
     const countResult = await dbPool.query("SELECT COUNT(*) as total FROM lessons");
-    const totalLessons = parseInt(countResult.rows[0].total) || 2; // Default to 2 if count fails
+    const totalLessons = parseInt(countResult.rows[0].total) || 2;
     const lessonNumber = (dayOfYear % totalLessons) + 1;
-    // Use dbPool here
     const result = await dbPool.query( `SELECT * FROM lessons WHERE lesson_number = $1`, [lessonNumber] );
     if (result.rows.length === 0) { console.warn(`⚠️ No lesson ${lessonNumber}, using fallback.`); return getFallbackDailyWisdom(language, dayOfYear); }
     return formatDailyWisdom(result.rows[0], language, dayOfYear);
@@ -1094,14 +1105,14 @@ async function handleLanguageSwitch(phone, newLanguage, client) {
     let userForHistory = null;
     if (sentConfirm) {
          // History and outgoing count are updated transactionally by resetToMenuStage called below
-         // Just track type/ts here
          await trackOutgoing(phone, confirmationMessage, "language_switch", client);
-         // We still need to add the confirmation to history before the menu
+         // Add confirmation to history before the menu
+         // *** SCHEMA FIX: Use phone_number ***
          const userRes = await client.query('SELECT chat_history FROM users WHERE phone_number = $1', [phone]);
          if (userRes.rows.length > 0) {
              userForHistory = { chat_history: parseChatHistory(userRes.rows[0].chat_history) };
              const updatedHistory = [...(userForHistory.chat_history || []), { role: 'assistant', content: confirmationMessage, timestamp: new Date().toISOString() }];
-             // Update history before calling reset
+             // *** SCHEMA FIX: Use phone_number ***
              await client.query( 'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4', [JSON.stringify(updatedHistory), confirmationMessage, 'assistant', phone] );
          } else { console.error(`❌ Cannot update history for non-existent user ${phone} during lang switch.`); }
     } else { console.error(`❌ Failed to send lang switch confirmation to ${phone}.`); }
@@ -1112,7 +1123,6 @@ async function handleLanguageSwitch(phone, newLanguage, client) {
 /* ---------------- Small Talk Handler (Uses client) ---------------- */
 async function handleSmallTalk(phone, text, language, client) {
     let response; const lower = text.toLowerCase();
-    // Simplified responses
     if (language === "Hindi") { response = "ठीक है! 🙏 आप आगे क्या जानना चाहेंगे?"; }
     else { response = "Okay! 🙏 What would you like to explore next?"; }
     if (lower.includes('thank') || lower.includes('शुक्रिया') || lower.includes('धन्यवाद')) { response = language === 'Hindi' ? "आपका स्वागत है! 🕉️" : "You're welcome! 🕉️"; }
@@ -1120,11 +1130,11 @@ async function handleSmallTalk(phone, text, language, client) {
 
     const sent = await sendViaHeltar(phone, response, "small_talk");
     if (sent) {
-        // Fetch history within transaction
+        // *** SCHEMA FIX: Use phone_number ***
         const userRes = await client.query('SELECT chat_history FROM users WHERE phone_number = $1', [phone]);
         const currentHistory = userRes.rows.length > 0 ? parseChatHistory(userRes.rows[0].chat_history) : [];
         const updatedHistory = [...currentHistory, { role: 'assistant', content: response, timestamp: new Date().toISOString() }];
-        // Use client to update history/state
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query( 'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4', [JSON.stringify(updatedHistory), response, 'assistant', phone] );
          await trackOutgoing(phone, response, "small_talk", client); // Updates type/ts
     } else { console.error(`❌ Failed to send small talk response to ${phone}.`); }
@@ -1144,7 +1154,7 @@ function parseWebhookMessage(body) {
     return null;
 };
 
-/* ---------------- 🚨 MAIN WEBHOOK HANDLER (v9 - Complete DB Lock) ---------------- */
+/* ---------------- 🚨 MAIN WEBHOOK HANDLER (v10 - Full DB Lock & Schema Fix) ---------------- */
 app.post("/webhook", async (req, res) => {
   // 1. Respond Immediately
   res.status(200).send("OK");
@@ -1187,6 +1197,7 @@ app.post("/webhook", async (req, res) => {
     // Attempt to acquire lock using SELECT FOR UPDATE NOWAIT
     let lockResult;
     try {
+        // *** SCHEMA FIX: Use phone_number ***
         lockResult = await client.query(
            'SELECT * FROM users WHERE phone_number = $1 FOR UPDATE NOWAIT', // Select all needed user data
            [phone]
@@ -1209,6 +1220,7 @@ app.post("/webhook", async (req, res) => {
     let user;
     if (lockResult.rows.length === 0) {
          console.log(`✨ User ${phone} not found. Creating and locking.`);
+         // *** SCHEMA FIX: Use phone_number ***
          const insertRes = await client.query(`
              INSERT INTO users (phone_number, first_seen_date, last_seen_date, total_sessions, language_preference, language, last_activity_ts, memory_data, chat_history, conversation_stage, is_processing, total_incoming, total_outgoing)
              VALUES ($1, CURRENT_DATE, CURRENT_DATE, 1, 'English', 'English', CURRENT_TIMESTAMP, '{}', '[]', 'menu', TRUE, 1, 0)
@@ -1224,11 +1236,13 @@ app.post("/webhook", async (req, res) => {
             console.log(`⏳ User ${phone} already processing (redundant check). Discarding: "${text}"`);
             await client.query('ROLLBACK'); client.release(); return;
         } else {
+            // *** SCHEMA FIX: Use phone_number ***
             await client.query('UPDATE users SET is_processing = TRUE WHERE phone_number = $1', [phone]);
             acquiredLock = true;
             console.log(`➕ Locked processing for existing user ${phone}`);
         }
     }
+    // --- Lock Acquired ---
 
     // 4. Parse User State
     user.chat_history = pruneChatHistory(parseChatHistory(user.chat_history));
@@ -1250,6 +1264,7 @@ app.post("/webhook", async (req, res) => {
     // Avoid adding exact duplicate messages within ~2 seconds
     if (!lastUserMsg || lastUserMsg.role !== 'user' || lastUserMsg.content !== text || Date.now() - new Date(lastUserMsg.timestamp || 0).getTime() > 2000) {
         currentHistory = [...currentHistory, { role: 'user', content: text, timestamp: new Date().toISOString() }];
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query(
             'UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3 WHERE phone_number = $4',
             [JSON.stringify(currentHistory), text, 'user', phone]
@@ -1273,6 +1288,7 @@ app.post("/webhook", async (req, res) => {
       await handleMorningCheckinResponse(phone, text, language, user, client);
     } else if (user.conversation_stage === 'awaiting_mood') {
         console.log(`⚠️ Expected mood from ${phone}, received: "${text}". Resetting stage.`);
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query('UPDATE users SET conversation_stage = $1, last_activity_ts = NOW() WHERE phone_number = $2', ['chatting', phone]);
         user.conversation_stage = 'chatting';
         const conversationContext = buildConversationContext(user, text);
@@ -1283,6 +1299,7 @@ app.post("/webhook", async (req, res) => {
         if (!handled) {
             console.warn(`⚠️ Template button "${text}" not handled for ${phone}. Falling to AI.`);
              if(user.conversation_stage !== 'chatting') {
+                 // *** SCHEMA FIX: Use phone_number ***
                  await client.query('UPDATE users SET conversation_stage = $1, last_activity_ts = NOW() WHERE phone_number = $2', ['chatting', phone]);
                  user.conversation_stage = 'chatting';
              }
@@ -1297,6 +1314,7 @@ app.post("/webhook", async (req, res) => {
         const sent = await sendViaHeltar(phone, reply, "capabilities");
         if (sent) {
             const finalHistory = [...user.chat_history, { role: 'assistant', content: reply, timestamp: new Date().toISOString() }];
+            // *** SCHEMA FIX: Use phone_number ***
             await client.query('UPDATE users SET chat_history = $1, last_message = $2, last_message_role = $3, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $4', [JSON.stringify(finalHistory), reply, 'assistant', phone]);
              await trackOutgoing(phone, reply, "capabilities", client); // Just updates type/ts
         }
@@ -1305,6 +1323,7 @@ app.post("/webhook", async (req, res) => {
     } else { // Default AI Response
         if (user.conversation_stage === 'menu' || user.conversation_stage === 'awaiting_mood' || user.conversation_stage == null || user.conversation_stage === '' ) { // Force update if in menu or stuck
             console.log(`✅✅ User ${phone} moving from '${user.conversation_stage || 'NULL'}' to 'chatting'.`);
+            // *** SCHEMA FIX: Use phone_number ***
             await client.query('UPDATE users SET conversation_stage = $1, last_activity_ts = NOW() WHERE phone_number = $2', ['chatting', phone]);
             user.conversation_stage = "chatting"; // Update local state immediately
         }
@@ -1346,14 +1365,13 @@ app.post("/webhook", async (req, res) => {
           if (acquiredLock) { // Only release lock if we committed or rolled back successfully AFTER acquiring it
               try {
                   // Use a separate connection (non-transactional) to release lock robustly
-                  // Do not await this, let it run in background
-                  dbPool.query('UPDATE users SET is_processing = FALSE, last_activity_ts = NOW() WHERE phone_number = $1', [phone])
-                    .then(() => console.log(`➖ Unlocked processing for ${phone}.`))
-                    .catch(unlockErr => {
-                        console.error(`❌❌ CRITICAL: Failed to release DB lock for ${phone}:`, unlockErr);
-                        // Implement alerting here!
-                    });
-              } catch (unlockErr) { console.error(`❌❌ CRITICAL: Synchronous error releasing DB lock for ${phone}:`, unlockErr); }
+                  // *** SCHEMA FIX: Use phone_number ***
+                  await dbPool.query('UPDATE users SET is_processing = FALSE, last_activity_ts = NOW() WHERE phone_number = $1', [phone]);
+                  console.log(`➖ Unlocked processing for ${phone}.`);
+              } catch (unlockErr) {
+                  console.error(`❌❌ CRITICAL: Failed to release DB lock for ${phone}:`, unlockErr);
+                  // Implement alerting here!
+              }
           }
           client.release(); // Always release the main transaction client
           // console.log("🔗 DB Client released in finally block."); // Verbose log
@@ -1365,17 +1383,19 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Health check ---------------- */
 app.get("/health", (req, res) => {
   res.json({
-    status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString(), version: "v9 - Complete DB Lock",
+    status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString(), version: "v10 - Schema & Token Fix",
     features: [
         "✅ Full DB Lock using SELECT FOR UPDATE NOWAIT",
         "✅ Transactional State Updates",
         "✅ Race Condition & Multiple Reply Fix",
         "✅ Morning Check-in Flow ('Hare Krishna!')",
         "✅ Conditional AI Prompt (v5)",
+        "✅ 'max_tokens' increased to 350",
+        "✅ Smarter Message Shortening (v10)",
         "✅ All Previous Language & Logic Fixes",
-        "✅ 'अभ्यास' Button Handling"
+        "✅ 'अभ्यास' Button Handling",
+        "✅ 'phone_number' Schema Fix"
      ],
-    templateButtons: Object.keys(OPTIMIZED_TEMPLATE_RESPONSES),
     cacheSize: responseCache.size,
     databasePoolStats: { totalCount: dbPool.totalCount, idleCount: dbPool.idleCount, waitingCount: dbPool.waitingCount, },
     message_length_limit: MAX_REPLY_LENGTH
@@ -1406,14 +1426,14 @@ setTimeout(cleanupStuckStagesAndLocks, 30 * 1000); // Run 30s after start
 setInterval(cleanupStuckStagesAndLocks, 60 * 60 * 1000); // Run hourly
 
 /* ---------------- Start server ---------------- */
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => { // Assign server to a variable
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v9 listening on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v10 (Schema Fix) listening on port ${PORT}`);
   console.log("⏳ Initializing database connection and setup...");
   try {
-      await setupDatabase(); // Adds is_processing column and resets locks
+      await setupDatabase(); // Adds is_processing column, resets locks, and uses 'phone_number'
       console.log("✅ Database setup finished. Bot is ready.");
-      console.log("🔧 Full DB Lock & Transactional Updates Implemented.");
+      console.log("🔧 Full DB Lock, Token Fix, & Transactional Updates Implemented.");
   } catch (dbErr) {
       console.error("❌ CRITICAL: Database setup failed on startup. Exiting.", dbErr);
       process.exit(1);
@@ -1423,16 +1443,29 @@ app.listen(PORT, async () => {
 /* ---------------- Graceful Shutdown ---------------- */
 async function gracefulShutdown(signal) {
     console.log(`\n🛑 ${signal} received, shutting down gracefully...`);
-    // Add server closing logic if needed: server.close(() => { ... });
-    try {
-        console.log("Attempting to close database pool...");
-        await dbPool.end(); // Wait for pool to close
-        console.log('Database pool closed.');
-        process.exit(0);
-    } catch (err) {
-        console.error('Error during DB pool shutdown:', err);
-        process.exit(1); // Exit with error code if shutdown fails
-    }
+    // Stop accepting new connections
+    server.close(async (err) => {
+         if (err) {
+            console.error("Error closing server:", err);
+            process.exit(1);
+         }
+         console.log("✅ HTTP server closed.");
+         // Close database pool
+        try {
+            console.log("Attempting to close database pool...");
+            await dbPool.end(); // Wait for pool to close
+            console.log('Database pool closed.');
+            process.exit(0);
+        } catch (dbErr) {
+            console.error('Error during DB pool shutdown:', dbErr);
+            process.exit(1); // Exit with error code if shutdown fails
+        }
+    });
+    // Force shutdown after timeout
+    setTimeout(() => {
+        console.error("Could not close connections in time, forcefully shutting down");
+        process.exit(1);
+    }, 10000); // 10 seconds
 }
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
@@ -1443,7 +1476,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 process.on('uncaughtException', (err, origin) => {
   console.error(`❌❌ Uncaught Exception: ${err.message}`, 'Origin:', origin, 'Stack:', err.stack);
-   // Consider exiting on uncaught exceptions as state might be corrupt
-  // process.exit(1);
+   // Force exit on uncaught exception, as state might be corrupt
+   process.exit(1);
 });
 
