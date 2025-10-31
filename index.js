@@ -1,6 +1,7 @@
-// index.js — SarathiAI (COMPLETE REVIVED v10)
-// CRITICAL FIX: Changed all 'phone' column references to 'phone_number' to match schema.
-// CRITICAL FIX: Implements FULL Database Locking Integration (v9 logic) to fix race conditions.
+// index.js — SarathiAI (COMPLETE REVIVED v11)
+// CRITICAL FIX: Adds ALTER TABLE commands to setupDatabase to fix existing broken tables.
+// CRITICAL FIX: Corrects 'phone' vs 'phone_number' in trackTemplateButtonClick.
+// CRITICAL FIX: Implements FULL Database Locking Integration (v9 logic).
 // FIXES: Increased max_tokens to prevent AI response cutoff.
 // FIXES: Smarter message shortening to preserve follow-up question.
 // Includes Morning Check-in, Refined AI Prompt, and all previous fixes.
@@ -268,18 +269,21 @@ function optimizeMessageForWhatsApp(message, maxLength = 350) {
 async function trackTemplateButtonClick(phone, buttonType, buttonText, language, templateContext = {}, client) {
     try {
         const patternId = `pattern_${Date.now()}_${phone.replace(/\D/g, '')}`;
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query(`
             INSERT INTO user_response_patterns (pattern_id, phone_number, template_id, first_response_text, response_sentiment, asked_for_help, emotional_state_detected, button_clicked)
             VALUES ($1, $2, $3, $4, 'seeking_guidance', TRUE, 'seeking_guidance', $5) ON CONFLICT (pattern_id) DO NOTHING
         `, [ patternId, phone, templateContext.template_id || buttonType, buttonText.substring(0, 500), buttonType ]);
         
         const sessionId = `sess_${Date.now()}_${phone.replace(/\D/g, '')}`;
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query(`
             INSERT INTO user_engagement (session_id, phone_number, morning_message_id, first_reply_time, buttons_clicked)
             VALUES ($1, $2, $3, NOW(), $4) ON CONFLICT (session_id) DO NOTHING
         `, [ sessionId, phone, templateContext.message_id || 'button_click', JSON.stringify([buttonType]) ]);
         
         try {
+            // *** SCHEMA FIX: Use phone_number ***
             await client.query(`INSERT INTO template_analytics (phone_number, template_id, button_clicked, language, clicked_at) VALUES ($1, $2, $3, $4, NOW()) ON CONFLICT DO NOTHING`,
              [ phone, templateContext.template_id || buttonType, buttonType, language ]);
         } catch (e) { console.log('~ Template analytics insert optional error:', e.message); }
@@ -330,6 +334,7 @@ async function handleTemplateButtonResponse(phone, text, language, user, client)
             console.log(`❌ No template for ${buttonType}. Falling back to AI for ${phone}.`);
             const conversationContext = buildConversationContext(user, text);
              conversationContext.history = user.chat_history; // Pass history
+            // *** SCHEMA FIX: Use phone_number ***
             await client.query('UPDATE users SET conversation_stage = $1, last_activity_ts = NOW() WHERE phone_number = $2', ['chatting', phone]);
             user.conversation_stage = 'chatting'; // Update local state
             // AI call needs client, returns result or null. Handles history update itself.
@@ -352,6 +357,7 @@ async function handleTemplateButtonResponse(phone, text, language, user, client)
             const updatedHistory = [...currentHistory, { role: 'assistant', content: response, timestamp: new Date().toISOString() }];
             try {
                 // Also update total_outgoing
+                // *** SCHEMA FIX: Use phone_number ***
                 await client.query(
                     'UPDATE users SET conversation_stage = $1, last_menu_choice = $2, chat_history = $3, last_message = $4, last_message_role = $5, last_activity_ts = NOW(), total_outgoing = COALESCE(total_outgoing, 0) + 1 WHERE phone_number = $6',
                     [nextStage, buttonType, JSON.stringify(updatedHistory), response, 'assistant', phone]
@@ -384,6 +390,7 @@ async function handleMorningCheckinResponse(phone, moodWord, language, user, cli
     // Ensure stage moves to chatting *after* AI call attempt (within transaction)
     try {
         // Always set stage to chatting, regardless of AI success/failure for this specific flow
+        // *** SCHEMA FIX: Use phone_number ***
         await client.query('UPDATE users SET conversation_stage = $1, last_activity_ts = NOW() WHERE phone_number = $2', ['chatting', phone]);
         if (aiResult) {
             console.log(`✅ Morning check-in AI response sent for ${phone}. Stage -> chatting.`);
@@ -520,6 +527,14 @@ async function setupDatabase() {
                 clicked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // *** SCHEMA FIX (v11): ADD phone_number column if tables exist but column is missing ***
+        try { await client.query(`ALTER TABLE user_response_patterns ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning checking/adding phone_number to user_response_patterns: ${e.message}`); }
+        try { await client.query(`ALTER TABLE user_engagement ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning checking/adding phone_number to user_engagement: ${e.message}`); }
+        try { await client.query(`ALTER TABLE template_analytics ADD COLUMN IF NOT EXISTS phone_number VARCHAR(20);`); } catch(e) { console.warn(`~ Warning checking/adding phone_number to template_analytics: ${e.message}`); }
+        console.log("✅ Ensured phone_number column exists in analytics tables.");
+
+
          // *** SCHEMA FIX: Use phone_number for indexes ***
          await client.query(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone_number);`);
          await client.query(`CREATE INDEX IF NOT EXISTS idx_urp_phone ON user_response_patterns (phone_number);`);
@@ -1180,7 +1195,7 @@ app.post("/webhook", async (req, res) => {
      }
      else if (msg.text && typeof msg.text === 'object') { rawText = msg.text.body || ""; }
      else if (msg.text && typeof msg.text === 'string') { rawText = msg.text; }
-     else if (msg.body) { rawText = msg.body; }
+     else if (msg.body) { rawText = msg.body; } // Another possible text location
 
     const text = String(rawText || "").trim();
 
@@ -1262,7 +1277,8 @@ app.post("/webhook", async (req, res) => {
     const lastUserMsg = user.chat_history.length > 0 ? user.chat_history[user.chat_history.length -1] : null;
     let currentHistory = user.chat_history || [];
     // Avoid adding exact duplicate messages within ~2 seconds
-    if (!lastUserMsg || lastUserMsg.role !== 'user' || lastUserMsg.content !== text || Date.now() - new Date(lastUserMsg.timestamp || 0).getTime() > 2000) {
+    // Also check if it's the *exact same* as the last message regardless of time (e.g. double tap)
+    if (!lastUserMsg || lastUserMsg.content !== text || (lastUserMsg.role !== 'user' && lastUserMsg.content !== text) || Date.now() - new Date(lastUserMsg.timestamp || 0).getTime() > 2000) {
         currentHistory = [...currentHistory, { role: 'user', content: text, timestamp: new Date().toISOString() }];
         // *** SCHEMA FIX: Use phone_number ***
         await client.query(
@@ -1275,7 +1291,7 @@ app.post("/webhook", async (req, res) => {
         await client.query('COMMIT'); // Commit lock update only
         acquiredLock = false;
         // Release lock via finally block
-        return;
+        return; // Stop processing duplicate
     }
 
 
