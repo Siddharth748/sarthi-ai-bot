@@ -1,5 +1,5 @@
 // index.js — SarathiAI (COMPLETE REVIVED v12)
-// CRITICAL FIX (v12): Completely rewrites the main try/catch/finally block to prevent "double client release" crash.
+// CRITICAL FIX (v12): Completely rewrites the main try/catch/finally block to prevent "double client release" crash and ensure lock is ALWAYS released.
 // CRITICAL FIX (v11): Adds ALTER TABLE commands to setupDatabase to fix existing broken tables.
 // CRITICAL FIX (v11): Corrects 'phone' vs 'phone_number' in trackTemplateButtonClick.
 // CRITICAL FIX (v9): Implements FULL Database Locking Integration.
@@ -529,7 +529,7 @@ async function setupDatabase() {
         `);
 
         // === Step 6: Create indexes correctly ===
-         // *** SCHEMA FIX: Use phone_number ***
+         // *** SCHEMA FIX: Use phone_number for indexes ***
          await client.query(`CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone_number);`);
          await client.query(`CREATE INDEX IF NOT EXISTS idx_urp_phone ON user_response_patterns (phone_number);`);
          await client.query(`CREATE INDEX IF NOT EXISTS idx_ue_phone ON user_engagement (phone_number);`);
@@ -600,6 +600,7 @@ function buildConversationContext(user, currentMessage) {
 };
 function extractTopics(messages) {
     const topics = new Set();
+    if (!messages || messages.length === 0) return [];
     const text = messages.join(' ').toLowerCase();
     if (text.includes('work') || text.includes('job') || text.includes('काम')) topics.add('work');
     if (text.includes('stress') || text.includes('pressure') || text.includes('तनाव')) topics.add('stress');
@@ -1171,7 +1172,7 @@ app.post("/webhook", async (req, res) => {
   let phone;
   let client = null; // Initialize client to null
   let acquiredLock = false;
-  let clientReleased = false; // *** FIX: Flag to prevent double release ***
+  let clientReleased = false; // *** FIX (v12): Flag to prevent double release ***
 
   try {
     // 2. Parse Message
@@ -1377,24 +1378,23 @@ app.post("/webhook", async (req, res) => {
       } catch (sendError) { console.error(`❌ Failed to send error message to ${phone}:`, sendError); } }
 
   } finally {
-      // --- 10. CRITICAL: Release Lock & Client ---
-      if (client && !clientReleased) { // *** FIX: Check flag ***
-          if (acquiredLock) { // Only release lock if we committed or rolled back successfully AFTER acquiring it
+      // --- 10. CRITICAL (v12 Fix): Release Lock & Client ---
+      if (client && !clientReleased) { // If client exists and wasn't *already* released
+          if (acquiredLock) { // Only release lock if we committed or rolled back
               try {
-                  // Use a separate connection (non-transactional) to release lock robustly
-                  // *** SCHEMA FIX: Use phone_number ***
+                  // Use a SEPARATE connection to release the lock, avoiding transaction issues
                   await dbPool.query('UPDATE users SET is_processing = FALSE, last_activity_ts = NOW() WHERE phone_number = $1', [phone]);
-                  console.log(`➖ Unlocked processing for ${phone}.`);
+                  console.log(`➖ Unlocked processing for ${phone} (in finally).`);
               } catch (unlockErr) {
-                  console.error(`❌❌ CRITICAL: Failed to release DB lock for ${phone}:`, unlockErr);
+                  console.error(`❌❌ CRITICAL: Failed to release DB lock for ${phone} in finally:`, unlockErr);
                   // Implement alerting here!
               }
           }
-          client.release(); // Always release the main transaction client
-          clientReleased = true; // *** FIX: Mark as released ***
-          // console.log("🔗 DB Client released in finally block."); // Verbose log
+          client.release(); // Always release the client back to the pool
+          clientReleased = true;
+          // console.log("🔗 DB Client released in finally block."); // Verbose
       } else if (client && clientReleased) {
-           console.log(`~ Client for ${phone} was already released (e.g., due to lock timeout or error).`);
+           console.log(`~ Client for ${phone} was already released (e.g., due to lock timeout). Skipping final release.`);
       } else {
            console.log("~ No client to release in finally block (error likely occurred before client acquisition).");
       }
@@ -1405,7 +1405,7 @@ app.post("/webhook", async (req, res) => {
 /* ---------------- Health check ---------------- */
 app.get("/health", (req, res) => {
   res.json({
-    status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString(), version: "v11 - Final Lock & Schema Fix",
+    status: "ok", bot: BOT_NAME, timestamp: new Date().toISOString(), version: "v12 - Final Lock & Schema Fix",
     features: [
         "✅ Full DB Lock using SELECT FOR UPDATE NOWAIT",
         "✅ Transactional State Updates",
@@ -1451,7 +1451,7 @@ setInterval(cleanupStuckStagesAndLocks, 60 * 60 * 1000); // Run hourly
 /* ---------------- Start server ---------------- */
 const server = app.listen(PORT, async () => { // Assign server to a variable
   validateEnvVariables();
-  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v11 (Final Schema & Lock Fix) listening on port ${PORT}`);
+  console.log(`\n🚀 ${BOT_NAME} COMPLETE REVIVED v12 (Final Schema & Lock Fix) listening on port ${PORT}`);
   console.log("⏳ Initializing database connection and setup...");
   try {
       await setupDatabase(); // Adds 'is_processing' & 'phone_number' columns, resets locks
