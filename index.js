@@ -1,4 +1,4 @@
-// index.js — SarathiAI (GEMINI EDITION - FINAL FIX)
+// index.js — SarathiAI (GEMINI EDITION - STRICT OBJECT FIX)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -20,9 +20,8 @@ const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || "").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 
-/* ---------------- 1. DEFINE THE SYSTEM PROMPT FIRST ---------------- */
-// We define this UP HERE so the model can see it immediately.
-const SARATHI_SYSTEM_INSTRUCTION = `
+/* ---------------- 1. DEFINE SYSTEM PROMPT ---------------- */
+const SARATHI_PROMPT_TEXT = `
 You are Sarathi AI. You are not a generic chatbot; you are a Vedic Psychological Guide (The Digital Charioteer).
 Your user is "Arjuna" (a modern human facing life's battles).
 
@@ -44,14 +43,17 @@ SAFETY:
 If the user mentions self-harm or suicide, DROP the persona immediately and tell them to seek professional medical help.
 `;
 
-/* ---------------- 2. SETUP GEMINI WITH INSTRUCTIONS ---------------- */
+/* ---------------- 2. SETUP GEMINI (STRICT FORMAT) ---------------- */
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// ✅ FIX: We pass the systemInstruction HERE, inside the model config.
-// The SDK handles the formatting automatically this way.
+// 🛑 CRITICAL FIX: We wrap the instruction in a specific object structure
+// This prevents the "400 Bad Request" error.
 const model = genAI.getGenerativeModel({ 
     model: "gemini-1.5-flash",
-    systemInstruction: SARATHI_SYSTEM_INSTRUCTION
+    systemInstruction: {
+        role: "system",
+        parts: [{ text: SARATHI_PROMPT_TEXT }]
+    }
 });
 
 /* ---------------- Database Connection ---------------- */
@@ -75,7 +77,7 @@ function convertHistoryForGemini(dbHistory) {
 
 function optimizeMessageForWhatsApp(message, maxLength = 350) {
     if (!message || message.length <= maxLength) return message;
-    if (message.includes('1️⃣')) return message; // Don't cut menus
+    if (message.includes('1️⃣')) return message; 
 
     const sentences = message.split(/[.!?।]/).filter(s => s.trim().length > 10);
     let shortened = sentences.slice(0, 3).join('. ') + '.'; 
@@ -127,9 +129,9 @@ async function getSarathiResponse(phone, userText, history) {
     try {
         console.log("🧠 Sarathi (Gemini) is thinking...");
 
-        // ✅ FIX: startChat is now simple. It inherits the instruction from the model.
         const chatSession = model.startChat({
             history: convertHistoryForGemini(history),
+            // Note: systemInstruction is already set in the model config above
         });
 
         const result = await chatSession.sendMessage(userText);
@@ -139,8 +141,9 @@ async function getSarathiResponse(phone, userText, history) {
         return responseText;
 
     } catch (error) {
-        console.error("❌ Gemini Error:", error.message);
-        // Basic fallback if Gemini fails
+        // Detailed error logging to help debug if it happens again
+        console.error("❌ Gemini Detailed Error:", JSON.stringify(error, null, 2));
+        console.error("❌ Basic Error:", error.message);
         return "Brother, the chariot wheel is stuck (Technical Error). Breathe, and try asking again in a moment. 🙏";
     }
 }
@@ -162,17 +165,13 @@ app.post("/webhook", async (req, res) => {
         
         console.log(`📩 Message from ${phone}: ${text}`);
 
-        // 1. Get History
         const user = await getUserState(phone);
         let history = user.chat_history || [];
 
-        // 2. Get AI Response
         const reply = await getSarathiResponse(phone, text, history);
 
-        // 3. Send to WhatsApp
         await sendViaHeltar(phone, reply);
 
-        // 4. Save History
         const newHistory = [...history, { role: 'user', content: text }, { role: 'assistant', content: reply }].slice(-10);
         await updateUserHistory(phone, newHistory);
 
