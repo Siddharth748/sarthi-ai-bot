@@ -1,4 +1,4 @@
-// index.js — SarathiAI (GEMINI EDITION - STRICT OBJECT FIX)
+// index.js — SarathiAI (UNIVERSAL STABLE VERSION)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -13,15 +13,19 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* ---------------- Config / env ---------------- */
-const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
 const PORT = process.env.PORT || 8080;
-
 const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || "").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 
-/* ---------------- 1. DEFINE SYSTEM PROMPT ---------------- */
-const SARATHI_PROMPT_TEXT = `
+/* ---------------- SETUP GEMINI (STABLE MODE) ---------------- */
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+// We use 'gemini-pro' because it is universally supported and very stable.
+const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+
+/* ---------------- THE SARATHI INSTRUCTIONS ---------------- */
+const SARATHI_INSTRUCTION_TEXT = `
 You are Sarathi AI. You are not a generic chatbot; you are a Vedic Psychological Guide (The Digital Charioteer).
 Your user is "Arjuna" (a modern human facing life's battles).
 
@@ -29,32 +33,19 @@ YOUR GOAL:
 To move the user from "Vishada" (Confusion/Grief) to "Prasad" (Clarity/Peace) using the wisdom of the Bhagavad Gita.
 
 YOUR CONVERSATION FLOW (STRICT):
-1. THE PAUSE (Pranayama): First, validate their emotion. Tell them to breathe or step back. "Stop the chariot."
-2. THE PERSPECTIVE (Gyan): Quote a relevant CONCEPT from the Gita (Chapter/Verse) that reframes their problem. Focus on Identity vs. Ego, or Duty vs. Result.
+1. THE PAUSE (Pranayama): First, validate their emotion. Tell them to breathe.
+2. THE PERSPECTIVE (Gyan): Quote a relevant CONCEPT from the Gita (Chapter/Verse) that reframes their problem.
 3. THE ACTION (Karma): Give ONE small, practical micro-task they can do right now.
-4. THE CHECK (Question): End with ONE engaging question to keep them talking.
+4. THE CHECK (Question): End with ONE engaging question.
 
 TONE:
-- Compassionate but firm (like Krishna).
-- Use "Hinglish" logic (mix of English and simple Sanskrit concepts like Dharma, Karma, Guna).
-- Keep responses SHORT (under 120 words). WhatsApp users do not read essays.
+- Compassionate but firm.
+- Mix English with simple Sanskrit concepts (Dharma, Karma).
+- Keep responses SHORT (under 120 words).
 
 SAFETY:
-If the user mentions self-harm or suicide, DROP the persona immediately and tell them to seek professional medical help.
+If the user mentions self-harm, DROP the persona and tell them to seek medical help.
 `;
-
-/* ---------------- 2. SETUP GEMINI (STRICT FORMAT) ---------------- */
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-// 🛑 CRITICAL FIX: We wrap the instruction in a specific object structure
-// This prevents the "400 Bad Request" error.
-const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
-    systemInstruction: {
-        role: "system",
-        parts: [{ text: SARATHI_PROMPT_TEXT }]
-    }
-});
 
 /* ---------------- Database Connection ---------------- */
 const dbPool = new Pool({ 
@@ -67,12 +58,32 @@ const dbPool = new Pool({
 
 /* ---------------- Helper Functions ---------------- */
 
-function convertHistoryForGemini(dbHistory) {
-    if (!Array.isArray(dbHistory)) return [];
-    return dbHistory.map(msg => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }]
-    }));
+// This function "tricks" the model by pretending we already agreed on the instructions
+// in the chat history. This works on ALL versions of the API.
+function buildHistoryWithInstructions(dbHistory) {
+    // 1. Start with the "System Prompt" disguised as a user message
+    const history = [
+        {
+            role: "user",
+            parts: [{ text: `SYSTEM_INSTRUCTION: ${SARATHI_INSTRUCTION_TEXT}` }]
+        },
+        {
+            role: "model",
+            parts: [{ text: "Understood. I am Sarathi, the Digital Charioteer. I am ready to guide Arjuna." }]
+        }
+    ];
+
+    // 2. Add the actual user conversation history
+    if (Array.isArray(dbHistory)) {
+        dbHistory.forEach(msg => {
+            history.push({
+                role: msg.role === 'user' ? 'user' : 'model',
+                parts: [{ text: msg.content }]
+            });
+        });
+    }
+
+    return history;
 }
 
 function optimizeMessageForWhatsApp(message, maxLength = 350) {
@@ -124,14 +135,14 @@ async function updateUserHistory(phone, history) {
     } catch (e) { console.error("Update Error:", e.message); }
 }
 
-/* ---------------- THE NEW BRAIN: GEMINI LOGIC ---------------- */
+/* ---------------- THE BRAIN: GEMINI LOGIC ---------------- */
 async function getSarathiResponse(phone, userText, history) {
     try {
-        console.log("🧠 Sarathi (Gemini) is thinking...");
+        console.log("🧠 Sarathi (Gemini Pro) is thinking...");
 
+        // Start chat with the "Injected" system instructions
         const chatSession = model.startChat({
-            history: convertHistoryForGemini(history),
-            // Note: systemInstruction is already set in the model config above
+            history: buildHistoryWithInstructions(history),
         });
 
         const result = await chatSession.sendMessage(userText);
@@ -141,9 +152,7 @@ async function getSarathiResponse(phone, userText, history) {
         return responseText;
 
     } catch (error) {
-        // Detailed error logging to help debug if it happens again
-        console.error("❌ Gemini Detailed Error:", JSON.stringify(error, null, 2));
-        console.error("❌ Basic Error:", error.message);
+        console.error("❌ Gemini Error:", error.message);
         return "Brother, the chariot wheel is stuck (Technical Error). Breathe, and try asking again in a moment. 🙏";
     }
 }
@@ -182,7 +191,7 @@ app.post("/webhook", async (req, res) => {
 
 /* ---------------- Start Server ---------------- */
 app.listen(PORT, async () => {
-    console.log(`\n🚀 Sarathi AI (Gemini Edition) is running on port ${PORT}`);
+    console.log(`\n🚀 Sarathi AI (Stable Edition) is running on port ${PORT}`);
     try {
         const client = await dbPool.connect();
         await client.query(`
