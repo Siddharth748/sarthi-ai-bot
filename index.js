@@ -1,4 +1,4 @@
-// index.js — SarathiAI (DIRECT API MODE - BULLETPROOF)
+// index.js — SarathiAI (OLD FAITHFUL VERSION - GEMINI PRO V1)
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -93,21 +93,23 @@ async function updateUserHistory(phone, history) {
     } catch (e) { console.error("Update Error:", e.message); }
 }
 
-/* ---------------- THE BRAIN: DIRECT AXIOS CALL (No SDK) ---------------- */
+/* ---------------- THE BRAIN: DIRECT AXIOS CALL (GEMINI PRO V1) ---------------- */
 async function getSarathiResponse(phone, userText, history) {
     try {
-        console.log("🧠 Sarathi is thinking (Direct Mode)...");
+        console.log("🧠 Sarathi is thinking (Gemini Pro V1)...");
 
-        // 1. Construct the history payload manually
+        // 1. Construct the history payload
+        // We inject the system instruction as the very first "user" message
+        // This is a universal trick that works on all older API versions
         let contents = [{
             role: "user",
-            parts: [{ text: `SYSTEM_INSTRUCTION: ${SARATHI_INSTRUCTION}` }]
+            parts: [{ text: `INSTRUCTION: ${SARATHI_INSTRUCTION}` }]
         }, {
             role: "model",
-            parts: [{ text: "Understood. I am Sarathi. I am ready." }]
+            parts: [{ text: "Understood. I am ready to guide." }]
         }];
 
-        // Add recent chat history (last 6 messages to keep it fast)
+        // Add recent chat history
         if (Array.isArray(history)) {
             history.slice(-6).forEach(msg => {
                 contents.push({
@@ -123,9 +125,9 @@ async function getSarathiResponse(phone, userText, history) {
             parts: [{ text: userText }]
         });
 
-        // 2. Direct HTTP Post to Google API
-        // We use the most standard endpoint that doesn't change often
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        // 2. Direct HTTP Post to Google API (STABLE V1 ENDPOINT)
+        // Notice: 'v1' instead of 'v1beta' and 'gemini-pro' instead of 'flash'
+        const url = `https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
         
         const response = await axios.post(url, {
             contents: contents,
@@ -135,7 +137,6 @@ async function getSarathiResponse(phone, userText, history) {
             }
         });
 
-        // 3. Extract the answer
         const replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
         
         if (!replyText) throw new Error("Empty response from Google");
@@ -144,7 +145,7 @@ async function getSarathiResponse(phone, userText, history) {
         return replyText;
 
     } catch (error) {
-        console.error("❌ Gemini Direct Error:", error?.response?.data || error.message);
+        console.error("❌ Gemini Error:", error?.response?.data || error.message);
         return "Brother, the chariot wheel is stuck (Technical Error). Breathe, and try asking again in a moment. 🙏";
     }
 }
@@ -183,7 +184,7 @@ app.post("/webhook", async (req, res) => {
 
 /* ---------------- Start Server ---------------- */
 app.listen(PORT, async () => {
-    console.log(`\n🚀 Sarathi AI (Direct Mode) is running on port ${PORT}`);
+    console.log(`\n🚀 Sarathi AI (Gemini Pro V1) is running on port ${PORT}`);
     try {
         const client = await dbPool.connect();
         await client.query(`
