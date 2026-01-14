@@ -145,64 +145,33 @@ What's one small step you could start with?`
 };
 
 // Enhanced system prompt for complete responses
+// Enhanced system prompt for SHORT, DIRECT Sarathi responses
 const ENHANCED_SYSTEM_PROMPT = {
-  hindi: `आप सारथी AI हैं, भगवद गीता के विशेषज्ञ मार्गदर्शक। इन बातों का विशेष ध्यान रखें:
+  hindi: `आप सारथी AI हैं - एक वैदिक मनोवैज्ञानिक गाइड (डिजिटल सारथी)।
+आपका लक्ष्य: उपयोगकर्ता को "विषाद" (दुख) से "प्रसाद" (शांति) की ओर ले जाना।
 
-🌿 **भावनात्मक संवाद:**
-• "मैं समझता हूँ" से बचें - इसके बजाय विशिष्ट भावनाओं को पकड़ें ("यह डर स्वाभाविक है...", "आपकी चिंता समझ आती है...")
-• कहानियों और रूपकों का उपयोग करें (जैसे "उथल-पुथल वाली नदी", "तूफान में दीपक")
+कड़े नियम (Strict Rules):
+1. संक्षिप्त रहें: उत्तर अधिकतम 60-80 शब्द हो। "निबंध" न लिखें।
+2. संरचना (Structure):
+   - ठहराव (The Pause): पहले वाक्य में भावना को स्वीकार करें और उन्हें रुकने को कहें। (उदा: "रुकिए। लंबी सांस लें।")
+   - दृष्टिकोण (Perspective): गीता का एक *छोटा* सिद्धांत (श्लोक संख्या जरूरी नहीं) जो नजरिया बदले।
+   - कर्म (Action): एक बहुत छोटा, व्यावहारिक कार्य दें जो अभी किया जा सके।
+   - प्रश्न (Check): अंत में केवल एक प्रश्न पूछें।
+3. टोन (Tone): सहानुभूतिपूर्ण लेकिन दृढ़ (कृष्ण की तरह)। हिंग्लिश (Hinglish) का प्रयोग करें।
+4. रूपक (Metaphors): कम करें। सीधी बात करें।`,
 
-📚 **शास्त्रों का सूक्ष्म उपयोग:**
-• हमेशा 2.47 का उपयोग न करें - स्थिति के अनुसार श्लोक चुनें:
-  - नैतिक दुविधा: 16.1-3 (दैवी vs आसुरी गुण), 17.14-16 (सत्य)
-  - डर: 2.56 (अनुद्विग्नमनाः), 18.63 (सोच-विचार)
-  - कर्म: 3.5 (निष्क्रियता), 4.17 (कर्म में अकर्म)
-  - धर्म: 3.35 (स्वधर्म), 18.66 (शरणागति)
+  english: `You are Sarathi AI - a Vedic Psychological Guide (The Digital Charioteer).
+Your Goal: Move the user from "Vishada" (Grief) to "Prasad" (Peace).
 
-💡 **व्यावहारिक मार्गदर्शन:**
-• सैद्धांतिक सलाह न दें - ठोस कदम सुझाएं
-• "ध्यान करें" के बजाय "5 मिनट श्वास पर ध्यान दें" कहें
-• वास्तविक जीवन की रणनीतियाँ दें (गुमनाम रिपोर्टिंग, दस्तावेज़ीकरण)
-
-🎯 **संदर्भ जागरूकता:**
-• पिछली बातचीत को याद रखें और उसका संदर्भ दें
-• उपयोगकर्ता की विशिष्ट स्थिति से जुड़ें
-
-🚫 **कभी भी अधूरा उत्तर न दें - हमेशा पूर्ण वाक्यों में समाप्त करें।**`,
-
-  english: `You are Sarathi AI, an expert Bhagavad Gita guide. Pay special attention to:
-
-🌿 **Emotional Dialogue:**
-• Avoid "I understand you're feeling" - instead capture specific emotions ("This fear is natural...", "Your concern makes sense...")
-• Use stories and metaphors ("like a turbulent river", "a lamp in storm")
-
-📚 **Nuanced Scripture Use:**
-• Don't always use 2.47 - choose verses contextually:
-  - Moral dilemmas: 16.1-3 (divine vs demonic), 17.14-16 (truth)
-  - Fear: 2.56 (undisturbed), 18.63 (reflect)
-  - Action: 3.5 (inaction), 4.17 (action in inaction)  
-  - Dharma: 3.35 (swadharma), 18.66 (surrender)
-
-💡 **Practical Guidance:**
-• No theoretical advice - give concrete steps
-• Instead of "meditate" say "focus on breath for 5 minutes"
-• Provide real-life strategies (anonymous reporting, documentation)
-
-🎯 **Context Awareness:**
-• Remember previous conversation and reference it
-• Connect to user's specific situation
-
-🚫 **NEVER leave responses incomplete - always end with complete sentences.**`
-};
-
-/* ---------------- Validation & Setup ---------------- */
-const validateEnvVariables = () => {
-    const requiredVars = { DATABASE_URL, OPENAI_KEY, HELTAR_API_KEY, HELTAR_PHONE_ID };
-    const missingVars = Object.entries(requiredVars).filter(([, value]) => !value).map(([key]) => key);
-    if (missingVars.length > 0) {
-        console.error(`❌ Critical Error: Missing environment variables: ${missingVars.join(", ")}`);
-        process.exit(1);
-    }
+STRICT RULES:
+1. BE SHORT: Max 60-80 words. WhatsApp users do not read essays.
+2. STRUCTURE:
+   - THE PAUSE: First sentence MUST validate emotion and command a pause. (e.g., "Stop. Breathe.")
+   - THE PERSPECTIVE: One brief Gita concept to reframe the Identity vs Ego.
+   - THE ACTION: One micro-task they can do RIGHT NOW.
+   - THE CHECK: End with exactly one question.
+3. TONE: Compassionate but firm. Use Hinglish if appropriate.
+4. METAPHORS: Limit them. Be direct and grounded.`
 };
 
 async function setupDatabase() {
@@ -492,47 +461,10 @@ async function sendViaHeltar(phone, message, type = "chat") {
     }
 }
 
+// Overwritten to disable "Type More" functionality globally
 async function sendLayeredResponse(phone, fullResponse, language, type = "chat") {
-    const maxInitialLength = 400; // Optimal for WhatsApp
-    const sentences = fullResponse.split(/[.!?।]/).filter(s => s.trim().length > 0);
-    
-    // If response is short enough, send directly
-    if (fullResponse.length <= maxInitialLength) {
-        await sendViaHeltar(phone, fullResponse, type);
-        return;
-    }
-    
-    // Build initial response with first 2-3 sentences
-    let initialResponse = '';
-    let charCount = 0;
-    
-    for (let i = 0; i < Math.min(sentences.length, 3); i++) {
-        const sentence = sentences[i].trim() + (language === "Hindi" ? '। ' : '. ');
-        if (charCount + sentence.length <= maxInitialLength) {
-            initialResponse += sentence;
-            charCount += sentence.length;
-        } else {
-            break;
-        }
-    }
-    
-    // Add "Read more" prompt
-    const prompt = language === "Hindi" 
-        ? "\n\n*'More' टाइप करें पूरा जवाब पढ़ने के लिए* 📖"
-        : "\n\n*Type 'More' to read the complete response* 📖";
-    
-    initialResponse += prompt;
-    const remainingResponse = sentences.slice(initialResponse.split(/[.!?।]/).length - 1).join('. ');
-    
-    await sendViaHeltar(phone, initialResponse, type);
-    
-    // Store remaining response for "More" command
-    if (remainingResponse.trim().length > 0) {
-        await updateUserState(phone, { 
-            pending_followup: remainingResponse,
-            followup_type: type
-        });
-    }
+    // We now send EVERYTHING directly. No more hiding text.
+    await sendViaHeltar(phone, fullResponse, type);
 }
 
 /* ---------------- FIXED Language Detection ---------------- */
@@ -859,107 +791,70 @@ async function getEnhancedAIResponseWithRetry(phone, text, language, context, re
 
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
   try {
-    // Only use fallback if OpenAI is completely unavailable
-    if (!OPENAI_KEY || OPENAI_KEY === '') {
-      console.log("🔄 No OpenAI key, using fallback response");
+    if (!OPENAI_KEY) {
+      console.log("🔄 No OpenAI key, using fallback");
       return await getContextualFallback(phone, text, language, conversationContext);
     }
 
-    console.log("🤖 Using Enhanced OpenAI for nuanced response...");
+    console.log("🤖 Sarathi is thinking (Short & Direct)...");
 
-    // Build context from conversation history
     const recentHistory = conversationContext.previousMessages?.slice(-3) || [];
     const contextSummary = buildContextSummary(recentHistory, language);
     
     const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
     
+    // Simplified User Prompt to force brevity
     const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता का वर्तमान संदेश: "${text}"
+      ? `उपयोगकर्ता: "${text}"
+संदर्भ: ${contextSummary}
+भावना: ${conversationContext.emotion || 'unknown'}
 
-पिछला संदर्भ: ${contextSummary}
+निर्देश: कृपया 4-चरणीय ढांचे (ठहराव, दृष्टिकोण, कर्म, प्रश्न) का पालन करें। उत्तर छोटा और सीधा रखें (Max 80 words).`
+      : `User: "${text}"
+Context: ${contextSummary}
+Emotion: ${conversationContext.emotion || 'unknown'}
 
-भावना: ${conversationContext.emotion || 'सामान्य'}
-स्थिति: ${conversationContext.situation || 'सामान्य'}
-
-🚫 **कृपया ध्यान दें: उत्तर कभी भी अधूरा न छोड़ें। हमेशा पूर्ण वाक्यों में समाप्त करें।**
-
-कृपया एक संपूर्ण, सुसंगत उत्तर दें जो:
-1. 10-15 वाक्यों में पूरा हो (कभी भी अधूरा न छोड़ें)
-2. एक स्पष्ट समापन के साथ समाप्त हो  
-3. 2-3 व्यावहारिक सुझाव दे
-4. एक विचारणीय प्रश्न के साथ समाप्त हो
-
-उत्तर कभी भी अधूरा न छोड़ें - पूर्ण वाक्यों में समाप्त करें।`
-      : `User's current message: "${text}"
-
-Previous context: ${contextSummary}
-
-Emotion: ${conversationContext.emotion || 'general'}
-Situation: ${conversationContext.situation || 'general'}
-
-🚫 **IMPORTANT: NEVER leave the response incomplete. Always end with complete sentences.**
-
-Please provide a complete, coherent response that:
-1. Is 10-15 sentences long (NEVER leave incomplete)
-2. Ends with a clear conclusion
-3. Provides 2-3 practical suggestions
-4. Ends with a thought-provoking question
-
-NEVER leave the response incomplete - always end with complete sentences.`;
+INSTRUCTION: Follow the 4-step structure (Pause, Perspective, Action, Check). Keep it SHORT and DIRECT (Max 80 words).`;
 
     const messages = [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt }
     ];
 
-    console.log("📤 Sending to OpenAI with enhanced context");
-
     const body = { 
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 1200,
-      temperature: 0.8,
-      top_p: 0.9
+      max_tokens: 200, // Reduced to prevent essays
+      temperature: 0.7
     };
 
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", body, {
-      headers: { 
-        Authorization: `Bearer ${OPENAI_KEY}`, 
-        "Content-Type": "application/json" 
-      },
-      timeout: 30000
+      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
+      timeout: 15000
     });
 
     const aiResponse = resp.data?.choices?.[0]?.message?.content;
     
-    if (aiResponse && aiResponse.trim().length > 10) {
-      console.log("✅ Enhanced OpenAI response received");
+    if (aiResponse) {
+      console.log("✅ Sarathi Response Generated");
       
-      const completeResponse = ensureCompleteStructuredResponse(aiResponse, language);
+      // DIRECT SEND - No "Layered" logic, No "Type More"
+      await sendViaHeltar(phone, aiResponse, "enhanced_ai_response");
       
-      // Use layered response system instead of direct send
-      await sendLayeredResponse(phone, completeResponse, language, "enhanced_ai_response");
-      
-      // Update chat history with bot response
+      // Update history
       const user = await getUserState(phone);
-      const updatedHistory = [...(user.chat_history || []), { 
-        role: 'assistant', 
-        content: completeResponse 
-      }];
+      const updatedHistory = [...(user.chat_history || []), { role: 'assistant', content: aiResponse }];
       await updateUserState(phone, { 
         chat_history: updatedHistory,
-        last_message: completeResponse,
+        last_message: aiResponse,
         last_message_role: 'assistant'
       });
-      
-      return;
     } else {
-      throw new Error("Empty or invalid response from OpenAI");
+      throw new Error("Empty OpenAI response");
     }
 
   } catch (err) {
-    console.error("❌ Enhanced AI response error:", err.message);
-    console.log("🔄 Falling back to contextual response due to OpenAI error");
+    console.error("❌ AI Error:", err.message);
     await getContextualFallback(phone, text, language, conversationContext);
   }
 }
