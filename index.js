@@ -1,11 +1,10 @@
-// index.js — SarathiAI (UNIVERSAL STABLE VERSION)
+// index.js — SarathiAI (DIRECT API MODE - BULLETPROOF)
 import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
 import axios from "axios";
 import pg from "pg";
-import { GoogleGenerativeAI } from "@google/generative-ai"; 
 
 const { Pool } = pg;
 const app = express();
@@ -18,33 +17,21 @@ const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || "").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 
-/* ---------------- SETUP GEMINI (STABLE MODE) ---------------- */
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+/* ---------------- SYSTEM INSTRUCTIONS ---------------- */
+const SARATHI_INSTRUCTION = `
+You are Sarathi AI, a Vedic Psychological Guide (The Digital Charioteer).
+User = "Arjuna".
 
-// We use 'gemini-pro' because it is universally supported and very stable.
-const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+GOAL: Move user from "Vishada" (Grief) to "Prasad" (Peace) using Gita wisdom.
 
-/* ---------------- THE SARATHI INSTRUCTIONS ---------------- */
-const SARATHI_INSTRUCTION_TEXT = `
-You are Sarathi AI. You are not a generic chatbot; you are a Vedic Psychological Guide (The Digital Charioteer).
-Your user is "Arjuna" (a modern human facing life's battles).
+STRICT FLOW:
+1. PAUSE: Validate emotion. "Stop the chariot."
+2. PERSPECTIVE: Quote Gita concept (Identity vs Ego).
+3. ACTION: One small micro-task.
+4. CHECK: One engaging question.
 
-YOUR GOAL:
-To move the user from "Vishada" (Confusion/Grief) to "Prasad" (Clarity/Peace) using the wisdom of the Bhagavad Gita.
-
-YOUR CONVERSATION FLOW (STRICT):
-1. THE PAUSE (Pranayama): First, validate their emotion. Tell them to breathe.
-2. THE PERSPECTIVE (Gyan): Quote a relevant CONCEPT from the Gita (Chapter/Verse) that reframes their problem.
-3. THE ACTION (Karma): Give ONE small, practical micro-task they can do right now.
-4. THE CHECK (Question): End with ONE engaging question.
-
-TONE:
-- Compassionate but firm.
-- Mix English with simple Sanskrit concepts (Dharma, Karma).
-- Keep responses SHORT (under 120 words).
-
-SAFETY:
-If the user mentions self-harm, DROP the persona and tell them to seek medical help.
+TONE: Compassionate, firm, Hinglish allowed. Keep it SHORT (max 100 words).
+SAFETY: If self-harm mentioned, refer to doctor immediately.
 `;
 
 /* ---------------- Database Connection ---------------- */
@@ -57,35 +44,6 @@ const dbPool = new Pool({
 });
 
 /* ---------------- Helper Functions ---------------- */
-
-// This function "tricks" the model by pretending we already agreed on the instructions
-// in the chat history. This works on ALL versions of the API.
-function buildHistoryWithInstructions(dbHistory) {
-    // 1. Start with the "System Prompt" disguised as a user message
-    const history = [
-        {
-            role: "user",
-            parts: [{ text: `SYSTEM_INSTRUCTION: ${SARATHI_INSTRUCTION_TEXT}` }]
-        },
-        {
-            role: "model",
-            parts: [{ text: "Understood. I am Sarathi, the Digital Charioteer. I am ready to guide Arjuna." }]
-        }
-    ];
-
-    // 2. Add the actual user conversation history
-    if (Array.isArray(dbHistory)) {
-        dbHistory.forEach(msg => {
-            history.push({
-                role: msg.role === 'user' ? 'user' : 'model',
-                parts: [{ text: msg.content }]
-            });
-        });
-    }
-
-    return history;
-}
-
 function optimizeMessageForWhatsApp(message, maxLength = 350) {
     if (!message || message.length <= maxLength) return message;
     if (message.includes('1️⃣')) return message; 
@@ -135,24 +93,58 @@ async function updateUserHistory(phone, history) {
     } catch (e) { console.error("Update Error:", e.message); }
 }
 
-/* ---------------- THE BRAIN: GEMINI LOGIC ---------------- */
+/* ---------------- THE BRAIN: DIRECT AXIOS CALL (No SDK) ---------------- */
 async function getSarathiResponse(phone, userText, history) {
     try {
-        console.log("🧠 Sarathi (Gemini Pro) is thinking...");
+        console.log("🧠 Sarathi is thinking (Direct Mode)...");
 
-        // Start chat with the "Injected" system instructions
-        const chatSession = model.startChat({
-            history: buildHistoryWithInstructions(history),
+        // 1. Construct the history payload manually
+        let contents = [{
+            role: "user",
+            parts: [{ text: `SYSTEM_INSTRUCTION: ${SARATHI_INSTRUCTION}` }]
+        }, {
+            role: "model",
+            parts: [{ text: "Understood. I am Sarathi. I am ready." }]
+        }];
+
+        // Add recent chat history (last 6 messages to keep it fast)
+        if (Array.isArray(history)) {
+            history.slice(-6).forEach(msg => {
+                contents.push({
+                    role: msg.role === 'user' ? 'user' : 'model',
+                    parts: [{ text: msg.content }]
+                });
+            });
+        }
+
+        // Add current message
+        contents.push({
+            role: "user",
+            parts: [{ text: userText }]
         });
 
-        const result = await chatSession.sendMessage(userText);
-        const responseText = result.response.text();
+        // 2. Direct HTTP Post to Google API
+        // We use the most standard endpoint that doesn't change often
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        
+        const response = await axios.post(url, {
+            contents: contents,
+            generationConfig: {
+                maxOutputTokens: 150,
+                temperature: 0.7
+            }
+        });
 
-        console.log("💡 Idea generated:", responseText.substring(0, 50) + "...");
-        return responseText;
+        // 3. Extract the answer
+        const replyText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (!replyText) throw new Error("Empty response from Google");
+
+        console.log("💡 Idea generated:", replyText.substring(0, 50) + "...");
+        return replyText;
 
     } catch (error) {
-        console.error("❌ Gemini Error:", error.message);
+        console.error("❌ Gemini Direct Error:", error?.response?.data || error.message);
         return "Brother, the chariot wheel is stuck (Technical Error). Breathe, and try asking again in a moment. 🙏";
     }
 }
@@ -191,7 +183,7 @@ app.post("/webhook", async (req, res) => {
 
 /* ---------------- Start Server ---------------- */
 app.listen(PORT, async () => {
-    console.log(`\n🚀 Sarathi AI (Stable Edition) is running on port ${PORT}`);
+    console.log(`\n🚀 Sarathi AI (Direct Mode) is running on port ${PORT}`);
     try {
         const client = await dbPool.connect();
         await client.query(`
