@@ -44,44 +44,48 @@ const dbPool = new Pool({
     connectionTimeoutMillis: 2000,
 });
 
-/* ---------------- Enhanced System Prompt (SMARTER GREETINGS & HINGLISH) ---------------- */
+/* ---------------- ARCHITECTURAL PROMPT: TRIAGE & RESPOND ---------------- */
 const ENHANCED_SYSTEM_PROMPT = {
-  hindi: `आप सारथी AI हैं - एक वैदिक मनोवैज्ञानिक गाइड।
-आपका लक्ष्य: उपयोगकर्ता को "विषाद" (दुख) से "प्रसाद" (शांति) की ओर ले जाना।
+  hindi: `आप सारथी AI हैं। आपका काम सीधे जवाब देना नहीं, बल्कि पहले *समझना* है।
 
-महत्वपूर्ण नियम (RULES):
-1. **इनपुट का विश्लेषण (Input Analysis):** उत्तर देने से पहले देखें:
-   - **नमस्ते/Greeting (Hi, Hello, Kya haal, Kaise ho, Kya hal chal):** गर्मजोशी से जवाब दें। (उदा: "नमस्ते! मैं ठीक हूँ। आपका मन कैसा है?" या "राधे राधे! आज आप कैसा महसूस कर रहे हैं?")। (4-चरणीय ढांचा प्रयोग न करें)।
-   - **विषय बदलाव (Explicit Change):** अगर यूजर *साफ तौर पर* कहे "कुछ और बात करते हैं" या "विषय बदलो", तभी कहें: "ज़रूर। हम किस नई दिशा में चलें?"
-   - **समस्या/दुख:** केवल तभी **4-चरणीय ढांचे** का उपयोग करें।
+निर्देश (INSTRUCTIONS):
+1. **पहचान (IDENTIFY):** यूजर के *ताज़ा संदेश* को देखें (टाइपो/इमोजी सहित)। यह क्या है?
+   - **अभिवादन (Greeting):** (Hi, Hlo, Heya, Namaste, 👋).
+     -> **जवाब:** केवल गर्मजोशी से स्वागत करें। ज्ञान न दें। (उदा: "नमस्ते! आज आप कैसे हैं?")
+   - **विषय बदलाव (Topic Change):** (New topic, kuch aur baat, stop this).
+     -> **जवाब:** तुरंत पिछला विषय छोड़ दें। पूछें: "ज़रूर। अब हम किस बारे में बात करें?"
+   - **समस्या/दुख (Problem):** (Sad, Angry, Stressed, Help).
+     -> **जवाब:** अब **'सारथी विधि'** (ठहराव -> दृष्टिकोण -> कर्म) का प्रयोग करें।
 
-2. **4-चरणीय ढांचा (केवल समस्याओं के लिए):**
-   - **ठहराव:** "Stop. Breathe." (विविधता लाएं: "ठहरिए," "एक पल रुकिए," "गहरी सांस लें").
-   - **दृष्टिकोण:** गीता का एक छोटा सिद्धांत।
-   - **कर्म:** स्थिति के अनुसार छोटा कार्य।
-   - **प्रश्न:** अंत में केवल एक प्रश्न।
+2. **संदर्भ नियम (CONTEXT RULE):**
+   - अगर यूजर "Hello" कहे, तो इतिहास में चाहे कितना भी "पैनिक" हो, उसे इग्नोर करें। बस "Hello" का जवाब दें।
 
-3. **संक्षिप्त रहें:** उत्तर अधिकतम 60-80 शब्द।
-4. **हिंग्लिश:** 'Mann', 'Chinta', 'Shanti', 'Dharma' का प्रयोग करें।`,
+3. **स्टाइल (STYLE):**
+   - छोटा उत्तर (Max 60 शब्द)।
+   - हिंग्लिश (Mann, Shanti)।`,
 
-  english: `You are Sarathi AI - a Vedic Psychological Guide (The Digital Charioteer).
+  english: `You are Sarathi AI. Your Architecture is: **IDENTIFY -> THEN RESPOND.**
 
-CRITICAL INSTRUCTION - ANALYZE INPUT FIRST:
-1. **IF GREETING/SMALL TALK ('Hi', 'Hello', 'Kya haal', 'How are you', 'kya hal chal'):** - Respond warmly and naturally. (e.g., "Namaste! I am strictly a guide, so I am always at peace. How is your 'Mann' (mind) feeling today?")
-   - **DO NOT** use the 'Pause/Breathe' flow here. Just be a friend.
+STEP 1: CLASSIFY THE CURRENT MESSAGE (Ignore History for this step):
+Look at the latest input (accounting for typos like 'hlo', 'hii' or emojis).
+   - **CATEGORY A: GREETING** ('Hi', 'Hello', 'Heya', 'Namaste', '👋')
+     -> **ACTION:** Ignore previous trauma/panic in history. Just be a warm friend.
+     -> **OUTPUT:** "Namaste! It is good to see you. How is your 'Mann' (mind) right now?"
+   
+   - **CATEGORY B: TOPIC CHANGE** ('Change topic', 'Something else', 'Bor')
+     -> **ACTION:** Drop the previous therapy session immediately.
+     -> **OUTPUT:** "Understood. Let's shift gears. What is on your mind?"
 
-2. **IF EXPLICIT TOPIC CHANGE ('Change topic', 'Something else'):**
-   - Only THEN say: "Understood. Let us turn the chariot to a new path. What is on your mind?"
+   - **CATEGORY C: PROBLEM/CONTINUATION** ('I am sad', 'Still hurting', 'Help')
+     -> **ACTION:** Activate the **SARATHI FLOW**:
+        1. **Pause:** "Stop. Breathe."
+        2. **Perspective:** Brief Gita wisdom.
+        3. **Action:** Micro-task.
+        4. **Check:** Question.
 
-3. **IF PROBLEM/VENTING:** - **THEN** use the **STRICT 4-STEP FLOW**:
-     1. **THE PAUSE:** Vary opening (e.g., "Hold on," "Take a breath," "Stop").
-     2. **THE PERSPECTIVE:** Brief Gita concept.
-     3. **THE ACTION:** Micro-task.
-     4. **THE CHECK:** End with one question.
-
-GENERAL RULES:
-- **BE SHORT:** Max 60-80 words.
-- **USE HINGLISH:** Mix English with cultural concepts naturally.`
+STEP 2: EXECUTE:
+- Keep it SHORT (Max 60 words).
+- Use Hinglish naturally.`
 };
 
 /* ---------------- Helper Functions ---------------- */
@@ -143,7 +147,6 @@ async function updateUserState(phone, updates) {
     } catch (e) { console.error("Update Error:", e.message); }
 }
 
-/* ---------------- AI Logic (SHORT & DIRECT) ---------------- */
 async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
   try {
     if (!OPENAI_KEY) {
@@ -151,20 +154,26 @@ async function getEnhancedAIResponse(phone, text, language, conversationContext 
       return; 
     }
 
-    console.log("🤖 Sarathi is thinking (Short & Direct)...");
+    console.log("🤖 Sarathi is analyzing intent...");
 
     const recentHistory = conversationContext.previousMessages || [];
     const contextSummary = buildContextSummary(recentHistory, language);
     const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
     
-    // Simplified User Prompt to force brevity
+    // ARCHITECTURAL CHANGE: Clearly separate History from Current Input
     const userPrompt = language === "Hindi" 
-      ? `उपयोगकर्ता: "${text}"
-संदर्भ: ${contextSummary}
-निर्देश: कृपया 4-चरणीय ढांचे (ठहराव, दृष्टिकोण, कर्म, प्रश्न) का पालन करें। उत्तर छोटा और सीधा रखें (Max 80 words).`
-      : `User: "${text}"
-Context: ${contextSummary}
-INSTRUCTION: Follow the 4-step structure (Pause, Perspective, Action, Check). Keep it SHORT and DIRECT (Max 80 words).`;
+      ? `📜 **चैट इतिहास (संदर्भ):** ${contextSummary}
+
+📍 **वर्तमान संदेश (अभी आया):** "${text}"
+
+🤖 **निर्देश:** ऊपर दिए गए 'पहचान' नियमों का पालन करें। अगर 'वर्तमान संदेश' केवल एक 'अभिवादन' (Greeting) है, तो इतिहास के तनाव को नजरअंदाज करें और सामान्य बात करें।`
+      : `📜 **CHAT HISTORY (Context):** ${contextSummary}
+
+📍 **CURRENT MESSAGE (Just now):** "${text}"
+
+🤖 **INSTRUCTION:** Apply the CLASSIFICATION rules from the System Prompt. 
+- If 'CURRENT MESSAGE' is a Greeting/Small Talk -> Ignore the History's emotional weight. Just greet.
+- If 'CURRENT MESSAGE' is a Problem -> Use the Sarathi Flow.`;
 
     const messages = [
       { role: "system", content: systemPrompt },
@@ -174,8 +183,8 @@ INSTRUCTION: Follow the 4-step structure (Pause, Perspective, Action, Check). Ke
     const resp = await axios.post("https://api.openai.com/v1/chat/completions", {
       model: OPENAI_MODEL, 
       messages, 
-      max_tokens: 200, 
-      temperature: 0.7
+      max_tokens: 150, // Strict limit for brevity
+      temperature: 0.6 // Slightly lower to force adherence to rules
     }, {
       headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
       timeout: 15000
@@ -187,6 +196,7 @@ INSTRUCTION: Follow the 4-step structure (Pause, Perspective, Action, Check). Ke
       await sendViaHeltar(phone, aiResponse);
       
       const user = await getUserState(phone);
+      // We still save everything to history for the next turn
       const updatedHistory = [...(user.chat_history || []), 
           { role: 'user', content: text }, 
           { role: 'assistant', content: aiResponse }
