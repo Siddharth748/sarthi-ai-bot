@@ -1,4 +1,6 @@
-// index.js — SarathiAI (FINAL STABLE & SHORT VERSION)
+// index.js — Sarathi AI v3.0 (The "Two-Brain" Architecture)
+// REFACTORED FOR STABILITY: Uses direct Axios calls (No SDKs) to prevent crashes.
+
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -11,262 +13,192 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* ---------------- Config / env ---------------- */
-const BOT_NAME = process.env.BOT_NAME || "SarathiAI";
+/* ---------------- Config ---------------- */
 const PORT = process.env.PORT || 8080;
-
 const DATABASE_URL = (process.env.DATABASE_URL || "").trim();
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || "").trim();
-const OPENAI_MODEL = (process.env.OPENAI_MODEL || "gpt-4o-mini").trim();
 const HELTAR_API_KEY = (process.env.HELTAR_API_KEY || "").trim();
 
-/* ---------------- CRITICAL FIX: Validation Function ---------------- */
-// This function was missing before, causing the crash.
-const validateEnvVariables = () => {
-    const requiredVars = { DATABASE_URL, OPENAI_KEY };
-    const missingVars = Object.entries(requiredVars).filter(([, value]) => !value).map(([key]) => key);
-    
-    if (missingVars.length > 0) {
-        console.error(`❌ Critical Error: Missing environment variables: ${missingVars.join(", ")}`);
-    }
-    
-    if (!HELTAR_API_KEY) {
-        console.warn("⚠️ HELTAR_API_KEY is missing. Messages will be printed to console only.");
-    }
-};
-
-/* ---------------- Database Connection ---------------- */
+/* ---------------- Database ---------------- */
 const dbPool = new Pool({ 
     connectionString: DATABASE_URL, 
     ssl: { rejectUnauthorized: false },
     max: 20,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
 });
 
-/* ---------------- ARCHITECTURAL PROMPT: TRIAGE & RESPOND ---------------- */
-const ENHANCED_SYSTEM_PROMPT = {
-  hindi: `आप सारथी AI हैं। आपका काम सीधे जवाब देना नहीं, बल्कि पहले *समझना* है।
+/* ---------------- BRAIN 1: THE TRIAGE ROUTER ---------------- */
+// This function decides WHAT the user wants before we try to help.
+async function categorizeUserIntent(text, historySummary) {
+    console.log("🧠 Brain 1 (Triage) is working...");
+    
+    const triagePrompt = `
+    You are the 'Triage Brain' for an AI bot. Your ONLY job is to classify the user's latest message.
+    
+    CONTEXT (Previous Chat): ${historySummary}
+    CURRENT MESSAGE: "${text}"
+    
+    Classify the CURRENT MESSAGE into exactly one of these categories:
+    1. GREETING (Hi, Hello, Namaste, Kya haal, Good morning) -> Ignore previous history context.
+    2. CASUAL_FLOW (I'm good, You tell me, Mast, Weather, Jokes) -> Casual chit-chat.
+    3. TOPIC_CHANGE (Change topic, something else, stop this) -> Explicit request to switch.
+    4. THERAPY_NEEDED (Sad, Stress, Panic, Anxiety, Help, Grief) -> Emotional distress.
+    5. KNOWLEDGE_QUERY (Who is Krishna, What is Karma, Quote Gita) -> Factual question.
+    
+    OUTPUT FORMAT: Return ONLY the category name (e.g., "GREETING"). Do not write anything else.
+    `;
 
-निर्देश (INSTRUCTIONS):
-1. **पहचान (IDENTIFY):** यूजर के *ताज़ा संदेश* को देखें (टाइपो/इमोजी सहित)। यह क्या है?
-   - **अभिवादन (Greeting):** (Hi, Hlo, Heya, Namaste, 👋).
-     -> **जवाब:** केवल गर्मजोशी से स्वागत करें। ज्ञान न दें। (उदा: "नमस्ते! आज आप कैसे हैं?")
-   - **विषय बदलाव (Topic Change):** (New topic, kuch aur baat, stop this).
-     -> **जवाब:** तुरंत पिछला विषय छोड़ दें। पूछें: "ज़रूर। अब हम किस बारे में बात करें?"
-   - **समस्या/दुख (Problem):** (Sad, Angry, Stressed, Help).
-     -> **जवाब:** अब **'सारथी विधि'** (ठहराव -> दृष्टिकोण -> कर्म) का प्रयोग करें।
+    try {
+        const resp = await axios.post("https://api.openai.com/v1/chat/completions", {
+            model: "gpt-4o-mini",
+            messages: [{ role: "system", content: triagePrompt }],
+            max_tokens: 10,
+            temperature: 0
+        }, { headers: { Authorization: `Bearer ${OPENAI_KEY}` } });
 
-2. **संदर्भ नियम (CONTEXT RULE):**
-   - अगर यूजर "Hello" कहे, तो इतिहास में चाहे कितना भी "पैनिक" हो, उसे इग्नोर करें। बस "Hello" का जवाब दें।
+        const intent = resp.data.choices[0].message.content.trim();
+        console.log(`🎯 Triage Result: ${intent}`);
+        return intent;
+    } catch (e) {
+        console.error("Triage Failed:", e.message);
+        return "CASUAL_FLOW"; // Fallback
+    }
+}
 
-3. **स्टाइल (STYLE):**
-   - छोटा उत्तर (Max 60 शब्द)।
-   - हिंग्लिश (Mann, Shanti)।`,
+/* ---------------- BRAIN 2: THE RESPONDER ---------------- */
+// This function generates the actual reply based on the Triage result.
+async function generateResponse(intent, text, historySummary) {
+    console.log(`🧠 Brain 2 (Responder) activating for: ${intent}`);
+    
+    let systemPrompt = "";
+    
+    // DYNAMIC SYSTEM PROMPT GENERATION
+    switch (intent) {
+        case "GREETING":
+            systemPrompt = `You are Sarathi. The user just greeted you.
+            ACTION: Greet them back warmly (Namaste/Hello). 
+            RULE: Do NOT give advice. Do NOT be a therapist yet. Just be welcoming.
+            TONE: Warm, Friend-like.`;
+            break;
+            
+        case "CASUAL_FLOW":
+            systemPrompt = `You are Sarathi. The user is chatting casually.
+            ACTION: Respond naturally to their statement.
+            RULE: Do NOT say "Namaste" again. Do NOT give heavy advice unless asked.
+            TONE: Relaxed, conversational.`;
+            break;
+            
+        case "TOPIC_CHANGE":
+            systemPrompt = `The user wants to change the topic.
+            ACTION: Acknowledge the shift. Ask "What is on your mind now?"
+            RULE: Drop all previous context/baggage.`;
+            break;
+            
+        case "THERAPY_NEEDED":
+            systemPrompt = `You are Sarathi, a Vedic Guide (Digital Charioteer).
+            User is in DISTRESS.
+            STRICT FLOW:
+            1. PAUSE: "Stop. Breathe." (Vary this phrase).
+            2. PERSPECTIVE: Brief Gita wisdom (Identity vs Ego).
+            3. ACTION: Small micro-task.
+            4. CHECK: One question.
+            TONE: Compassionate but firm.`;
+            break;
+            
+        case "KNOWLEDGE_QUERY":
+            systemPrompt = `You are Sarathi, a Teacher.
+            ACTION: Answer the question about Gita/Spirituality clearly.
+            TONE: Wise, educational.`;
+            break;
+            
+        default:
+            systemPrompt = "You are a helpful assistant named Sarathi.";
+    }
 
-  english: `You are Sarathi AI. Your Architecture is: **IDENTIFY -> THEN RESPOND.**
+    try {
+        const resp = await axios.post("https://api.openai.com/v1/chat/completions", {
+            model: "gpt-4o-mini",
+            messages: [
+                { role: "system", content: systemPrompt },
+                // We only inject history if it's NOT a greeting/topic change to keep it fresh
+                ...(intent === 'THERAPY_NEEDED' ? [{ role: "user", content: `CONTEXT: ${historySummary}` }] : []),
+                { role: "user", content: text }
+            ],
+            max_tokens: 150,
+            temperature: 0.7
+        }, { headers: { Authorization: `Bearer ${OPENAI_KEY}` } });
 
-STEP 1: CLASSIFY THE CURRENT MESSAGE (Ignore History for this step):
-Look at the latest input (accounting for typos like 'hlo', 'hii' or emojis).
-   - **CATEGORY A: GREETING** ('Hi', 'Hello', 'Heya', 'Namaste', '👋')
-     -> **ACTION:** Ignore previous trauma/panic in history. Just be a warm friend.
-     -> **OUTPUT:** "Namaste! It is good to see you. How is your 'Mann' (mind) right now?"
-   
-   - **CATEGORY B: TOPIC CHANGE** ('Change topic', 'Something else', 'Bor')
-     -> **ACTION:** Drop the previous therapy session immediately.
-     -> **OUTPUT:** "Understood. Let's shift gears. What is on your mind?"
-
-   - **CATEGORY C: PROBLEM/CONTINUATION** ('I am sad', 'Still hurting', 'Help')
-     -> **ACTION:** Activate the **SARATHI FLOW**:
-        1. **Pause:** "Stop. Breathe."
-        2. **Perspective:** Brief Gita wisdom.
-        3. **Action:** Micro-task.
-        4. **Check:** Question.
-
-STEP 2: EXECUTE:
-- Keep it SHORT (Max 60 words).
-- Use Hinglish naturally.`
-};
+        return resp.data.choices[0].message.content.trim();
+    } catch (e) {
+        console.error("Responder Failed:", e.message);
+        return "My mind is wandering (Technical Error). Please ask again.";
+    }
+}
 
 /* ---------------- Helper Functions ---------------- */
-
 async function sendViaHeltar(phone, message) {
+    if (!HELTAR_API_KEY) return console.log(`[Simulated Send] -> ${phone}: ${message}`);
     try {
-        const safeMessage = message.substring(0, 4000); 
-        console.log(`📤 Sending to ${phone}:`, safeMessage);
-        
-        if (!HELTAR_API_KEY) return; 
-
         await axios.post("https://api.heltar.com/v1/messages/send", 
-            { messages: [{ clientWaNumber: phone, message: safeMessage, messageType: "text" }] }, 
+            { messages: [{ clientWaNumber: phone, message: message, messageType: "text" }] }, 
             { headers: { Authorization: `Bearer ${HELTAR_API_KEY}` } }
         );
-    } catch (err) {
-        console.error("Heltar Error:", err.message);
-    }
+    } catch (e) { console.error("Heltar Error:", e.message); }
 }
 
-// Global "More" button disabler - Just sends the text directly
-async function sendLayeredResponse(phone, fullResponse, language) {
-    await sendViaHeltar(phone, fullResponse);
-}
-
-function buildContextSummary(messages, language) {
-    if (!messages || messages.length === 0) return "No previous context";
-    return messages.map(m => `${m.role}: ${m.content.substring(0, 50)}...`).join('\n');
-}
-
-async function getUserState(phone) {
+async function getUserData(phone) {
     try {
-        const res = await dbPool.query("SELECT * FROM users WHERE phone_number = $1", [phone]);
+        const res = await dbPool.query("SELECT chat_history FROM users WHERE phone_number = $1", [phone]);
         if (res.rows.length === 0) {
-            await dbPool.query(`
-                INSERT INTO users (phone_number, chat_history, language_preference) 
-                VALUES ($1, '[]', 'English')
-            `, [phone]);
-            return { phone_number: phone, chat_history: [], language_preference: 'English' };
+            await dbPool.query("INSERT INTO users (phone_number, chat_history) VALUES ($1, '[]')", [phone]);
+            return [];
         }
-        return res.rows[0];
-    } catch (err) {
-        console.error("DB Error:", err.message);
-        return { phone_number: phone, chat_history: [], language_preference: 'English' };
-    }
+        return res.rows[0].chat_history || [];
+    } catch (e) { return []; }
 }
 
-async function updateUserState(phone, updates) {
+async function saveChat(phone, history, userMsg, botMsg) {
+    const newHistory = [...history, { role: 'user', content: userMsg }, { role: 'assistant', content: botMsg }].slice(-6);
     try {
-        if (!updates) return;
-        const keys = Object.keys(updates);
-        const vals = keys.map(k => {
-            const v = updates[k];
-            return (typeof v === 'object') ? JSON.stringify(v) : v;
-        });
-        vals.push(phone);
-        const setString = keys.map((k, i) => `${k} = $${i + 1}`).join(", ");
-        await dbPool.query(`UPDATE users SET ${setString} WHERE phone_number = $${keys.length + 1}`, vals);
-    } catch (e) { console.error("Update Error:", e.message); }
+        await dbPool.query("UPDATE users SET chat_history = $1 WHERE phone_number = $2", [JSON.stringify(newHistory), phone]);
+    } catch (e) { console.error("Save Error:", e.message); }
 }
 
-async function getEnhancedAIResponse(phone, text, language, conversationContext = {}) {
-  try {
-    if (!OPENAI_KEY) {
-      console.log("🔄 No OpenAI key, using fallback");
-      return; 
-    }
-
-    console.log("🤖 Sarathi is analyzing intent...");
-
-    const recentHistory = conversationContext.previousMessages || [];
-    const contextSummary = buildContextSummary(recentHistory, language);
-    const systemPrompt = ENHANCED_SYSTEM_PROMPT[language] || ENHANCED_SYSTEM_PROMPT.english;
-    
-    // ARCHITECTURAL CHANGE: Clearly separate History from Current Input
-    const userPrompt = language === "Hindi" 
-      ? `📜 **चैट इतिहास (संदर्भ):** ${contextSummary}
-
-📍 **वर्तमान संदेश (अभी आया):** "${text}"
-
-🤖 **निर्देश:** ऊपर दिए गए 'पहचान' नियमों का पालन करें। अगर 'वर्तमान संदेश' केवल एक 'अभिवादन' (Greeting) है, तो इतिहास के तनाव को नजरअंदाज करें और सामान्य बात करें।`
-      : `📜 **CHAT HISTORY (Context):** ${contextSummary}
-
-📍 **CURRENT MESSAGE (Just now):** "${text}"
-
-🤖 **INSTRUCTION:** Apply the CLASSIFICATION rules from the System Prompt. 
-- If 'CURRENT MESSAGE' is a Greeting/Small Talk -> Ignore the History's emotional weight. Just greet.
-- If 'CURRENT MESSAGE' is a Problem -> Use the Sarathi Flow.`;
-
-    const messages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt }
-    ];
-
-    const resp = await axios.post("https://api.openai.com/v1/chat/completions", {
-      model: OPENAI_MODEL, 
-      messages, 
-      max_tokens: 150, // Strict limit for brevity
-      temperature: 0.6 // Slightly lower to force adherence to rules
-    }, {
-      headers: { Authorization: `Bearer ${OPENAI_KEY}`, "Content-Type": "application/json" },
-      timeout: 15000
-    });
-
-    const aiResponse = resp.data?.choices?.[0]?.message?.content;
-    
-    if (aiResponse) {
-      await sendViaHeltar(phone, aiResponse);
-      
-      const user = await getUserState(phone);
-      // We still save everything to history for the next turn
-      const updatedHistory = [...(user.chat_history || []), 
-          { role: 'user', content: text }, 
-          { role: 'assistant', content: aiResponse }
-      ].slice(-10);
-      
-      await updateUserState(phone, { 
-        chat_history: updatedHistory,
-        last_message: aiResponse,
-        last_message_role: 'assistant'
-      });
-    }
-
-  } catch (err) {
-    console.error("❌ AI Error:", err.message);
-  }
-}
-
-/* ---------------- Webhook Handler ---------------- */
+/* ---------------- Main Webhook ---------------- */
 app.post("/webhook", async (req, res) => {
     res.status(200).send("OK");
-    
-    try {
-        const body = req.body;
-        const msg = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body.messages?.[0];
-        
-        if (!msg) return;
+    const body = req.body;
+    const msg = body.entry?.[0]?.changes?.[0]?.value?.messages?.[0] || body.messages?.[0];
+    if (!msg) return;
 
-        const phone = msg.from || msg.clientWaNumber;
-        const text = (msg.text?.body || msg.button?.payload || "").trim();
+    const phone = msg.from || msg.clientWaNumber;
+    const text = (msg.text?.body || msg.button?.payload || "").trim();
+    if (!text) return;
 
-        if (!phone || text.length === 0) return;
-        
-        console.log(`📩 Incoming from ${phone}: "${text}"`);
+    console.log(`📩 Incoming: "${text}"`);
 
-        const user = await getUserState(phone);
-        const isHindi = /[\u0900-\u097F]/.test(text) || text.toLowerCase().includes('hindi');
-        const language = (user.language_preference === 'Hindi' || isHindi) ? "Hindi" : "English";
+    // 1. Load History
+    const history = await getUserData(phone);
+    const historySummary = history.map(m => `${m.role}: ${m.content}`).join("\n");
 
-        const context = { previousMessages: user.chat_history };
-        await getEnhancedAIResponse(phone, text, language, context);
+    // 2. Brain 1: Categorize
+    const intent = await categorizeUserIntent(text, historySummary);
 
-    } catch (err) {
-        console.error("Webhook Logic Error:", err.message);
-    }
+    // 3. Brain 2: Respond
+    const reply = await generateResponse(intent, text, historySummary);
+
+    // 4. Send & Save
+    await sendViaHeltar(phone, reply);
+    await saveChat(phone, history, text, reply);
 });
 
-/* ---------------- Start Server ---------------- */
+/* ---------------- Server Init ---------------- */
 app.listen(PORT, async () => {
-    validateEnvVariables(); // 🟢 THIS IS THE CRASH FIX
-    console.log(`\n🚀 Sarathi AI (Stable & Short) is running on port ${PORT}`);
-    
+    console.log(`🚀 Sarathi AI v3.0 (Two-Brain Arch) running on ${PORT}`);
     try {
         const client = await dbPool.connect();
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                phone_number VARCHAR(20) PRIMARY KEY,
-                chat_history JSONB DEFAULT '[]'::jsonb,
-                language_preference VARCHAR(20) DEFAULT 'English',
-                total_sessions INT DEFAULT 0,
-                total_incoming INT DEFAULT 0,
-                total_outgoing INT DEFAULT 0,
-                last_message TEXT,
-                last_message_role VARCHAR(50),
-                last_activity_ts TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                user_segment VARCHAR(50)
-            );
-        `);
+        await client.query("CREATE TABLE IF NOT EXISTS users (phone_number VARCHAR(20) PRIMARY KEY, chat_history JSONB)");
         client.release();
-        console.log("✅ Database connected.");
-    } catch (e) {
-        console.log("⚠️ Database warning: Check your URL.");
-    }
+        console.log("✅ DB Connected");
+    } catch(e) { console.error("DB Init Error:", e.message); }
 });
